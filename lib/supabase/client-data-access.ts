@@ -130,6 +130,44 @@ export async function getProcessTypes() {
   return data as ProcessType[]
 }
 
+export async function createProcessType(data: { name: string; description: string }) {
+  const supabase = createBrowserClient()
+
+  const { data: newProcessType, error } = await supabase
+    .from("process_types")
+    .insert({
+      name: data.name,
+      description: data.description,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  return newProcessType as ProcessType
+}
+
+export async function updateProcessType(id: string, data: Partial<{ name: string; description: string }>) {
+  const supabase = createBrowserClient()
+
+  const { data: updatedProcessType, error } = await supabase
+    .from("process_types")
+    .update(data)
+    .eq("id", id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return updatedProcessType as ProcessType
+}
+
+export async function deleteProcessType(id: string) {
+  const supabase = createBrowserClient()
+
+  const { error } = await supabase.from("process_types").delete().eq("id", id)
+
+  if (error) throw error
+}
+
 // Templates
 export async function getTemplates(processTypeId?: string) {
   const supabase = createBrowserClient()

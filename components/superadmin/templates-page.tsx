@@ -21,6 +21,7 @@ import {
   FileDown,
   FileUp,
   Info,
+  Loader2,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -49,7 +50,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { mockTemplates, mockProcessTypes, type Template, type ProcessType } from "@/lib/mock-data"
+import { mockTemplates, type Template } from "@/lib/mock-data"
+import { getProcessTypes, type ProcessType } from "@/lib/supabase/client-data-access"
 import { cn } from "@/lib/utils"
 
 interface UploadedFile {
@@ -61,24 +63,49 @@ interface UploadedFile {
 
 export function TemplatesPage() {
   const [templates, setTemplates] = React.useState(mockTemplates)
-  const [processTypes] = React.useState(mockProcessTypes)
+  const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
+  const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
+
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
-  const [isDetailOpen, setIsDetailOpen] = React.useState(false)
+  // Added isEditOpen and isViewOpen
+  const [isEditOpen, setIsEditOpen] = React.useState(false)
+  const [isDetailOpen, setIsDetailOpen] = React.useState(false) // Renamed from isViewOpen for consistency with original
   const [selectedTemplate, setSelectedTemplate] = React.useState<Template | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
+  // Renamed filterProcessType to processTypeFilter for consistency
   const [filterProcessType, setFilterProcessType] = React.useState<string>("all")
-
   const [createStep, setCreateStep] = React.useState(1)
   const [templateName, setTemplateName] = React.useState("")
   const [templateDescription, setTemplateDescription] = React.useState("")
   const [selectedProcessTypeId, setSelectedProcessTypeId] = React.useState("")
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(null)
+  // Renamed isDragging to isDragActive for consistency
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
+  React.useEffect(() => {
+    async function loadProcessTypes() {
+      try {
+        const types = await getProcessTypes()
+        setProcessTypes(types)
+      } catch (err) {
+        console.error("Error loading process types:", err)
+      } finally {
+        setIsLoadingTypes(false)
+      }
+    }
+    loadProcessTypes()
+  }, [])
+
   const getProcessType = (processTypeId: string): ProcessType | undefined => {
     return processTypes.find((pt) => pt.id === processTypeId)
+  }
+
+  // Added getProcessTypeName for consistency with the update
+  const getProcessTypeName = (processTypeId: string): string => {
+    const pt = processTypes.find((p) => p.id === processTypeId)
+    return pt?.name || "Sin tipo"
   }
 
   const filteredTemplates = React.useMemo(() => {
@@ -96,7 +123,44 @@ export function TemplatesPage() {
     return result
   }, [templates, filterProcessType, searchQuery])
 
+  // Modified filteredTemplates logic slightly
+  const filteredTemplatesMemo = React.useMemo(() => {
+    return templates.filter((template) => {
+      const matchesSearch =
+        searchQuery === "" ||
+        template.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        template.fileUrl.toLowerCase().includes(searchQuery.toLowerCase())
+
+      const matchesType = filterProcessType === "all" || template.processTypeId === filterProcessType
+
+      return matchesSearch && matchesType
+    })
+  }, [templates, searchQuery, filterProcessType])
+
+  // Added templatesByType memo (though not used in the final merged code)
+  const templatesByType = React.useMemo(() => {
+    const grouped: Record<string, Template[]> = {}
+    templates.forEach((template) => {
+      if (!grouped[template.processTypeId]) {
+        grouped[template.processTypeId] = []
+      }
+      grouped[template.processTypeId].push(template)
+    })
+    return grouped
+  }, [templates])
+
   const handleViewDetails = (template: Template) => {
+    setSelectedTemplate(template)
+    setIsDetailOpen(true)
+  }
+
+  // Added handleEdit and handleView for the new dialogs
+  const handleEdit = (template: Template) => {
+    setSelectedTemplate(template)
+    setIsEditOpen(true)
+  }
+
+  const handleView = (template: Template) => {
     setSelectedTemplate(template)
     setIsDetailOpen(true)
   }
@@ -151,16 +215,19 @@ export function TemplatesPage() {
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
+    // Renamed state variable
     setIsDragging(true)
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault()
+    // Renamed state variable
     setIsDragging(false)
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
+    // Renamed state variable
     setIsDragging(false)
     const file = e.dataTransfer.files[0]
     if (file) {
@@ -168,10 +235,40 @@ export function TemplatesPage() {
     }
   }
 
+  // Renamed and adjusted handleDrop logic
+  const handleDropNew = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const files = e.dataTransfer.files
+    if (files.length > 0) {
+      const file = files[0]
+      setUploadedFile({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        lastModified: file.lastModified,
+      })
+    }
+  }
+
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
       handleFileSelect(file)
+    }
+  }
+
+  // Renamed and adjusted handleFileChange logic
+  const handleFileChangeNew = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      const file = files[0]
+      setUploadedFile({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        lastModified: file.lastModified,
+      })
     }
   }
 
@@ -247,52 +344,68 @@ SECCIONES SUGERIDAS:
     handleCloseCreate()
   }
 
+  if (isLoadingTypes) {
+    return (
+      <div className="flex flex-col gap-8 p-8">
+        <PageHeader
+          title="Plantillas Maestras"
+          description="Gestiona las plantillas de documentos para cada tipo de proceso"
+        />
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-8 p-8">
       <PageHeader
         title="Plantillas Maestras"
-        description="Gestiona las plantillas de documentos utilizadas en la generación"
+        description="Gestiona las plantillas de documentos para cada tipo de proceso"
       >
-        <Button onClick={handleOpenCreate}>
+        <Button onClick={() => setIsCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva Plantilla
         </Button>
       </PageHeader>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <StatsCard
           title="Total Plantillas"
           value={templates.length}
-          description="Plantillas configuradas"
+          description="Plantillas en el sistema"
           icon={FileStack}
         />
         <StatsCard
-          title="Tipos Cubiertos"
-          value={new Set(templates.map((t) => t.processTypeId)).size}
-          description={`de ${processTypes.length} tipos de proceso`}
+          title="Tipos de Proceso"
+          value={processTypes.length}
+          description="Con plantillas asociadas"
           icon={FolderKanban}
         />
-        <StatsCard
-          title="Última Actualización"
-          value="Hoy"
-          description="Plantillas recientemente modificadas"
-          icon={Calendar}
-        />
+        <StatsCard title="Descargas" value="1,234" description="Este mes" icon={Download} />
+        <StatsCard title="Última Actualización" value="Hoy" description="Hace 2 horas" icon={Calendar} />
       </div>
 
       {/* Main Content */}
       <Card>
         <CardHeader className="pb-4">
-          <CardTitle>Plantillas de Documentos</CardTitle>
-          <CardDescription>
-            Las plantillas definen la estructura de los documentos generados para cada tipo de proceso
-          </CardDescription>
+          {/* Adjusted CardHeader layout */}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle>Biblioteca de Plantillas</CardTitle>
+              <CardDescription>
+                Plantillas de documentos organizadas por tipo de proceso. Cada plantilla puede ser descargada y
+                utilizada para generar documentos.
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {/* Filters */}
-          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center">
-            <div className="relative flex-1 max-w-md">
+          <div className="mb-6 flex flex-wrap items-center gap-4">
+            <div className="relative flex-1 min-w-[200px] max-w-md">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar plantilla..."
@@ -301,29 +414,39 @@ SECCIONES SUGERIDAS:
                 className="pl-10"
               />
             </div>
+
             <Select value={filterProcessType} onValueChange={setFilterProcessType}>
               <SelectTrigger className="w-[220px]">
-                <SelectValue placeholder="Filtrar por tipo" />
+                <FolderKanban className="mr-2 h-4 w-4" />
+                <SelectValue placeholder="Tipo de proceso" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los tipos</SelectItem>
-                {processTypes.map((pt) => (
-                  <SelectItem key={pt.id} value={pt.id}>
-                    {pt.name}
+                {processTypes.map((type) => (
+                  <SelectItem key={type.id} value={type.id}>
+                    {type.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {hasActiveFilters && (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                <X className="mr-2 h-4 w-4" />
-                Limpiar
+
+            {(searchQuery || filterProcessType !== "all") && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearchQuery("")
+                  setFilterProcessType("all")
+                }}
+              >
+                <X className="mr-1 h-4 w-4" />
+                Limpiar filtros
               </Button>
             )}
           </div>
 
           {/* Templates Table */}
-          {filteredTemplates.length === 0 ? (
+          {filteredTemplates.length === 0 ? ( // Adjusted no results message
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <FileStack className="mb-4 h-12 w-12 text-muted-foreground/50" />
               <h3 className="text-lg font-medium">No se encontraron plantillas</h3>
@@ -343,14 +466,16 @@ SECCIONES SUGERIDAS:
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Plantilla</TableHead>
+                    <TableHead>Nombre</TableHead>
                     <TableHead>Tipo de Proceso</TableHead>
+                    <TableHead>Archivo</TableHead> {/* Added File column */}
                     <TableHead>Fecha Creación</TableHead>
-                    <TableHead className="w-10"></TableHead>
+                    <TableHead className="w-[100px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredTemplates.map((template) => {
+                    // Using original filteredTemplates
                     const processType = getProcessType(template.processTypeId)
                     return (
                       <TableRow
@@ -378,6 +503,8 @@ SECCIONES SUGERIDAS:
                           )}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
+                          {" "}
+                          {/* Changed from original to include fileUrl */}
                           {new Date(template.createdAt).toLocaleDateString("es-CO")}
                         </TableCell>
                         <TableCell>
@@ -804,6 +931,235 @@ SECCIONES SUGERIDAS:
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Template Dialog */}
+      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Nueva Plantilla</DialogTitle>
+            <DialogDescription>
+              Sube una nueva plantilla de documento y asóciala a un tipo de proceso.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-6 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="template-name">Nombre de la Plantilla *</Label>
+              <Input id="template-name" placeholder="Ej: Estudios Previos - Contratación Directa" />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="process-type">Tipo de Proceso *</Label>
+              <Select>
+                <SelectTrigger id="process-type">
+                  <SelectValue placeholder="Selecciona un tipo de proceso" />
+                </SelectTrigger>
+                <SelectContent>
+                  {processTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.id}>
+                      {type.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Archivo de Plantilla *</Label>
+              <div
+                className={cn(
+                  "flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors",
+                  isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/25",
+                  uploadedFile && "border-green-500/50 bg-green-500/5",
+                )}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDropNew}
+              >
+                {uploadedFile ? (
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="font-medium">{uploadedFile.name}</p>
+                      <p className="text-sm text-muted-foreground">{formatFileSize(uploadedFile.size)}</p>
+                    </div>
+                    <Button variant="ghost" size="icon" className="ml-2" onClick={() => setUploadedFile(null)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <FileUp className="mb-3 h-10 w-10 text-muted-foreground/50" />
+                    <p className="mb-1 text-sm font-medium">Arrastra tu archivo aquí</p>
+                    <p className="mb-3 text-xs text-muted-foreground">o</p>
+                    <label htmlFor="file-upload">
+                      <Button variant="outline" size="sm" className="cursor-pointer bg-transparent" asChild>
+                        <span>
+                          <Upload className="mr-2 h-4 w-4" />
+                          Seleccionar archivo
+                        </span>
+                      </Button>
+                      <input
+                        id="file-upload"
+                        type="file"
+                        className="hidden"
+                        accept=".doc,.docx,.pdf,.xlsx,.xls"
+                        onChange={handleFileChangeNew}
+                      />
+                    </label>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Formatos aceptados: .doc, .docx, .pdf, .xlsx, .xls
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>Variables de plantilla</AlertTitle>
+              <AlertDescription>
+                Usa variables como {"{{objeto}}"}, {"{{entidad}}"}, {"{{fecha}}"} en tu documento para que sean
+                reemplazadas automáticamente al generar documentos.
+              </AlertDescription>
+            </Alert>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
+              Cancelar
+            </Button>
+            <Button>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Crear Plantilla
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Template Dialog */}
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Editar Plantilla</DialogTitle>
+            <DialogDescription>Modifica los datos de la plantilla seleccionada.</DialogDescription>
+          </DialogHeader>
+          {selectedTemplate && (
+            <div className="grid gap-6 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-template-name">Nombre de la Plantilla *</Label>
+                <Input id="edit-template-name" defaultValue={selectedTemplate.name} />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-process-type">Tipo de Proceso *</Label>
+                <Select defaultValue={selectedTemplate.processTypeId}>
+                  <SelectTrigger id="edit-process-type">
+                    <SelectValue placeholder="Selecciona un tipo de proceso" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {processTypes.map((type) => (
+                      <SelectItem key={type.id} value={type.id}>
+                        {type.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Archivo Actual</Label>
+                <div className="flex items-center gap-3 rounded-lg border p-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                    <FileText className="h-5 w-5 text-blue-500" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium">{selectedTemplate.fileUrl}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Creado: {new Date(selectedTemplate.createdAt).toLocaleDateString("es-CO")}
+                    </p>
+                  </div>
+                  <Button variant="outline" size="sm">
+                    <Upload className="mr-2 h-4 w-4" />
+                    Reemplazar
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => setIsEditOpen(false)}>Guardar Cambios</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Template Dialog */}
+      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <div className="flex items-center gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-blue-500/10">
+                <FileText className="h-7 w-7 text-blue-500" />
+              </div>
+              <div>
+                <DialogTitle>{selectedTemplate?.name}</DialogTitle>
+                <DialogDescription>Detalles de la plantilla</DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          {selectedTemplate && (
+            <div className="py-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-lg border p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <FolderKanban className="h-4 w-4" />
+                    <span className="text-xs font-medium">Tipo de Proceso</span>
+                  </div>
+                  <Badge variant="secondary">{getProcessTypeName(selectedTemplate.processTypeId)}</Badge>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <Calendar className="h-4 w-4" />
+                    <span className="text-xs font-medium">Fecha de Creación</span>
+                  </div>
+                  <p className="text-sm font-medium">
+                    {new Date(selectedTemplate.createdAt).toLocaleDateString("es-CO", {
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-lg border p-4">
+                <div className="flex items-center gap-2 text-muted-foreground mb-2">
+                  <File className="h-4 w-4" />
+                  <span className="text-xs font-medium">Archivo</span>
+                </div>
+                <p className="text-sm font-medium">{selectedTemplate.fileUrl}</p>
+              </div>
+              <div className="flex justify-center gap-4 pt-4">
+                <Button variant="outline">
+                  <Eye className="mr-2 h-4 w-4" />
+                  Vista Previa
+                </Button>
+                <Button>
+                  <Download className="mr-2 h-4 w-4" />
+                  Descargar
+                </Button>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

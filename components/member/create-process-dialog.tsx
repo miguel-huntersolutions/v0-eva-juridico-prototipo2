@@ -20,59 +20,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   mockSecretaries,
-  mockProcessTypes,
   processTypeConfigs,
   type Entity,
   type ProcessTypeConfig,
   type ProcessTypeField,
 } from "@/lib/mock-data"
+import { getProcessTypes, type ProcessType } from "@/lib/supabase/client-data-access"
 import { cn } from "@/lib/utils"
 
 interface CreateProcessDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  entity: Entity
+  selectedEntity?: Entity | null
 }
 
-// AI improvement suggestions based on field type
-const aiImprovements: Record<string, (text: string, entityName: string) => string> = {
-  object: (text, entityName) =>
-    text
-      ? `Contratación para ${text.toLowerCase().includes("adquisición") ? "" : "la adquisición de "}${text}${text.includes(entityName) ? "" : `, en cumplimiento de los fines misionales de ${entityName}`}.`
-      : "",
-  justification: (text, entityName) =>
-    text
-      ? `${text}\n\nEsta necesidad se encuentra debidamente justificada en el marco del Plan de Desarrollo Territorial vigente y está incluida en el Plan Anual de Adquisiciones de ${entityName}, garantizando así el cumplimiento de los principios de planeación y transparencia que rigen la contratación estatal.`
-      : "",
-  scope: (text) =>
-    text
-      ? `El alcance del presente proceso comprende: ${text}\n\nLo anterior incluye todas las actividades necesarias para garantizar la correcta ejecución del objeto contractual, de conformidad con las especificaciones técnicas establecidas.`
-      : "",
-  obligations: (text) =>
-    text
-      ? `El contratista deberá cumplir con las siguientes obligaciones:\n\n1. ${text
-          .split(",")
-          .map((o) => o.trim())
-          .join(
-            "\n2. ",
-          )}\n\nAdicionales:\n- Cumplir con la normatividad vigente aplicable.\n- Presentar informes periódicos de avance.\n- Garantizar la calidad de los bienes o servicios suministrados.`
-      : "",
-  qualificationCriteria: (text) =>
-    text
-      ? `Los criterios de calificación serán los siguientes:\n\n${text}\n\nLa evaluación se realizará conforme a lo establecido en el artículo 5 de la Ley 1150 de 2007 y el Decreto 1082 de 2015, garantizando la selección objetiva del contratista.`
-      : "",
-  experience: (text) =>
-    text
-      ? `Se requiere acreditar la siguiente experiencia:\n\n${text}\n\nLa experiencia deberá ser certificada mediante contratos ejecutados y actas de liquidación o certificaciones de cumplimiento expedidas por las entidades contratantes.`
-      : "",
-  guarantees: (text) =>
-    text
-      ? `El contratista seleccionado deberá constituir garantía única de cumplimiento que ampare:\n\n${text}\n\nLas garantías deberán cumplir con los requisitos establecidos en el Decreto 1082 de 2015 y permanecer vigentes durante el plazo de ejecución y cuatro (4) meses más.`
-      : "",
-  default: (text) => (text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}${text.endsWith(".") ? "" : "."}` : ""),
-}
-
-export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProcessDialogProps) {
+export function CreateProcessDialog({ open, onOpenChange, selectedEntity }: CreateProcessDialogProps) {
   const [step, setStep] = React.useState(1)
   const [selectedProcessType, setSelectedProcessType] = React.useState<ProcessTypeConfig | null>(null)
   const [formData, setFormData] = React.useState<Record<string, string>>({
@@ -82,7 +44,24 @@ export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProces
   const [improvingField, setImprovingField] = React.useState<string | null>(null)
   const [improvedFields, setImprovedFields] = React.useState<Set<string>>(new Set())
 
-  const secretaries = mockSecretaries.filter((s) => s.entityId === entity.id)
+  const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
+  const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
+
+  React.useEffect(() => {
+    async function loadProcessTypes() {
+      try {
+        const types = await getProcessTypes()
+        setProcessTypes(types)
+      } catch (err) {
+        console.error("Error loading process types:", err)
+      } finally {
+        setIsLoadingTypes(false)
+      }
+    }
+    loadProcessTypes()
+  }, [])
+
+  const secretaries = mockSecretaries.filter((s) => s.entityId === (selectedEntity?.id || ""))
 
   // Handle process type selection
   const handleProcessTypeChange = (value: string) => {
@@ -114,7 +93,7 @@ export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProces
     await new Promise((resolve) => setTimeout(resolve, 1500))
 
     const improvementFn = aiImprovements[fieldName] || aiImprovements.default
-    const improvedText = improvementFn(currentValue, entity.name)
+    const improvedText = improvementFn(currentValue, selectedEntity?.name || "")
 
     setFormData((prev) => ({
       ...prev,
@@ -232,7 +211,7 @@ export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProces
             className={cn("resize-none transition-all", isImproved && "border-emerald-500/30 bg-emerald-500/5")}
           />
         ) : field.type === "select" ? (
-          <Select value={formData[field.name] || ""} onValueChange={(v) => handleFieldChange(field.name, v)}>
+          <Select value={formData[field.name] || "default"} onValueChange={(v) => handleFieldChange(field.name, v)}>
             <SelectTrigger id={field.id}>
               <SelectValue placeholder="Seleccionar..." />
             </SelectTrigger>
@@ -339,11 +318,15 @@ export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProces
                       <SelectValue placeholder="Seleccionar tipo..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {mockProcessTypes.map((pt) => (
-                        <SelectItem key={pt.id} value={pt.id}>
-                          {pt.name}
-                        </SelectItem>
-                      ))}
+                      {isLoadingTypes ? (
+                        <SelectItem value="loading">Cargando tipos de proceso...</SelectItem>
+                      ) : (
+                        processTypes.map((pt) => (
+                          <SelectItem key={pt.id} value={pt.id}>
+                            {pt.name}
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -430,7 +413,7 @@ export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProces
               <div className="flex items-center gap-4 p-3 rounded-lg border bg-muted/50">
                 <div className="flex-1">
                   <p className="text-xs text-muted-foreground">Entidad</p>
-                  <p className="text-sm font-medium">{entity.name}</p>
+                  <p className="text-sm font-medium">{selectedEntity?.name}</p>
                 </div>
                 <div className="flex-1">
                   <p className="text-xs text-muted-foreground">Tipo de Proceso</p>
@@ -488,4 +471,42 @@ export function CreateProcessDialog({ open, onOpenChange, entity }: CreateProces
       </DialogContent>
     </Dialog>
   )
+}
+
+// AI improvement suggestions based on field type
+const aiImprovements: Record<string, (text: string, entityName: string) => string> = {
+  object: (text, entityName) =>
+    text
+      ? `Contratación para ${text.toLowerCase().includes("adquisición") ? "" : "la adquisición de "}${text}${text.includes(entityName) ? "" : `, en cumplimiento de los fines misionales de ${entityName}`}.`
+      : "",
+  justification: (text, entityName) =>
+    text
+      ? `${text}\n\nEsta necesidad se encuentra debidamente justificada en el marco del Plan de Desarrollo Territorial vigente y está incluida en el Plan Anual de Adquisiciones de ${entityName}, garantizando así el cumplimiento de los principios de planeación y transparencia que rigen la contratación estatal.`
+      : "",
+  scope: (text) =>
+    text
+      ? `El alcance del presente proceso comprende: ${text}\n\nLo anterior incluye todas las actividades necesarias para garantizar la correcta ejecución del objeto contractual, de conformidad con las especificaciones técnicas establecidas.`
+      : "",
+  obligations: (text) =>
+    text
+      ? `El contratista deberá cumplir con las siguientes obligaciones:\n\n1. ${text
+          .split(",")
+          .map((o) => o.trim())
+          .join(
+            "\n2. ",
+          )}\n\nAdicionales:\n- Cumplir con la normatividad vigente aplicable.\n- Presentar informes periódicos de avance.\n- Garantizar la calidad de los bienes o servicios suministrados.`
+      : "",
+  qualificationCriteria: (text) =>
+    text
+      ? `Los criterios de calificación serán los siguientes:\n\n${text}\n\nLa evaluación se realizará conforme a lo establecido en el artículo 5 de la Ley 1150 de 2007 y el Decreto 1082 de 2015, garantizando la selección objetiva del contratista.`
+      : "",
+  experience: (text) =>
+    text
+      ? `Se requiere acreditar la siguiente experiencia:\n\n${text}\n\nLa experiencia deberá ser certificada mediante contratos ejecutados y actas de liquidación o certificaciones de cumplimiento expedidas por las entidades contratantes.`
+      : "",
+  guarantees: (text) =>
+    text
+      ? `El contratista seleccionado deberá constituir garantía única de cumplimiento que ampare:\n\n${text}\n\nLas garantías deberán cumplir con los requisitos establecidos en el Decreto 1082 de 2015 y permanecer vigentes durante el plazo de ejecución y cuatro (4) meses más.`
+      : "",
+  default: (text) => (text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}${text.endsWith(".") ? "" : "."}` : ""),
 }

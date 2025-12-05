@@ -221,33 +221,7 @@ export const mockSecretaries: Secretary[] = [
   },
 ]
 
-export const mockProcessTypes: ProcessType[] = [
-  {
-    id: "pt-1",
-    name: "Contratación Directa",
-    description: "Proceso de contratación directa según el artículo 2 de la Ley 1150 de 2007",
-  },
-  {
-    id: "pt-2",
-    name: "Licitación Pública",
-    description: "Proceso de licitación pública para contratos de mayor cuantía",
-  },
-  {
-    id: "pt-3",
-    name: "Selección Abreviada",
-    description: "Proceso de selección abreviada de menor cuantía",
-  },
-  {
-    id: "pt-4",
-    name: "Concurso de Méritos",
-    description: "Proceso para contratación de consultoría",
-  },
-  {
-    id: "pt-5",
-    name: "Mínima Cuantía",
-    description: "Proceso simplificado para adquisiciones de menor valor",
-  },
-]
+// Process types are now managed through Supabase
 
 export const mockTemplates: Template[] = [
   // Contratación Directa - Multiple templates
