@@ -36,6 +36,63 @@ export async function getOrganizations() {
   return data as Organization[]
 }
 
+export async function createOrganization(data: {
+  name: string
+  nit: string
+  status?: string
+}) {
+  const supabase = createBrowserClient()
+
+  const { data: newOrg, error } = await supabase
+    .from("organizations")
+    .insert({
+      name: data.name,
+      nit: data.nit,
+      status: data.status || "active",
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  return newOrg as Organization
+}
+
+export async function updateOrganization(
+  id: string,
+  data: Partial<{
+    name: string
+    nit: string
+    status: string
+  }>,
+) {
+  const supabase = createBrowserClient()
+
+  const { data: updatedOrg, error } = await supabase.from("organizations").update(data).eq("id", id).select().single()
+
+  if (error) throw error
+  return updatedOrg as Organization
+}
+
+export async function deleteOrganization(id: string) {
+  const supabase = createBrowserClient()
+
+  const { error } = await supabase.from("organizations").delete().eq("id", id)
+
+  if (error) throw error
+}
+
+export async function impersonateOrganization(organizationId: string) {
+  // This function is used to set up the impersonation context
+  // The actual impersonation is handled by the ImpersonationContext
+  // Here we just verify the organization exists
+  const supabase = createBrowserClient()
+
+  const { data, error } = await supabase.from("organizations").select("*").eq("id", organizationId).single()
+
+  if (error) throw error
+  return data as Organization
+}
+
 // Entities
 export async function getEntities(organizationId?: string) {
   const supabase = createBrowserClient()
