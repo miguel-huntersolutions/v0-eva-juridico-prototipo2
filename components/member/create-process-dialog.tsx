@@ -83,7 +83,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
 
   React.useEffect(() => {
     async function loadSecretaries() {
-      if (!formData.entityId) {
+      if (!formData.entityId || formData.entityId === "placeholder") {
         setSecretaries([])
         return
       }
