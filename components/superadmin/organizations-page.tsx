@@ -764,17 +764,7 @@ export function OrganizationsPage() {
                     <UserPlus className="mr-2 h-4 w-4" />
                     Invitar Administrador
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setIsDetailOpen(false)
-                      handleImpersonate(selectedOrg)
-                    }}
-                  >
-                    <LogIn className="mr-2 h-4 w-4" />
-                    Suplantar Sesión
-                  </Button>
+                  
                   <Button variant="outline" size="sm">
                     <Pencil className="mr-2 h-4 w-4" />
                     Editar Datos
