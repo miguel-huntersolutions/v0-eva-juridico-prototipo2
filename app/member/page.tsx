@@ -26,8 +26,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { mockProcesses } from "@/lib/mock-data"
-import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { getEntities, getProcessesMapped, type Entity } from "@/lib/supabase/client-data-access"
+import type { Process } from "@/lib/mock-data"
 import { useProfile } from "@/hooks/use-profile"
 
 const moduleOptions = [
@@ -72,6 +72,7 @@ export default function MemberPage() {
   const { profile, loading: profileLoading } = useProfile()
   const [assignedEntities, setAssignedEntities] = React.useState<Entity[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [allProcesses, setAllProcesses] = React.useState<Process[]>([])
 
   React.useEffect(() => {
     async function loadEntities() {
@@ -93,14 +94,25 @@ export default function MemberPage() {
     }
   }, [profile?.organization_id, profileLoading])
 
+  React.useEffect(() => {
+    async function loadProcesses() {
+      try {
+        const data = await getProcessesMapped()
+        setAllProcesses(data)
+      } catch (err) {
+        console.error("Error loading processes:", err)
+      }
+    }
+    loadProcesses()
+  }, [])
+
   const filteredEntities = assignedEntities.filter(
     (entity) => entity.name.toLowerCase().includes(searchQuery.toLowerCase()) || entity.nit.includes(searchQuery),
   )
 
-  // Calculate global stats
-  const totalProcesses = mockProcesses.length
-  const inProgressProcesses = mockProcesses.filter((p) => p.status === "in_progress").length
-  const completedProcesses = mockProcesses.filter((p) => p.status === "completed").length
+  const totalProcesses = allProcesses.length
+  const inProgressProcesses = allProcesses.filter((p) => p.status === "in_progress").length
+  const completedProcesses = allProcesses.filter((p) => p.status === "completed").length
   const completionRate = totalProcesses > 0 ? Math.round((completedProcesses / totalProcesses) * 100) : 0
 
   const handleEntitySelect = (entityId: string) => {
@@ -268,7 +280,7 @@ export default function MemberPage() {
           {/* Entities Grid */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredEntities.map((entity) => {
-              const entityProcesses = mockProcesses.filter((p) => p.entityId === entity.id)
+              const entityProcesses = allProcesses.filter((p) => p.entityId === entity.id)
               const activeProcesses = entityProcesses.filter(
                 (p) => p.status === "in_progress" || p.status === "review",
               ).length

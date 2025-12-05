@@ -19,6 +19,7 @@ import {
   Copy,
   ExternalLink,
   FolderOpen,
+  Loader2,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -36,8 +37,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { mockDocuments, mockProcesses, documentTypes, type Document } from "@/lib/mock-data"
-import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { documentTypes } from "@/lib/mock-data"
+import { getEntities, getDocuments, type Entity } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 
 type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
@@ -66,8 +67,26 @@ function getDocumentTypeName(typeId: string): string {
   return documentTypes.find((t) => t.id === typeId)?.name || typeId
 }
 
+interface MappedDocument {
+  id: string
+  processId: string
+  processCode: string
+  processObject: string
+  name: string
+  type: string
+  version: number
+  status: "draft" | "pending" | "approved" | "rejected"
+  entityId: string
+  entityName: string
+  fileUrl: string
+  fileSize: number
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
 export function DocumentsPage() {
-  const [selectedDocument, setSelectedDocument] = React.useState<Document | null>(null)
+  const [selectedDocument, setSelectedDocument] = React.useState<MappedDocument | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<DocumentStatus>("all")
@@ -76,10 +95,41 @@ export function DocumentsPage() {
   const [typeFilter, setTypeFilter] = React.useState<string>("all")
   const [activeTab, setActiveTab] = React.useState("all")
 
-  const allDocuments = mockDocuments
-  const processes = mockProcesses
+  const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
+  const [isLoadingDocs, setIsLoadingDocs] = React.useState(true)
   const { profile } = useProfile()
   const [entities, setEntities] = React.useState<Entity[]>([])
+
+  React.useEffect(() => {
+    async function loadDocuments() {
+      try {
+        const docs = await getDocuments()
+        const mapped: MappedDocument[] = docs.map((d) => ({
+          id: d.id,
+          processId: d.process_id,
+          processCode: d.process?.code || "",
+          processObject: d.process?.object || "",
+          name: d.name,
+          type: d.type,
+          version: d.version || 1,
+          status: d.status as MappedDocument["status"],
+          entityId: d.process?.entity?.id || "",
+          entityName: d.process?.entity?.name || "",
+          fileUrl: d.file_url || "",
+          fileSize: d.file_size || 0,
+          createdBy: "",
+          createdAt: d.created_at?.split("T")[0] || "",
+          updatedAt: d.updated_at?.split("T")[0] || "",
+        }))
+        setAllDocuments(mapped)
+      } catch (err) {
+        console.error("Error loading documents:", err)
+      } finally {
+        setIsLoadingDocs(false)
+      }
+    }
+    loadDocuments()
+  }, [])
 
   React.useEffect(() => {
     async function loadEntities() {
@@ -128,7 +178,7 @@ export function DocumentsPage() {
     draft: allDocuments.filter((d) => d.status === "draft").length,
   }
 
-  const handleViewDocument = (document: Document) => {
+  const handleViewDocument = (document: MappedDocument) => {
     setSelectedDocument(document)
     setIsDetailOpen(true)
   }
@@ -254,123 +304,129 @@ export function DocumentsPage() {
 
             {/* Table Content */}
             <TabsContent value={activeTab} className="mt-4">
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="font-semibold">Documento</TableHead>
-                      <TableHead className="font-semibold">Proceso</TableHead>
-                      <TableHead className="font-semibold">Entidad</TableHead>
-                      <TableHead className="font-semibold">Versión</TableHead>
-                      <TableHead className="font-semibold">Estado</TableHead>
-                      <TableHead className="font-semibold">Tamaño</TableHead>
-                      <TableHead className="font-semibold">Actualizado</TableHead>
-                      <TableHead className="w-10"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredDocuments.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
-                          <div className="flex flex-col items-center gap-2">
-                            <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
-                            <p>No se encontraron documentos</p>
-                            {hasActiveFilters && (
-                              <Button variant="link" size="sm" onClick={clearFilters}>
-                                Limpiar filtros
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
+              {isLoadingDocs ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <div className="rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="font-semibold">Documento</TableHead>
+                        <TableHead className="font-semibold">Proceso</TableHead>
+                        <TableHead className="font-semibold">Entidad</TableHead>
+                        <TableHead className="font-semibold">Versión</TableHead>
+                        <TableHead className="font-semibold">Estado</TableHead>
+                        <TableHead className="font-semibold">Tamaño</TableHead>
+                        <TableHead className="font-semibold">Actualizado</TableHead>
+                        <TableHead className="w-10"></TableHead>
                       </TableRow>
-                    ) : (
-                      filteredDocuments.map((document) => (
-                        <TableRow
-                          key={document.id}
-                          className="cursor-pointer"
-                          onClick={() => handleViewDocument(document)}
-                        >
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                                <FileText className="h-4 w-4 text-primary" />
-                              </div>
-                              <div>
-                                <p className="font-medium">{document.name}</p>
-                                <p className="text-xs text-muted-foreground">{getDocumentTypeName(document.type)}</p>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="max-w-xs">
-                              <p className="font-mono text-sm font-medium">{document.processCode}</p>
-                              <p className="text-xs text-muted-foreground truncate">{document.processObject}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm">{document.entityName}</span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="font-mono">
-                              V{document.version}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={statusConfig[document.status].className}>
-                              {statusConfig[document.status].label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm text-muted-foreground">{formatFileSize(document.fileSize)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm text-muted-foreground">
-                              {new Date(document.updatedAt).toLocaleDateString("es-CO")}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                  <MoreHorizontal className="h-4 w-4" />
+                    </TableHeader>
+                    <TableBody>
+                      {filteredDocuments.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                            <div className="flex flex-col items-center gap-2">
+                              <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
+                              <p>No se encontraron documentos</p>
+                              {hasActiveFilters && (
+                                <Button variant="link" size="sm" onClick={clearFilters}>
+                                  Limpiar filtros
                                 </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => handleViewDocument(document)}>
-                                  <Eye className="mr-2 h-4 w-4" />
-                                  Ver Detalles
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <Download className="mr-2 h-4 w-4" />
-                                  Descargar Word
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem>
-                                  <History className="mr-2 h-4 w-4" />
-                                  Ver Historial
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <Copy className="mr-2 h-4 w-4" />
-                                  Duplicar
-                                </DropdownMenuItem>
-                                <DropdownMenuItem>
-                                  <ExternalLink className="mr-2 h-4 w-4" />
-                                  Ir al Proceso
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive">
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Eliminar
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                      ) : (
+                        filteredDocuments.map((document) => (
+                          <TableRow
+                            key={document.id}
+                            className="cursor-pointer"
+                            onClick={() => handleViewDocument(document)}
+                          >
+                            <TableCell>
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                                  <FileText className="h-4 w-4 text-primary" />
+                                </div>
+                                <div>
+                                  <p className="font-medium">{document.name}</p>
+                                  <p className="text-xs text-muted-foreground">{getDocumentTypeName(document.type)}</p>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="max-w-xs">
+                                <p className="font-mono text-sm font-medium">{document.processCode}</p>
+                                <p className="text-xs text-muted-foreground truncate">{document.processObject}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm">{document.entityName}</span>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="font-mono">
+                                V{document.version}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={statusConfig[document.status]?.className || ""}>
+                                {statusConfig[document.status]?.label || document.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm text-muted-foreground">{formatFileSize(document.fileSize)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-sm text-muted-foreground">
+                                {document.updatedAt ? new Date(document.updatedAt).toLocaleDateString("es-CO") : "-"}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleViewDocument(document)}>
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    Ver Detalles
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem>
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Descargar Word
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem>
+                                    <History className="mr-2 h-4 w-4" />
+                                    Ver Historial
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem>
+                                    <Copy className="mr-2 h-4 w-4" />
+                                    Duplicar
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem>
+                                    <ExternalLink className="mr-2 h-4 w-4" />
+                                    Ir al Proceso
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-destructive">
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Eliminar
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
 
               {/* Pagination info */}
               {filteredDocuments.length > 0 && (
@@ -384,147 +440,6 @@ export function DocumentsPage() {
           </Tabs>
         </CardContent>
       </Card>
-
-      {/* Document Detail Dialog */}
-      <DocumentDetailDialog document={selectedDocument} open={isDetailOpen} onOpenChange={setIsDetailOpen} />
-    </div>
-  )
-}
-
-// Document Detail Dialog Component
-interface DocumentDetailDialogProps {
-  document: Document | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}
-
-function DocumentDetailDialog({ document, open, onOpenChange }: DocumentDetailDialogProps) {
-  if (!document) return null
-
-  // Mock version history
-  const versionHistory = Array.from({ length: document.version }, (_, i) => ({
-    version: document.version - i,
-    date: new Date(new Date(document.updatedAt).getTime() - i * 7 * 24 * 60 * 60 * 1000).toLocaleDateString("es-CO"),
-    author: i === 0 ? document.createdBy : i % 2 === 0 ? "Juan Rodríguez" : "Ana Martínez",
-    isCurrent: i === 0,
-  }))
-
-  return (
-    <div>
-      {/* Dialog Content */}
-      <div className="max-w-2xl">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <FileText className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              {document.name}
-              <Badge className={statusConfig[document.status].className}>{statusConfig[document.status].label}</Badge>
-            </div>
-            <div>{getDocumentTypeName(document.type)}</div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          {/* Process Info */}
-          <div className="rounded-lg border p-4">
-            <div className="text-sm font-medium text-muted-foreground mb-2">Proceso Asociado</div>
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
-                <FolderOpen className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="flex-1">
-                <div className="font-mono text-sm font-medium">{document.processCode}</div>
-                <div className="text-sm text-muted-foreground">{document.processObject}</div>
-              </div>
-              <Button variant="outline" size="sm">
-                <ExternalLink className="mr-2 h-4 w-4" />
-                Ver Proceso
-              </Button>
-            </div>
-          </div>
-
-          {/* Details Grid */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-muted-foreground">Entidad</div>
-              <div className="text-sm">{document.entityName}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-muted-foreground">Versión Actual</div>
-              <div className="text-sm font-mono">V{document.version}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-muted-foreground">Tamaño del Archivo</div>
-              <div className="text-sm">{formatFileSize(document.fileSize)}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-muted-foreground">Creado por</div>
-              <div className="text-sm">{document.createdBy}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-muted-foreground">Fecha de Creación</div>
-              <div className="text-sm">{new Date(document.createdAt).toLocaleDateString("es-CO")}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium text-muted-foreground">Última Actualización</div>
-              <div className="text-sm">{new Date(document.updatedAt).toLocaleDateString("es-CO")}</div>
-            </div>
-          </div>
-
-          {/* Separator */}
-          <div className="my-4 bg-slate-200" />
-
-          {/* Version History */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <History className="h-4 w-4" />
-              <div className="text-sm font-medium">Historial de Versiones</div>
-            </div>
-            <div className="space-y-2">
-              {versionHistory.map((v) => (
-                <div
-                  key={v.version}
-                  className={`flex items-center justify-between rounded-lg border p-3 ${
-                    v.isCurrent ? "border-primary/50 bg-primary/5" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Badge variant={v.isCurrent ? "default" : "outline"} className="font-mono">
-                      V{v.version}
-                    </Badge>
-                    <div>
-                      <div className="text-sm">{v.isCurrent ? "Versión actual" : `Versión ${v.version}`}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {v.author} • {v.date}
-                      </div>
-                    </div>
-                  </div>
-                  <Button variant="ghost" size="sm">
-                    <Download className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Dialog Footer */}
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cerrar
-          </Button>
-          <Button variant="outline">
-            <History className="mr-2 h-4 w-4" />
-            Generar Nueva Versión
-          </Button>
-          <Button>
-            <Download className="mr-2 h-4 w-4" />
-            Descargar Word
-          </Button>
-        </div>
-      </div>
     </div>
   )
 }

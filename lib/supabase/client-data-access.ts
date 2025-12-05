@@ -386,6 +386,216 @@ export async function getProcesses(filters?: {
   return data as ProcessWithRelations[]
 }
 
+export async function getProcessesMapped(filters?: {
+  entityId?: string
+  status?: string
+  processTypeId?: string
+}): Promise<Process[]> {
+  const supabase = createBrowserClient()
+
+  let query = supabase
+    .from("processes")
+    .select(`
+      *,
+      entity:entities(id, name),
+      secretary:secretaries(id, name),
+      process_type:process_types(id, name)
+    `)
+    .order("updated_at", { ascending: false })
+
+  if (filters?.entityId) {
+    query = query.eq("entity_id", filters.entityId)
+  }
+  if (filters?.status) {
+    query = query.eq("status", filters.status)
+  }
+  if (filters?.processTypeId) {
+    query = query.eq("process_type_id", filters.processTypeId)
+  }
+
+  const { data, error } = await query
+  if (error) throw error
+
+  // Get document counts for each process
+  const processIds = (data || []).map((p) => p.id)
+  let documentCounts: Record<string, number> = {}
+
+  if (processIds.length > 0) {
+    const { data: docs } = await supabase.from("documents").select("process_id").in("process_id", processIds)
+
+    documentCounts = (docs || []).reduce(
+      (acc, d) => {
+        acc[d.process_id] = (acc[d.process_id] || 0) + 1
+        return acc
+      },
+      {} as Record<string, number>,
+    )
+  }
+
+  return (data || []).map((p) => ({
+    id: p.id,
+    code: p.code || "",
+    object: p.object || "",
+    description: p.description || "",
+    status: p.status as Process["status"],
+    entityId: p.entity_id,
+    entityName: p.entity?.name || "",
+    secretaryId: p.secretary_id,
+    secretaryName: p.secretary?.name || "",
+    processTypeId: p.process_type_id,
+    processTypeName: p.process_type?.name || "",
+    createdAt: p.created_at?.split("T")[0] || "",
+    updatedAt: p.updated_at?.split("T")[0] || "",
+    documentsCount: documentCounts[p.id] || 0,
+    currentVersion: p.current_version || 1,
+  }))
+}
+
+export async function createProcess(data: {
+  code: string
+  object: string
+  description: string
+  entityId: string
+  secretaryId: string
+  processTypeId: string
+  status?: string
+  createdBy?: string
+}): Promise<Process> {
+  const supabase = createBrowserClient()
+
+  const { data: newProcess, error } = await supabase
+    .from("processes")
+    .insert({
+      code: data.code,
+      object: data.object,
+      description: data.description,
+      entity_id: data.entityId,
+      secretary_id: data.secretaryId,
+      process_type_id: data.processTypeId,
+      status: data.status || "draft",
+      created_by: data.createdBy,
+      current_version: 1,
+    })
+    .select(`
+      *,
+      entity:entities(id, name),
+      secretary:secretaries(id, name),
+      process_type:process_types(id, name)
+    `)
+    .single()
+
+  if (error) throw error
+
+  return {
+    id: newProcess.id,
+    code: newProcess.code || "",
+    object: newProcess.object || "",
+    description: newProcess.description || "",
+    status: newProcess.status as Process["status"],
+    entityId: newProcess.entity_id,
+    entityName: newProcess.entity?.name || "",
+    secretaryId: newProcess.secretary_id,
+    secretaryName: newProcess.secretary?.name || "",
+    processTypeId: newProcess.process_type_id,
+    processTypeName: newProcess.process_type?.name || "",
+    createdAt: newProcess.created_at?.split("T")[0] || "",
+    updatedAt: newProcess.updated_at?.split("T")[0] || "",
+    documentsCount: 0,
+    currentVersion: newProcess.current_version || 1,
+  }
+}
+
+export async function updateProcess(
+  id: string,
+  data: Partial<{
+    code: string
+    object: string
+    description: string
+    status: string
+    currentVersion: number
+  }>,
+): Promise<Process> {
+  const supabase = createBrowserClient()
+
+  const updateData: Record<string, unknown> = {}
+  if (data.code !== undefined) updateData.code = data.code
+  if (data.object !== undefined) updateData.object = data.object
+  if (data.description !== undefined) updateData.description = data.description
+  if (data.status !== undefined) updateData.status = data.status
+  if (data.currentVersion !== undefined) updateData.current_version = data.currentVersion
+
+  const { data: updatedProcess, error } = await supabase
+    .from("processes")
+    .update(updateData)
+    .eq("id", id)
+    .select(`
+      *,
+      entity:entities(id, name),
+      secretary:secretaries(id, name),
+      process_type:process_types(id, name)
+    `)
+    .single()
+
+  if (error) throw error
+
+  return {
+    id: updatedProcess.id,
+    code: updatedProcess.code || "",
+    object: updatedProcess.object || "",
+    description: updatedProcess.description || "",
+    status: updatedProcess.status as Process["status"],
+    entityId: updatedProcess.entity_id,
+    entityName: updatedProcess.entity?.name || "",
+    secretaryId: updatedProcess.secretary_id,
+    secretaryName: updatedProcess.secretary?.name || "",
+    processTypeId: updatedProcess.process_type_id,
+    processTypeName: updatedProcess.process_type?.name || "",
+    createdAt: updatedProcess.created_at?.split("T")[0] || "",
+    updatedAt: updatedProcess.updated_at?.split("T")[0] || "",
+    documentsCount: 0,
+    currentVersion: updatedProcess.current_version || 1,
+  }
+}
+
+export async function deleteProcess(id: string) {
+  const supabase = createBrowserClient()
+
+  // First delete related documents
+  await supabase.from("documents").delete().eq("process_id", id)
+
+  const { error } = await supabase.from("processes").delete().eq("id", id)
+
+  if (error) throw error
+}
+
+export async function generateProcessCode(processTypeId: string): Promise<string> {
+  const supabase = createBrowserClient()
+
+  // Get process type abbreviation
+  const { data: processType } = await supabase.from("process_types").select("name").eq("id", processTypeId).single()
+
+  // Create abbreviation from first letters of each word
+  const abbrev = (processType?.name || "PR")
+    .split(" ")
+    .map((word: string) => word[0]?.toUpperCase() || "")
+    .join("")
+    .slice(0, 3)
+
+  // Get current year
+  const year = new Date().getFullYear()
+
+  // Count existing processes of this type this year
+  const { count } = await supabase
+    .from("processes")
+    .select("*", { count: "exact", head: true })
+    .eq("process_type_id", processTypeId)
+    .gte("created_at", `${year}-01-01`)
+
+  const sequence = String((count || 0) + 1).padStart(3, "0")
+
+  return `${abbrev}-${year}-${sequence}`
+}
+
 export async function getProcess(id: string) {
   const supabase = createBrowserClient()
   const { data, error } = await supabase

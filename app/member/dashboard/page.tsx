@@ -36,8 +36,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { mockProcesses, type Process } from "@/lib/mock-data"
-import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import type { Process } from "@/lib/mock-data"
+import { getEntities, getProcessesMapped, type Entity } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "@/components/member/create-process-dialog"
 import { AIAssistant } from "@/components/member/ai-assistant"
@@ -54,6 +54,8 @@ function MemberDashboardContent() {
   const { profile, loading: profileLoading } = useProfile()
   const [entity, setEntity] = React.useState<Entity | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const [processes, setProcesses] = React.useState<Process[]>([])
+  const [loadingProcesses, setLoadingProcesses] = React.useState(true)
 
   React.useEffect(() => {
     async function loadEntity() {
@@ -76,6 +78,28 @@ function MemberDashboardContent() {
     }
   }, [profile?.organization_id, profileLoading, entityId])
 
+  React.useEffect(() => {
+    async function loadProcesses() {
+      if (!entityId) {
+        setLoadingProcesses(false)
+        return
+      }
+      try {
+        const data = await getProcessesMapped({ entityId })
+        setProcesses(data)
+      } catch (err) {
+        console.error("Error loading processes:", err)
+      } finally {
+        setLoadingProcesses(false)
+      }
+    }
+    loadProcesses()
+  }, [entityId])
+
+  const handleProcessCreated = (newProcess: Process) => {
+    setProcesses((prev) => [newProcess, ...prev])
+  }
+
   if (loading || profileLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -89,7 +113,6 @@ function MemberDashboardContent() {
     return null
   }
 
-  const processes = mockProcesses.filter((p) => p.entityId === entity.id)
   const stats = {
     total: processes.length,
     inProgress: processes.filter((p) => p.status === "in_progress").length,
@@ -99,8 +122,6 @@ function MemberDashboardContent() {
   }
 
   const completionRate = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0
-
-  // ... existing code for processColumns ...
 
   const processColumns = [
     {
@@ -246,30 +267,41 @@ function MemberDashboardContent() {
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {recentProcesses.map((proc) => (
-                <div
-                  key={proc.id}
-                  className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/50 cursor-pointer"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                      <FolderKanban className="h-5 w-5 text-primary" />
+            {loadingProcesses ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : recentProcesses.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <FolderKanban className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>No hay procesos registrados</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {recentProcesses.map((proc) => (
+                  <div
+                    key={proc.id}
+                    className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/50 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                        <FolderKanban className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{proc.code}</p>
+                        <p className="text-sm text-muted-foreground line-clamp-1">{proc.object}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{proc.code}</p>
-                      <p className="text-sm text-muted-foreground line-clamp-1">{proc.object}</p>
+                    <div className="flex items-center gap-4">
+                      <StatusBadge status={proc.status} />
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(proc.updatedAt).toLocaleDateString("es-CO")}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <StatusBadge status={proc.status} />
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(proc.updatedAt).toLocaleDateString("es-CO")}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -376,17 +408,27 @@ function MemberDashboardContent() {
           </Button>
         </CardHeader>
         <CardContent>
-          <DataTable
-            data={processes}
-            columns={processColumns}
-            searchPlaceholder="Buscar proceso..."
-            searchKey="object"
-          />
+          {loadingProcesses ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <DataTable
+              data={processes}
+              columns={processColumns}
+              searchPlaceholder="Buscar proceso..."
+              searchKey="object"
+            />
+          )}
         </CardContent>
       </Card>
 
-      {/* Create Process Dialog */}
-      <CreateProcessDialog open={isCreateProcessOpen} onOpenChange={setIsCreateProcessOpen} entity={entity} />
+      {/* Create Process Dialog - Added onProcessCreated callback */}
+      <CreateProcessDialog
+        open={isCreateProcessOpen}
+        onOpenChange={setIsCreateProcessOpen}
+        onProcessCreated={handleProcessCreated}
+      />
 
       {/* AI Assistant */}
       <AIAssistant open={isAssistantOpen} onOpenChange={setIsAssistantOpen} />

@@ -44,16 +44,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { mockProcesses, type Process } from "@/lib/mock-data"
-import { getProcessTypes, getEntities, type ProcessType, type Entity } from "@/lib/supabase/client-data-access"
+import type { Process } from "@/lib/mock-data"
+import {
+  getProcessTypes,
+  getEntities,
+  getProcessesMapped,
+  deleteProcess as deleteProcessDB,
+  type ProcessType,
+  type Entity,
+} from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "./create-process-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
 export function ProcessesPage() {
-  const [processes, setProcesses] = React.useState(mockProcesses)
+  const [processes, setProcesses] = React.useState<Process[]>([])
+  const [isLoadingProcesses, setIsLoadingProcesses] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<ProcessStatus>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
@@ -61,6 +68,8 @@ export function ProcessesPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
   const [selectedProcess, setSelectedProcess] = React.useState<Process | null>(null)
   const [isViewDialogOpen, setIsViewDialogOpen] = React.useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false)
+  const [isDeleting, setIsDeleting] = React.useState(false)
 
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
@@ -69,13 +78,31 @@ export function ProcessesPage() {
   const [entities, setEntities] = React.useState<Entity[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(true)
 
+  const loadProcesses = React.useCallback(async () => {
+    if (!profile?.organization_id) return
+    try {
+      setIsLoadingProcesses(true)
+      const data = await getProcessesMapped()
+      setProcesses(data)
+    } catch (error) {
+      console.error("Error loading processes:", error)
+    } finally {
+      setIsLoadingProcesses(false)
+    }
+  }, [profile?.organization_id])
+
+  React.useEffect(() => {
+    loadProcesses()
+  }, [loadProcesses])
+
+  // Load process types from database
   React.useEffect(() => {
     async function loadProcessTypes() {
       try {
         const types = await getProcessTypes()
         setProcessTypes(types)
-      } catch (err) {
-        console.error("Error loading process types:", err)
+      } catch (error) {
+        console.error("Error loading process types:", error)
       } finally {
         setIsLoadingTypes(false)
       }
@@ -83,67 +110,84 @@ export function ProcessesPage() {
     loadProcessTypes()
   }, [])
 
+  // Load entities from database
   React.useEffect(() => {
     async function loadEntities() {
       if (!profile?.organization_id) return
       try {
         const data = await getEntities(profile.organization_id)
         setEntities(data)
-      } catch (err) {
-        console.error("Error loading entities:", err)
+      } catch (error) {
+        console.error("Error loading entities:", error)
       } finally {
         setIsLoadingEntities(false)
       }
     }
-    if (profile?.organization_id) {
-      loadEntities()
-    }
+    loadEntities()
   }, [profile?.organization_id])
 
-  const hasActiveFilters = statusFilter !== "all" || entityFilter !== "all" || processTypeFilter !== "all"
+  const handleProcessCreated = (newProcess: Process) => {
+    setProcesses((prev) => [newProcess, ...prev])
+  }
+
+  const handleDeleteProcess = async () => {
+    if (!selectedProcess) return
+    try {
+      setIsDeleting(true)
+      await deleteProcessDB(selectedProcess.id)
+      setProcesses((prev) => prev.filter((p) => p.id !== selectedProcess.id))
+      setIsDeleteDialogOpen(false)
+      setSelectedProcess(null)
+    } catch (error) {
+      console.error("Error deleting process:", error)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // Filter processes
+  const filteredProcesses = processes.filter((process) => {
+    const matchesSearch =
+      searchQuery === "" ||
+      process.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      process.object.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      process.entityName.toLowerCase().includes(searchQuery.toLowerCase())
+
+    const matchesStatus = statusFilter === "all" || process.status === statusFilter
+    const matchesEntity = entityFilter === "all" || process.entityId === entityFilter
+    const matchesProcessType = processTypeFilter === "all" || process.processTypeId === processTypeFilter
+
+    return matchesSearch && matchesStatus && matchesEntity && matchesProcessType
+  })
+
+  // Calculate stats
+  const stats = {
+    total: processes.length,
+    draft: processes.filter((p) => p.status === "draft").length,
+    inProgress: processes.filter((p) => p.status === "in_progress").length,
+    review: processes.filter((p) => p.status === "review").length,
+    completed: processes.filter((p) => p.status === "completed").length,
+  }
 
   const clearFilters = () => {
+    setSearchQuery("")
     setStatusFilter("all")
     setEntityFilter("all")
     setProcessTypeFilter("all")
   }
 
-  const filteredProcesses = React.useMemo(() => {
-    return processes.filter((process) => {
-      const matchesSearch =
-        searchQuery === "" ||
-        process.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        process.object.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        process.entityName.toLowerCase().includes(searchQuery.toLowerCase())
-
-      const matchesStatus = statusFilter === "all" || process.status === statusFilter
-      const matchesEntity = entityFilter === "all" || process.entityId === entityFilter
-      const matchesProcessType = processTypeFilter === "all" || process.processTypeId === processTypeFilter
-
-      return matchesSearch && matchesStatus && matchesEntity && matchesProcessType
-    })
-  }, [processes, searchQuery, statusFilter, entityFilter, processTypeFilter])
-
-  const stats = React.useMemo(() => {
-    return {
-      total: processes.length,
-      draft: processes.filter((p) => p.status === "draft").length,
-      inProgress: processes.filter((p) => p.status === "in_progress").length,
-      review: processes.filter((p) => p.status === "review").length,
-      completed: processes.filter((p) => p.status === "completed").length,
-    }
-  }, [processes])
-
-  const handleViewProcess = (process: Process) => {
-    setSelectedProcess(process)
-    setIsViewDialogOpen(true)
-  }
+  const hasActiveFilters =
+    searchQuery || statusFilter !== "all" || entityFilter !== "all" || processTypeFilter !== "all"
 
   return (
-    <div className="flex flex-col gap-8 p-8">
-      <PageHeader title="Mis Procesos" description="Gestiona los procesos de contratación de tus entidades">
-        <Button onClick={() => setIsCreateDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Mis Procesos"
+        description="Gestiona y monitorea todos tus procesos de contratación"
+        badge={{ text: `${processes.length} procesos`, variant: "secondary" }}
+      >
+        <Button className="gap-2" onClick={() => setIsCreateDialogOpen(true)}>
+          <Plus className="h-4 w-4" />
           Nuevo Proceso
         </Button>
       </PageHeader>
@@ -151,64 +195,41 @@ export function ProcessesPage() {
       {/* Stats Grid */}
       <div className="grid gap-4 sm:grid-cols-5">
         <StatsCard title="Total Procesos" value={stats.total} description="Procesos registrados" icon={FolderKanban} />
-        <StatsCard
-          title="Borradores"
-          value={stats.draft}
-          description="Pendientes de iniciar"
-          icon={FileText}
-          variant="warning"
-        />
-        <StatsCard
-          title="En Progreso"
-          value={stats.inProgress}
-          description="Procesos activos"
-          icon={Clock}
-          variant="info"
-        />
-        <StatsCard
-          title="En Revisión"
-          value={stats.review}
-          description="Pendientes de aprobación"
-          icon={AlertCircle}
-          variant="warning"
-        />
-        <StatsCard
-          title="Completados"
-          value={stats.completed}
-          description="Finalizados exitosamente"
-          icon={CheckCircle2}
-          variant="success"
-        />
+        <StatsCard title="Borradores" value={stats.draft} description="Pendientes de iniciar" icon={FileText} />
+        <StatsCard title="En Progreso" value={stats.inProgress} description="Procesos activos" icon={Clock} />
+        <StatsCard title="En Revisión" value={stats.review} description="Pendientes de aprobación" icon={AlertCircle} />
+        <StatsCard title="Completados" value={stats.completed} description="Procesos finalizados" icon={CheckCircle2} />
       </div>
 
-      {/* Main Content */}
+      {/* Filters */}
       <Card>
-        <CardHeader className="pb-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle>Procesos de Contratación</CardTitle>
-              <CardDescription>
-                Lista de todos los procesos de contratación registrados en el sistema para tus entidades asignadas.
-              </CardDescription>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Filtros</CardTitle>
             </div>
+            {hasActiveFilters && (
+              <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 gap-1 text-xs">
+                <X className="h-3 w-3" />
+                Limpiar filtros
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
-          {/* Filters */}
-          <div className="mb-6 flex flex-wrap items-center gap-4">
-            <div className="relative flex-1 min-w-[200px] max-w-md">
+          <div className="flex flex-wrap gap-4">
+            <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por código, objeto o entidad..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-9"
               />
             </div>
-
-            <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as ProcessStatus)}>
-              <SelectTrigger className="w-[160px]">
-                <Clock className="mr-2 h-4 w-4" />
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ProcessStatus)}>
+              <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
               <SelectContent>
@@ -220,7 +241,6 @@ export function ProcessesPage() {
                 <SelectItem value="archived">Archivado</SelectItem>
               </SelectContent>
             </Select>
-
             <Select value={entityFilter} onValueChange={setEntityFilter}>
               <SelectTrigger className="w-[200px]">
                 <Building className="mr-2 h-4 w-4" />
@@ -230,7 +250,6 @@ export function ProcessesPage() {
                 <SelectItem value="all">Todas las entidades</SelectItem>
                 {isLoadingEntities ? (
                   <SelectItem value="loading" disabled>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Cargando...
                   </SelectItem>
                 ) : (
@@ -242,17 +261,14 @@ export function ProcessesPage() {
                 )}
               </SelectContent>
             </Select>
-
             <Select value={processTypeFilter} onValueChange={setProcessTypeFilter}>
-              <SelectTrigger className="w-[180px]">
-                <Filter className="mr-2 h-4 w-4" />
-                <SelectValue placeholder="Tipo" />
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Tipo de proceso" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los tipos</SelectItem>
                 {isLoadingTypes ? (
                   <SelectItem value="loading" disabled>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Cargando...
                   </SelectItem>
                 ) : (
@@ -264,17 +280,25 @@ export function ProcessesPage() {
                 )}
               </SelectContent>
             </Select>
-
-            {hasActiveFilters && (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                <X className="mr-1 h-4 w-4" />
-                Limpiar filtros
-              </Button>
-            )}
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Processes Table */}
-          <div className="rounded-md border">
+      {/* Processes Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Listado de Procesos</CardTitle>
+          <CardDescription>
+            {filteredProcesses.length} proceso(s) encontrado(s)
+            {hasActiveFilters && " con los filtros aplicados"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoadingProcesses ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -284,7 +308,7 @@ export function ProcessesPage() {
                   <TableHead>Tipo</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-center">Docs</TableHead>
-                  <TableHead className="text-right">Actualización</TableHead>
+                  <TableHead>Actualizado</TableHead>
                   <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -292,11 +316,11 @@ export function ProcessesPage() {
                 {filteredProcesses.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="h-24 text-center">
-                      <div className="flex flex-col items-center justify-center text-muted-foreground">
-                        <FolderKanban className="mb-2 h-8 w-8" />
-                        <p>No se encontraron procesos</p>
+                      <div className="flex flex-col items-center gap-2">
+                        <FolderKanban className="h-8 w-8 text-muted-foreground" />
+                        <p className="text-muted-foreground">No se encontraron procesos</p>
                         {hasActiveFilters && (
-                          <Button variant="link" size="sm" onClick={clearFilters} className="mt-1">
+                          <Button variant="link" size="sm" onClick={clearFilters}>
                             Limpiar filtros
                           </Button>
                         )}
@@ -305,12 +329,8 @@ export function ProcessesPage() {
                   </TableRow>
                 ) : (
                   filteredProcesses.map((process) => (
-                    <TableRow key={process.id} className="group">
-                      <TableCell className="font-medium">
-                        <Badge variant="outline" className="font-mono">
-                          {process.code}
-                        </Badge>
-                      </TableCell>
+                    <TableRow key={process.id}>
+                      <TableCell className="font-mono text-sm font-medium">{process.code}</TableCell>
                       <TableCell>
                         <div className="max-w-[300px]">
                           <p className="truncate font-medium">{process.object}</p>
@@ -318,39 +338,36 @@ export function ProcessesPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className="text-sm">{process.entityName}</span>
+                        <Badge variant="outline" className="font-normal">
+                          {process.entityName}
+                        </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary" className="text-xs">
-                          {process.processTypeName}
-                        </Badge>
+                        <span className="text-sm">{process.processTypeName}</span>
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={process.status} />
                       </TableCell>
                       <TableCell className="text-center">
-                        <Badge variant="outline" className="text-xs">
-                          {process.documentsCount}
-                        </Badge>
+                        <Badge variant="secondary">{process.documentsCount}</Badge>
                       </TableCell>
-                      <TableCell className="text-right text-sm text-muted-foreground">
-                        {new Date(process.updatedAt).toLocaleDateString("es-CO")}
-                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleViewProcess(process)}>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedProcess(process)
+                                setIsViewDialogOpen(true)
+                              }}
+                            >
                               <Eye className="mr-2 h-4 w-4" />
-                              Ver Detalles
+                              Ver detalles
                             </DropdownMenuItem>
                             <DropdownMenuItem>
                               <Pencil className="mr-2 h-4 w-4" />
@@ -365,7 +382,13 @@ export function ProcessesPage() {
                               <Archive className="mr-2 h-4 w-4" />
                               Archivar
                             </DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive">
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => {
+                                setSelectedProcess(process)
+                                setIsDeleteDialogOpen(true)
+                              }}
+                            >
                               <Trash2 className="mr-2 h-4 w-4" />
                               Eliminar
                             </DropdownMenuItem>
@@ -377,98 +400,71 @@ export function ProcessesPage() {
                 )}
               </TableBody>
             </Table>
-          </div>
+          )}
         </CardContent>
       </Card>
 
       {/* Create Process Dialog */}
-      <CreateProcessDialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen} />
+      <CreateProcessDialog
+        open={isCreateDialogOpen}
+        onOpenChange={setIsCreateDialogOpen}
+        onProcessCreated={handleProcessCreated}
+      />
 
       {/* View Process Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Badge variant="outline" className="font-mono">
-                {selectedProcess?.code}
-              </Badge>
-              <span className="text-muted-foreground">|</span>
-              <StatusBadge status={selectedProcess?.status || "draft"} />
+              <span className="font-mono text-sm font-normal text-muted-foreground">{selectedProcess?.code}</span>
+              Detalles del Proceso
             </DialogTitle>
-            <DialogDescription>{selectedProcess?.object}</DialogDescription>
           </DialogHeader>
           {selectedProcess && (
-            <div className="space-y-6 py-4">
-              <Tabs defaultValue="info" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="info">Información</TabsTrigger>
-                  <TabsTrigger value="documents">Documentos ({selectedProcess.documentsCount})</TabsTrigger>
-                  <TabsTrigger value="history">Historial</TabsTrigger>
-                </TabsList>
-                <TabsContent value="info" className="space-y-4 pt-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-muted-foreground">Entidad</p>
-                      <p className="font-medium">{selectedProcess.entityName}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-muted-foreground">Secretaría</p>
-                      <p className="font-medium">{selectedProcess.secretaryName}</p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-muted-foreground">Tipo de Proceso</p>
-                      <Badge variant="secondary">{selectedProcess.processTypeName}</Badge>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-muted-foreground">Versión Actual</p>
-                      <Badge variant="outline">v{selectedProcess.currentVersion}</Badge>
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-muted-foreground">Descripción</p>
-                    <p className="text-sm">{selectedProcess.description}</p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-muted-foreground">Fecha de Creación</p>
-                      <p className="text-sm">
-                        {new Date(selectedProcess.createdAt).toLocaleDateString("es-CO", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                        })}
-                      </p>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-muted-foreground">Última Actualización</p>
-                      <p className="text-sm">
-                        {new Date(selectedProcess.updatedAt).toLocaleDateString("es-CO", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                        })}
-                      </p>
-                    </div>
-                  </div>
-                </TabsContent>
-                <TabsContent value="documents" className="pt-4">
-                  <div className="flex flex-col items-center justify-center py-8 text-center">
-                    <FileText className="mb-2 h-10 w-10 text-muted-foreground/50" />
-                    <p className="text-sm text-muted-foreground">
-                      {selectedProcess.documentsCount} documento(s) asociado(s)
-                    </p>
-                    <Button variant="outline" size="sm" className="mt-4 bg-transparent">
-                      Ver Documentos
-                    </Button>
-                  </div>
-                </TabsContent>
-                <TabsContent value="history" className="pt-4">
-                  <div className="flex flex-col items-center justify-center py-8 text-center">
-                    <Clock className="mb-2 h-10 w-10 text-muted-foreground/50" />
-                    <p className="text-sm text-muted-foreground">Historial de cambios no disponible</p>
-                  </div>
-                </TabsContent>
-              </Tabs>
+            <div className="space-y-6">
+              <div>
+                <h4 className="font-semibold mb-2">Objeto del Proceso</h4>
+                <p className="text-sm text-muted-foreground">{selectedProcess.object}</p>
+              </div>
+              <div>
+                <h4 className="font-semibold mb-2">Descripción</h4>
+                <p className="text-sm text-muted-foreground">{selectedProcess.description}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-semibold mb-1">Entidad</h4>
+                  <p className="text-sm text-muted-foreground">{selectedProcess.entityName}</p>
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Secretaría</h4>
+                  <p className="text-sm text-muted-foreground">{selectedProcess.secretaryName}</p>
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Tipo de Proceso</h4>
+                  <p className="text-sm text-muted-foreground">{selectedProcess.processTypeName}</p>
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Estado</h4>
+                  <StatusBadge status={selectedProcess.status} />
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Fecha de Creación</h4>
+                  <p className="text-sm text-muted-foreground">{selectedProcess.createdAt}</p>
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Última Actualización</h4>
+                  <p className="text-sm text-muted-foreground">{selectedProcess.updatedAt}</p>
+                </div>
+              </div>
+              <div className="flex gap-4">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">{selectedProcess.documentsCount} documentos</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Versión {selectedProcess.currentVersion}</span>
+                </div>
+              </div>
             </div>
           )}
           <DialogFooter>
@@ -478,6 +474,36 @@ export function ProcessesPage() {
             <Button>
               <Pencil className="mr-2 h-4 w-4" />
               Editar Proceso
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar Proceso</DialogTitle>
+            <DialogDescription>
+              ¿Estás seguro de que deseas eliminar el proceso <strong>{selectedProcess?.code}</strong>? Esta acción no
+              se puede deshacer y eliminará todos los documentos asociados.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} disabled={isDeleting}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteProcess} disabled={isDeleting}>
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Eliminar
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
