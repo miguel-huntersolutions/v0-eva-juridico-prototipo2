@@ -179,7 +179,83 @@ export async function getTemplates(processTypeId?: string) {
 
   const { data, error } = await query
   if (error) throw error
-  return data as Template[]
+
+  return (data || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    processTypeId: t.process_type_id,
+    fileUrl: t.file_url,
+    createdAt: t.created_at?.split("T")[0] || "",
+  })) as Template[]
+}
+
+export async function createTemplate(data: {
+  name: string
+  processTypeId: string
+  fileUrl: string
+}) {
+  const supabase = createBrowserClient()
+
+  const { data: newTemplate, error } = await supabase
+    .from("templates")
+    .insert({
+      name: data.name,
+      process_type_id: data.processTypeId,
+      file_url: data.fileUrl,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return {
+    id: newTemplate.id,
+    name: newTemplate.name,
+    processTypeId: newTemplate.process_type_id,
+    fileUrl: newTemplate.file_url,
+    createdAt: newTemplate.created_at?.split("T")[0] || "",
+  } as Template
+}
+
+export async function updateTemplate(
+  id: string,
+  data: Partial<{
+    name: string
+    processTypeId: string
+    fileUrl: string
+  }>,
+) {
+  const supabase = createBrowserClient()
+
+  const updateData: Record<string, unknown> = {}
+  if (data.name) updateData.name = data.name
+  if (data.processTypeId) updateData.process_type_id = data.processTypeId
+  if (data.fileUrl) updateData.file_url = data.fileUrl
+
+  const { data: updatedTemplate, error } = await supabase
+    .from("templates")
+    .update(updateData)
+    .eq("id", id)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return {
+    id: updatedTemplate.id,
+    name: updatedTemplate.name,
+    processTypeId: updatedTemplate.process_type_id,
+    fileUrl: updatedTemplate.file_url,
+    createdAt: updatedTemplate.created_at?.split("T")[0] || "",
+  } as Template
+}
+
+export async function deleteTemplate(id: string) {
+  const supabase = createBrowserClient()
+
+  const { error } = await supabase.from("templates").delete().eq("id", id)
+
+  if (error) throw error
 }
 
 // Processes
