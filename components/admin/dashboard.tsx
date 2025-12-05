@@ -41,6 +41,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { getEntities, type Entity, type Profile } from "@/lib/supabase/client-data-access"
 import { createBrowserClient } from "@/lib/supabase/client"
+import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import { useProfile } from "@/hooks/use-profile"
+import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
 interface EntityWithCount extends Entity {
   processesCount?: number
@@ -53,39 +56,43 @@ export function AdminDashboard() {
   const [entities, setEntities] = React.useState<EntityWithCount[]>([])
   const [members, setMembers] = React.useState<Profile[]>([])
   const [totalProcesses, setTotalProcesses] = React.useState(0)
-  const [organizationName, setOrganizationName] = React.useState("Bufete García & Asociados")
+  const [organizationName, setOrganizationName] = React.useState("")
+
+  const { profile } = useProfile()
+  const { actualRole, isSimulating } = useRoleSwitcher(profile?.role)
+  const { effectiveOrganizationId, selectedOrganization } = useOrganizationSelector({
+    userOrganizationId: profile?.organization_id,
+    isSuperadmin: actualRole === "superadmin",
+    isSimulatingAdmin: isSimulating && actualRole === "superadmin",
+  })
 
   React.useEffect(() => {
     async function loadData() {
+      if (!effectiveOrganizationId) {
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
         const supabase = createBrowserClient()
 
-        // Get current user's organization
-        const {
-          data: { user },
-        } = await supabase.auth.getUser()
-        let orgId = "11111111-1111-1111-1111-111111111111" // Default org for demo
+        if (selectedOrganization) {
+          setOrganizationName(selectedOrganization.name)
+        } else {
+          const { data: org } = await supabase
+            .from("organizations")
+            .select("name")
+            .eq("id", effectiveOrganizationId)
+            .single()
 
-        if (user) {
-          const { data: profile } = await supabase.from("profiles").select("organization_id").eq("id", user.id).single()
-
-          if (profile?.organization_id) {
-            orgId = profile.organization_id
+          if (org) {
+            setOrganizationName(org.name)
           }
         }
 
-        // Get organization name
-        const { data: org } = await supabase.from("organizations").select("name").eq("id", orgId).single()
+        const entitiesData = await getEntities(effectiveOrganizationId)
 
-        if (org) {
-          setOrganizationName(org.name)
-        }
-
-        // Get entities for this organization
-        const entitiesData = await getEntities(orgId)
-
-        // Get processes count for each entity
         const entitiesWithCount = await Promise.all(
           entitiesData.map(async (entity) => {
             const { count } = await supabase
@@ -103,11 +110,10 @@ export function AdminDashboard() {
         setEntities(entitiesWithCount)
         setTotalProcesses(entitiesWithCount.reduce((acc, e) => acc + (e.processesCount || 0), 0))
 
-        // Get members for this organization
         const { data: membersData } = await supabase
           .from("profiles")
           .select("*")
-          .eq("organization_id", orgId)
+          .eq("organization_id", effectiveOrganizationId)
           .eq("role", "member")
 
         setMembers(membersData || [])
@@ -118,7 +124,7 @@ export function AdminDashboard() {
       }
     }
     loadData()
-  }, [])
+  }, [effectiveOrganizationId, selectedOrganization])
 
   const stats = {
     totalEntities: entities.length,
@@ -259,7 +265,6 @@ export function AdminDashboard() {
     <div className="flex flex-col gap-8 p-8">
       <PageHeader title="Administración de Organización" description={organizationName} />
 
-      {/* Stats Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
           title="Entidades"
@@ -283,7 +288,6 @@ export function AdminDashboard() {
         />
       </div>
 
-      {/* Tabs for Entities and Members */}
       <Tabs defaultValue="entities" className="space-y-4">
         <div className="flex items-center justify-between">
           <TabsList>
@@ -339,7 +343,6 @@ export function AdminDashboard() {
         </TabsContent>
       </Tabs>
 
-      {/* Create Entity Dialog */}
       <Dialog open={isCreateEntityOpen} onOpenChange={setIsCreateEntityOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
@@ -379,7 +382,6 @@ export function AdminDashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Invite Member Dialog */}
       <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

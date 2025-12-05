@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   UserCog,
   ArrowLeftRight,
+  RefreshCw,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -42,6 +43,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient } from "@/lib/supabase/client"
 import type { Profile, UserRole } from "@/lib/types/database"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
+import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 
 interface NavItem {
   title: string
@@ -86,9 +88,10 @@ interface UserData {
 interface AppSidebarProps {
   profile?: Profile | null
   user?: UserData | null
+  selectedOrganizationId?: string
 }
 
-export function AppSidebar({ profile, user }: AppSidebarProps) {
+export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
 
@@ -107,6 +110,12 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
     ("avatar_url" in userData ? userData.avatar_url : null) || ("avatar" in userData ? (userData as any).avatar : null)
 
   const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(actualRole)
+
+  const { selectedOrganization, canChangeOrganization, clearSelection } = useOrganizationSelector({
+    userOrganizationId: profile?.organization_id,
+    isSuperadmin: actualRole === "superadmin",
+    isSimulatingAdmin: isSimulating && effectiveRole === "admin",
+  })
 
   const filteredItems = navItems.filter((item) => item.roles.includes(effectiveRole))
 
@@ -134,6 +143,7 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
 
   const handleLogout = async () => {
     resetRole()
+    clearSelection()
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push("/auth/login")
@@ -142,6 +152,9 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
 
   const handleRoleSwitch = (role: UserRole | null) => {
     switchToRole(role)
+    if (role !== "admin") {
+      clearSelection()
+    }
     if (role === null || role === "superadmin") {
       router.push("/dashboard")
     } else if (role === "admin") {
@@ -149,6 +162,11 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
     } else if (role === "member") {
       router.push("/member/dashboard")
     }
+  }
+
+  const handleChangeOrganization = () => {
+    clearSelection()
+    window.location.reload()
   }
 
   return (
@@ -179,6 +197,21 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
             <ShieldCheck className="mr-1.5 h-3 w-3" />
             Volver a Superadmin
           </Button>
+        </div>
+      )}
+
+      {effectiveRole === "admin" && selectedOrganization && (
+        <div className="mx-3 mt-3 rounded-lg bg-muted/50 border p-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Building2 className="h-3.5 w-3.5" />
+            <span className="font-medium truncate">{selectedOrganization.name}</span>
+          </div>
+          {canChangeOrganization && (
+            <Button variant="ghost" size="sm" className="mt-1.5 h-6 w-full text-xs" onClick={handleChangeOrganization}>
+              <RefreshCw className="mr-1.5 h-3 w-3" />
+              Cambiar Organización
+            </Button>
+          )}
         </div>
       )}
 
@@ -264,6 +297,15 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
               <Settings className="mr-2 h-4 w-4" />
               Configuración
             </DropdownMenuItem>
+            {canChangeOrganization && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleChangeOrganization}>
+                  <Building2 className="mr-2 h-4 w-4" />
+                  Cambiar Organización
+                </DropdownMenuItem>
+              </>
+            )}
             {canSwitchRole && (
               <>
                 <DropdownMenuSeparator />
