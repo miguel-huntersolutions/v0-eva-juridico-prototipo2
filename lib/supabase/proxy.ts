@@ -29,39 +29,33 @@ export async function updateSession(request: NextRequest) {
       },
     })
 
+    // getSession reads from cookies locally without making a network request
     const {
-      data: { user },
-    } = await supabase.auth.getUser()
+      data: { session },
+    } = await supabase.auth.getSession()
 
     // Protected routes - redirect to login if not authenticated
     const protectedPaths = ["/superadmin", "/admin", "/member", "/dashboard"]
     const isProtectedPath = protectedPaths.some((path) => request.nextUrl.pathname.startsWith(path))
 
-    if (isProtectedPath && !user) {
+    if (isProtectedPath && !session) {
       const url = request.nextUrl.clone()
-      url.pathname = "/auth/login"
+      url.pathname = "/login"
       return NextResponse.redirect(url)
     }
 
-    // If user is logged in and tries to access auth pages, redirect to dashboard
-    const authPaths = ["/auth/login", "/auth/sign-up"]
-    const isAuthPath = authPaths.some((path) => request.nextUrl.pathname.startsWith(path))
+    // If user is logged in and tries to access auth pages, redirect based on role
+    const authPaths = ["/auth/login", "/auth/sign-up", "/login"]
+    const isAuthPath = authPaths.some((path) => request.nextUrl.pathname === path)
 
-    if (isAuthPath && user) {
-      const url = request.nextUrl.clone()
-      url.pathname = "/dashboard"
-      return NextResponse.redirect(url)
+    if (isAuthPath && session) {
+      // Don't redirect to dashboard, the page will handle it
+      return supabaseResponse
     }
   } catch (error) {
-    // If Supabase connection fails, allow access to non-protected routes
-    const protectedPaths = ["/superadmin", "/admin", "/member", "/dashboard"]
-    const isProtectedPath = protectedPaths.some((path) => request.nextUrl.pathname.startsWith(path))
-
-    if (isProtectedPath) {
-      const url = request.nextUrl.clone()
-      url.pathname = "/auth/login"
-      return NextResponse.redirect(url)
-    }
+    // This prevents the redirect loop when Supabase connection fails
+    console.error("[middleware] Error checking session:", error)
+    return supabaseResponse
   }
 
   return supabaseResponse

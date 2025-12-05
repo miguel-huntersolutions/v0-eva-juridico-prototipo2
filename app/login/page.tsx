@@ -2,7 +2,19 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { Building2, FileText, Shield, Scale, ArrowRight, Sparkles, Mail, Lock, Eye, EyeOff } from "lucide-react"
+import {
+  Building2,
+  FileText,
+  Shield,
+  Scale,
+  ArrowRight,
+  Sparkles,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+  Loader2,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -66,6 +78,33 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [mode, setMode] = React.useState<"login" | "demo">("login")
+  const [checkingAuth, setCheckingAuth] = React.useState(true)
+
+  React.useEffect(() => {
+    async function checkExistingSession() {
+      try {
+        const supabase = createBrowserClient()
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+
+        if (session?.user) {
+          const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single()
+
+          const role = profile?.role || "member"
+          const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          router.replace(route)
+          return
+        }
+      } catch (err) {
+        console.log("[v0] Error checking session:", err)
+      } finally {
+        setCheckingAuth(false)
+      }
+    }
+
+    checkExistingSession()
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -86,12 +125,12 @@ export default function LoginPage() {
       }
 
       if (data.user) {
-        // Get user profile to determine redirect
         const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
 
         const role = profile?.role || "member"
         const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
-        router.push(route)
+        router.replace(route)
+        router.refresh()
       }
     } catch (err) {
       setError("Error al iniciar sesión")
@@ -105,6 +144,17 @@ export default function LoginPage() {
     setTimeout(() => {
       router.push(route)
     }, 800)
+  }
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Verificando sesión...</p>
+        </div>
+      </div>
+    )
   }
 
   return (

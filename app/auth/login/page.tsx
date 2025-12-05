@@ -9,15 +9,42 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
-import { FileText } from "lucide-react"
+import { useState, useEffect } from "react"
+import { FileText, Loader2 } from "lucide-react"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
   const router = useRouter()
+
+  useEffect(() => {
+    async function checkExistingSession() {
+      try {
+        const supabase = createClient()
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+
+        if (session?.user) {
+          const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single()
+
+          const role = profile?.role || "member"
+          const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          router.replace(route)
+          return
+        }
+      } catch (err) {
+        console.log("[v0] Error checking session:", err)
+      } finally {
+        setCheckingAuth(false)
+      }
+    }
+
+    checkExistingSession()
+  }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,13 +53,20 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
       if (error) throw error
-      router.push("/dashboard")
-      router.refresh()
+
+      if (data.user) {
+        const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
+
+        const role = profile?.role || "member"
+        const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+        router.replace(route)
+        router.refresh()
+      }
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "Ocurrió un error")
     } finally {
@@ -40,11 +74,21 @@ export default function LoginPage() {
     }
   }
 
+  if (checkingAuth) {
+    return (
+      <div className="flex min-h-svh w-full items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Verificando sesión...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-svh w-full items-center justify-center bg-background p-6 md:p-10">
       <div className="w-full max-w-sm">
         <div className="flex flex-col gap-6">
-          {/* Logo */}
           <div className="flex items-center justify-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
               <FileText className="h-6 w-6 text-primary-foreground" />
