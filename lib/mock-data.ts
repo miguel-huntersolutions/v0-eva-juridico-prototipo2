@@ -1,578 +1,1422 @@
-// Mock data for prototype demonstration
-import type { User, Client, Process, AuditLog, ProcessDocument, ProcessComment, ProcessTypeTemplate, KnowledgeDocument, ChatSession } from "./types"
+// Mock data for EVA Jurídico platform
+export type UserRole = "superadmin" | "admin" | "member"
 
-// Mock users with different roles
+export interface User {
+  id: string
+  name: string
+  email: string
+  role: UserRole
+  avatar?: string
+  organizationId?: string
+}
+
+export interface Organization {
+  id: string
+  name: string
+  nit: string
+  status: "active" | "inactive"
+  membersCount: number
+  entitiesCount: number
+  createdAt: string
+}
+
+export interface Entity {
+  id: string
+  name: string
+  nit: string
+  representativeName: string
+  organizationId: string
+  logoUrl?: string
+  processesCount: number
+  status: "active" | "inactive"
+}
+
+export interface Secretary {
+  id: string
+  name: string // Nombre de la secretaría (ej: Secretaría de Hacienda)
+  secretaryName: string // Nombre del secretario (persona)
+  email: string
+  phone: string
+  entityId: string
+}
+
+export interface ProcessType {
+  id: string
+  name: string
+  description: string
+  // templateId removed - now templates reference processTypeId instead (1:N relationship)
+}
+
+export interface Template {
+  id: string
+  name: string
+  processTypeId: string
+  fileUrl: string
+  createdAt: string
+}
+
+export interface Process {
+  id: string
+  code: string
+  object: string
+  description: string
+  status: "draft" | "in_progress" | "review" | "completed" | "archived"
+  entityId: string
+  entityName: string
+  secretaryId: string
+  secretaryName: string
+  processTypeId: string
+  processTypeName: string
+  createdAt: string
+  updatedAt: string
+  documentsCount: number
+  currentVersion: number
+}
+
+export interface Document {
+  id: string
+  processId: string
+  processCode: string
+  processObject: string
+  name: string
+  type: string
+  version: number
+  status: "draft" | "pending" | "approved" | "rejected"
+  entityId: string
+  entityName: string
+  fileUrl: string
+  fileSize: number
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+// Mock Users
 export const mockUsers: User[] = [
   {
-    id: "user-1",
-    email: "admin@boutic511.com",
-    name: "Carlos Rodríguez",
-    role: "super_admin",
-    clientId: null,
-    createdAt: new Date("2024-01-15"),
-    active: true,
+    id: "1",
+    name: "Carlos Mendoza",
+    email: "carlos@evajuridico.com",
+    role: "superadmin",
+    avatar: "/placeholder.svg?height=40&width=40",
   },
   {
-    id: "user-2",
-    email: "asesor@boutic511.com",
-    name: "María González",
-    role: "legal_management",
-    clientId: null,
-    createdAt: new Date("2024-01-20"),
-    active: true,
+    id: "2",
+    name: "María García",
+    email: "maria@bufetegarcia.com",
+    role: "admin",
+    organizationId: "org-1",
+    avatar: "/placeholder.svg?height=40&width=40",
+  },
+  {
+    id: "3",
+    name: "Juan Rodríguez",
+    email: "juan@bufetegarcia.com",
+    role: "member",
+    organizationId: "org-1",
+    avatar: "/placeholder.svg?height=40&width=40",
+  },
+  {
+    id: "4",
+    name: "Ana Martínez",
+    email: "ana@bufetegarcia.com",
+    role: "member",
+    organizationId: "org-1",
+    avatar: "/placeholder.svg?height=40&width=40",
   },
 ]
 
-// Mock clients (municipalities)
-export const mockClients: Client[] = [
+// Mock Organizations
+export const mockOrganizations: Organization[] = [
   {
-    id: "client-1",
+    id: "org-1",
+    name: "Bufete García & Asociados",
+    nit: "900.123.456-1",
+    status: "active",
+    membersCount: 8,
+    entitiesCount: 5,
+    createdAt: "2024-01-15",
+  },
+  {
+    id: "org-2",
+    name: "Consultores Jurídicos del Norte",
+    nit: "900.789.012-3",
+    status: "active",
+    membersCount: 12,
+    entitiesCount: 8,
+    createdAt: "2024-02-20",
+  },
+  {
+    id: "org-3",
+    name: "Asesores Legales Medellín",
+    nit: "900.345.678-9",
+    status: "active",
+    membersCount: 5,
+    entitiesCount: 3,
+    createdAt: "2024-03-10",
+  },
+  {
+    id: "org-4",
+    name: "Firma Jurídica Caribe",
+    nit: "900.901.234-5",
+    status: "inactive",
+    membersCount: 3,
+    entitiesCount: 2,
+    createdAt: "2024-04-05",
+  },
+]
+
+// Mock Entities
+export const mockEntities: Entity[] = [
+  {
+    id: "ent-1",
     name: "Alcaldía de Bogotá",
-    nit: "899999061-1",
-    address: "Carrera 8 No. 10-65, Bogotá",
-    contactName: "Carlos Rodríguez",
-    contactEmail: "admin@bogota.gov.co",
-    contactPhone: "+57 1 3387000",
-    invitationCode: "BOG-2024-001",
-    active: true,
-    createdAt: new Date("2024-02-01"),
-    contextInfo: {
-      municipality: "Bogotá D.C.",
-      contractionManual: "Manual de contratación versión 2024",
-      internalRegulations: "Decreto 1082 de 2015",
-      organizationalStructure: "Estructura organizacional aprobada 2024",
-      developmentPlan: "Plan de Desarrollo 2024-2028",
-    },
+    nit: "899.999.061-9",
+    representativeName: "Carlos Fernando Galán",
+    organizationId: "org-1",
+    processesCount: 15,
+    status: "active",
   },
   {
-    id: "client-2",
-    name: "Alcaldía de Medellín",
-    nit: "890905211-1",
-    address: "Calle 44 No. 52-165, Medellín",
-    contactName: "Laura Gómez",
-    contactEmail: "admin@medellin.gov.co",
-    contactPhone: "+57 4 3855555",
-    invitationCode: "MED-2024-001",
-    active: true,
-    createdAt: new Date("2024-02-15"),
-    contextInfo: {
-      municipality: "Medellín",
-      contractionManual: "Manual de contratación 2024",
-      internalRegulations: "Acuerdo Municipal 48 de 2023",
-    },
+    id: "ent-2",
+    name: "Gobernación de Cundinamarca",
+    nit: "899.999.114-8",
+    representativeName: "Jorge Emilio Rey",
+    organizationId: "org-1",
+    processesCount: 8,
+    status: "active",
+  },
+  {
+    id: "ent-3",
+    name: "Municipio de Chía",
+    nit: "899.999.230-7",
+    representativeName: "Leonardo Donoso",
+    organizationId: "org-1",
+    processesCount: 12,
+    status: "active",
+  },
+  {
+    id: "ent-4",
+    name: "Hospital San Rafael",
+    nit: "860.013.570-3",
+    representativeName: "Patricia Muñoz",
+    organizationId: "org-1",
+    processesCount: 6,
+    status: "active",
+  },
+  {
+    id: "ent-5",
+    name: "Universidad Distrital",
+    nit: "899.999.063-5",
+    representativeName: "Giovanny Tarazona",
+    organizationId: "org-1",
+    processesCount: 4,
+    status: "inactive",
   },
 ]
 
-// Mock processes
+// Mock Secretaries
+export const mockSecretaries: Secretary[] = [
+  {
+    id: "sec-1",
+    name: "Secretaría de Hacienda",
+    secretaryName: "Carlos Andrés Pérez",
+    email: "hacienda@alcaldia.gov.co",
+    phone: "+57 1 234 5678",
+    entityId: "ent-1",
+  },
+  {
+    id: "sec-2",
+    name: "Secretaría de Movilidad",
+    secretaryName: "María Elena Rodríguez",
+    email: "movilidad@alcaldia.gov.co",
+    phone: "+57 1 234 5679",
+    entityId: "ent-1",
+  },
+  {
+    id: "sec-3",
+    name: "Secretaría de Salud",
+    secretaryName: "Juan Pablo Martínez",
+    email: "salud@alcaldia.gov.co",
+    phone: "+57 1 234 5680",
+    entityId: "ent-1",
+  },
+  {
+    id: "sec-4",
+    name: "Secretaría de Educación",
+    secretaryName: "Laura Patricia González",
+    email: "educacion@gobernacion.gov.co",
+    phone: "+57 2 345 6789",
+    entityId: "ent-2",
+  },
+  {
+    id: "sec-5",
+    name: "Secretaría de Infraestructura",
+    secretaryName: "Roberto Carlos Sánchez",
+    email: "infraestructura@gobernacion.gov.co",
+    phone: "+57 2 345 6790",
+    entityId: "ent-2",
+  },
+]
+
+export const mockProcessTypes: ProcessType[] = [
+  {
+    id: "pt-1",
+    name: "Contratación Directa",
+    description: "Proceso de contratación directa según el artículo 2 de la Ley 1150 de 2007",
+  },
+  {
+    id: "pt-2",
+    name: "Licitación Pública",
+    description: "Proceso de licitación pública para contratos de mayor cuantía",
+  },
+  {
+    id: "pt-3",
+    name: "Selección Abreviada",
+    description: "Proceso de selección abreviada de menor cuantía",
+  },
+  {
+    id: "pt-4",
+    name: "Concurso de Méritos",
+    description: "Proceso para contratación de consultoría",
+  },
+  {
+    id: "pt-5",
+    name: "Mínima Cuantía",
+    description: "Proceso simplificado para adquisiciones de menor valor",
+  },
+]
+
+export const mockTemplates: Template[] = [
+  // Contratación Directa - Multiple templates
+  {
+    id: "tpl-1",
+    name: "Estudios Previos - Contratación Directa",
+    processTypeId: "pt-1",
+    fileUrl: "/templates/estudios-previos-cd.docx",
+    createdAt: "2024-01-10",
+  },
+  {
+    id: "tpl-1b",
+    name: "Análisis del Sector - Contratación Directa",
+    processTypeId: "pt-1",
+    fileUrl: "/templates/analisis-sector-cd.docx",
+    createdAt: "2024-01-12",
+  },
+  {
+    id: "tpl-1c",
+    name: "Minuta del Contrato - Contratación Directa",
+    processTypeId: "pt-1",
+    fileUrl: "/templates/minuta-contrato-cd.docx",
+    createdAt: "2024-01-14",
+  },
+  // Licitación Pública - Multiple templates
+  {
+    id: "tpl-2",
+    name: "Pliego de Condiciones - Licitación",
+    processTypeId: "pt-2",
+    fileUrl: "/templates/pliego-condiciones-lp.docx",
+    createdAt: "2024-01-12",
+  },
+  {
+    id: "tpl-2b",
+    name: "Estudios Previos - Licitación Pública",
+    processTypeId: "pt-2",
+    fileUrl: "/templates/estudios-previos-lp.docx",
+    createdAt: "2024-01-13",
+  },
+  {
+    id: "tpl-2c",
+    name: "Anexo Técnico - Licitación Pública",
+    processTypeId: "pt-2",
+    fileUrl: "/templates/anexo-tecnico-lp.docx",
+    createdAt: "2024-01-15",
+  },
+  {
+    id: "tpl-2d",
+    name: "Acta de Apertura - Licitación Pública",
+    processTypeId: "pt-2",
+    fileUrl: "/templates/acta-apertura-lp.docx",
+    createdAt: "2024-01-16",
+  },
+  // Selección Abreviada
+  {
+    id: "tpl-3",
+    name: "Estudios Previos - Selección Abreviada",
+    processTypeId: "pt-3",
+    fileUrl: "/templates/estudios-previos-sa.docx",
+    createdAt: "2024-01-15",
+  },
+  {
+    id: "tpl-3b",
+    name: "Invitación Pública - Selección Abreviada",
+    processTypeId: "pt-3",
+    fileUrl: "/templates/invitacion-publica-sa.docx",
+    createdAt: "2024-01-17",
+  },
+  // Concurso de Méritos
+  {
+    id: "tpl-4",
+    name: "Términos de Referencia - Concurso",
+    processTypeId: "pt-4",
+    fileUrl: "/templates/terminos-referencia-cm.docx",
+    createdAt: "2024-01-18",
+  },
+  {
+    id: "tpl-4b",
+    name: "Matriz de Evaluación - Concurso",
+    processTypeId: "pt-4",
+    fileUrl: "/templates/matriz-evaluacion-cm.docx",
+    createdAt: "2024-01-20",
+  },
+  // Mínima Cuantía
+  {
+    id: "tpl-5",
+    name: "Invitación - Mínima Cuantía",
+    processTypeId: "pt-5",
+    fileUrl: "/templates/invitacion-mc.docx",
+    createdAt: "2024-01-20",
+  },
+  {
+    id: "tpl-5b",
+    name: "Aceptación de Oferta - Mínima Cuantía",
+    processTypeId: "pt-5",
+    fileUrl: "/templates/aceptacion-oferta-mc.docx",
+    createdAt: "2024-01-22",
+  },
+]
+
+// Mock Processes
 export const mockProcesses: Process[] = [
   {
     id: "proc-1",
-    processNumber: "BOG-CD-001-2024",
-    clientId: "client-1",
-    type: "direct_contracting",
-    status: "pending_review",
-    title: "Contratación de servicios de mantenimiento",
-    description:
-      "Contratación directa para servicios de mantenimiento preventivo y correctivo de la infraestructura tecnológica de la alcaldía por un periodo de 12 meses.",
-    scopCode: "81111500",
-    scopCodeSuggested: "81111500",
-    scopCodeConfirmedBy: "user-2",
-    scopCodeConfirmedAt: new Date("2024-03-15T10:30:00"),
-    estimatedValue: 150000000,
-    duration: "12 meses",
-    createdBy: "user-2",
-    assignedTo: null,
-    createdAt: new Date("2024-03-10"),
-    updatedAt: new Date("2024-03-15"),
-    submittedAt: new Date("2024-03-15T14:20:00"),
-    reviewStartedAt: null,
-    completedAt: null,
+    code: "CD-2024-001",
+    object: "Adquisición de equipos de cómputo para la Secretaría de Hacienda",
+    description: "Compra de 50 computadores portátiles y 20 estaciones de trabajo para modernización tecnológica",
+    status: "in_progress",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    secretaryId: "sec-1",
+    secretaryName: "Secretaría de Hacienda",
+    processTypeId: "pt-1",
+    processTypeName: "Contratación Directa",
+    createdAt: "2024-11-01",
+    updatedAt: "2024-11-20",
+    documentsCount: 3,
+    currentVersion: 2,
   },
   {
     id: "proc-2",
-    processNumber: "BOG-LP-002-2024",
-    clientId: "client-1",
-    type: "public_bidding",
-    status: "in_review",
-    title: "Licitación pública para construcción de vías",
-    description:
-      "Proceso de licitación pública para la construcción y pavimentación de vías terciarias en la localidad de Usme.",
-    scopCode: "72101500",
-    scopCodeSuggested: "72101500",
-    scopCodeConfirmedBy: "user-1",
-    scopCodeConfirmedAt: new Date("2024-03-01T09:15:00"),
-    estimatedValue: 5000000000,
-    duration: "18 meses",
-    createdBy: "user-2",
-    assignedTo: "user-2",
-    createdAt: new Date("2024-02-20"),
-    updatedAt: new Date("2024-03-18"),
-    submittedAt: new Date("2024-03-01T16:00:00"),
-    reviewStartedAt: new Date("2024-03-05T08:00:00"),
-    completedAt: null,
+    code: "LP-2024-015",
+    object: "Construcción de vía terciaria en zona rural",
+    description: "Mejoramiento y pavimentación de 15 km de vía terciaria en la vereda El Rosal",
+    status: "review",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    secretaryId: "sec-2",
+    secretaryName: "Secretaría de Movilidad",
+    processTypeId: "pt-2",
+    processTypeName: "Licitación Pública",
+    createdAt: "2024-10-15",
+    updatedAt: "2024-11-18",
+    documentsCount: 5,
+    currentVersion: 3,
   },
   {
     id: "proc-3",
-    processNumber: "BOG-MC-003-2024",
-    clientId: "client-1",
-    type: "minor_purchase",
-    status: "reviewed",
-    title: "Compra de equipos de cómputo",
-    description: "Adquisición de 50 computadores portátiles para el área administrativa.",
-    scopCode: "43211500",
-    scopCodeSuggested: "43211500",
-    scopCodeConfirmedBy: "user-2",
-    scopCodeConfirmedAt: new Date("2024-02-10T11:00:00"),
-    estimatedValue: 80000000,
-    duration: "2 meses",
-    createdBy: "user-2",
-    assignedTo: "user-2",
-    createdAt: new Date("2024-02-05"),
-    updatedAt: new Date("2024-02-28"),
-    submittedAt: new Date("2024-02-10T15:30:00"),
-    reviewStartedAt: new Date("2024-02-12T09:00:00"),
-    completedAt: new Date("2024-02-28T17:00:00"),
+    code: "SA-2024-008",
+    object: "Suministro de insumos médicos hospitalarios",
+    description: "Adquisición de material médico quirúrgico y medicamentos para el primer trimestre de 2025",
+    status: "draft",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    secretaryId: "sec-3",
+    secretaryName: "Secretaría de Salud",
+    processTypeId: "pt-3",
+    processTypeName: "Selección Abreviada",
+    createdAt: "2024-11-10",
+    updatedAt: "2024-11-22",
+    documentsCount: 1,
+    currentVersion: 1,
   },
   {
     id: "proc-4",
-    processNumber: "MED-CD-001-2024",
-    clientId: "client-2",
-    type: "direct_contracting",
-    status: "draft",
-    title: "Servicios de consultoría jurídica",
-    description: "Contratación de servicios especializados de consultoría jurídica para el área de contratación.",
-    scopCode: null,
-    scopCodeSuggested: "82101500",
-    scopCodeConfirmedBy: null,
-    scopCodeConfirmedAt: null,
-    estimatedValue: 45000000,
-    duration: "6 meses",
-    createdBy: "user-2",
-    assignedTo: null,
-    createdAt: new Date("2024-03-18"),
-    updatedAt: new Date("2024-03-18"),
-    submittedAt: null,
-    reviewStartedAt: null,
-    completedAt: null,
+    code: "CM-2024-003",
+    object: "Consultoría para Plan de Ordenamiento Territorial",
+    description: "Contratación de firma consultora para actualización del POT municipal",
+    status: "completed",
+    entityId: "ent-3",
+    entityName: "Municipio de Chía",
+    secretaryId: "sec-5",
+    secretaryName: "Secretaría de Infraestructura",
+    processTypeId: "pt-4",
+    processTypeName: "Concurso de Méritos",
+    createdAt: "2024-08-20",
+    updatedAt: "2024-10-30",
+    documentsCount: 8,
+    currentVersion: 4,
+  },
+  {
+    id: "proc-5",
+    code: "MC-2024-042",
+    object: "Compra de útiles de oficina",
+    description: "Adquisición de papelería y elementos de oficina para las dependencias administrativas",
+    status: "completed",
+    entityId: "ent-2",
+    entityName: "Gobernación de Cundinamarca",
+    secretaryId: "sec-4",
+    secretaryName: "Secretaría de Educación",
+    processTypeId: "pt-5",
+    processTypeName: "Mínima Cuantía",
+    createdAt: "2024-11-05",
+    updatedAt: "2024-11-15",
+    documentsCount: 2,
+    currentVersion: 1,
   },
 ]
 
-// Mock audit logs
-export const mockAuditLogs: AuditLog[] = [
-  {
-    id: "audit-1",
-    userId: "user-2",
-    userName: "María González",
-    action: "Proceso creado",
-    entity: "process",
-    entityId: "proc-1",
-    changes: { status: "draft" },
-    ipAddress: "192.168.1.100",
-    timestamp: new Date("2024-03-10T09:00:00"),
-  },
-  {
-    id: "audit-2",
-    userId: "user-2",
-    userName: "María González",
-    action: "Código SCOP confirmado",
-    entity: "process",
-    entityId: "proc-1",
-    changes: { scopCode: "81111500" },
-    ipAddress: "192.168.1.100",
-    timestamp: new Date("2024-03-15T10:30:00"),
-  },
-  {
-    id: "audit-3",
-    userId: "user-2",
-    userName: "María González",
-    action: "Proceso enviado a revisión",
-    entity: "process",
-    entityId: "proc-1",
-    changes: { status: "pending_review" },
-    ipAddress: "192.168.1.100",
-    timestamp: new Date("2024-03-15T14:20:00"),
-  },
-  {
-    id: "audit-4",
-    userId: "user-2",
-    userName: "María González",
-    action: "Revisión iniciada",
-    entity: "process",
-    entityId: "proc-2",
-    changes: { status: "in_review", assignedTo: "user-2" },
-    ipAddress: "10.0.0.50",
-    timestamp: new Date("2024-03-05T08:00:00"),
-  },
-]
-
-export const mockDocuments: ProcessDocument[] = [
+// Mock Documents
+export const mockDocuments: Document[] = [
   {
     id: "doc-1",
     processId: "proc-1",
-    name: "Estudios Previos.pdf",
-    type: "upload",
-    url: "/legal-document-stack.png",
-    uploadedBy: "user-2",
-    uploadedAt: new Date("2024-03-10T10:00:00"),
-    hash: "a1b2c3d4e5f6",
+    processCode: "CD-2024-001",
+    processObject: "Adquisición de equipos de cómputo para la Secretaría de Hacienda",
+    name: "Estudios Previos",
+    type: "estudios_previos",
+    version: 2,
+    status: "approved",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/estudios-previos-cd-2024-001-v2.docx",
+    fileSize: 245000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-11-18",
+    updatedAt: "2024-11-20",
   },
   {
     id: "doc-2",
     processId: "proc-1",
-    name: "Cotizaciones",
-    type: "link",
-    url: "https://drive.google.com/folder/example",
-    uploadedBy: "user-2",
-    uploadedAt: new Date("2024-03-12T14:30:00"),
-    hash: "g7h8i9j0k1l2",
+    processCode: "CD-2024-001",
+    processObject: "Adquisición de equipos de cómputo para la Secretaría de Hacienda",
+    name: "Análisis del Sector",
+    type: "analisis_sector",
+    version: 1,
+    status: "approved",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/analisis-sector-cd-2024-001-v1.docx",
+    fileSize: 180000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-11-15",
+    updatedAt: "2024-11-15",
+  },
+  {
+    id: "doc-3",
+    processId: "proc-1",
+    processCode: "CD-2024-001",
+    processObject: "Adquisición de equipos de cómputo para la Secretaría de Hacienda",
+    name: "Matriz de Riesgos",
+    type: "matriz_riesgos",
+    version: 1,
+    status: "pending",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/matriz-riesgos-cd-2024-001-v1.docx",
+    fileSize: 95000,
+    createdBy: "Ana Martínez",
+    createdAt: "2024-11-19",
+    updatedAt: "2024-11-19",
+  },
+  {
+    id: "doc-4",
+    processId: "proc-2",
+    processCode: "LP-2024-015",
+    processObject: "Construcción de vía terciaria en zona rural",
+    name: "Pliego de Condiciones",
+    type: "pliego_condiciones",
+    version: 3,
+    status: "approved",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/pliego-lp-2024-015-v3.docx",
+    fileSize: 520000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-10-20",
+    updatedAt: "2024-11-18",
+  },
+  {
+    id: "doc-5",
+    processId: "proc-2",
+    processCode: "LP-2024-015",
+    processObject: "Construcción de vía terciaria en zona rural",
+    name: "Estudios Previos",
+    type: "estudios_previos",
+    version: 2,
+    status: "approved",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/estudios-previos-lp-2024-015-v2.docx",
+    fileSize: 380000,
+    createdBy: "Ana Martínez",
+    createdAt: "2024-10-18",
+    updatedAt: "2024-11-10",
+  },
+  {
+    id: "doc-6",
+    processId: "proc-2",
+    processCode: "LP-2024-015",
+    processObject: "Construcción de vía terciaria en zona rural",
+    name: "Anexo Técnico",
+    type: "anexo_tecnico",
+    version: 2,
+    status: "approved",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/anexo-tecnico-lp-2024-015-v2.docx",
+    fileSize: 290000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-10-22",
+    updatedAt: "2024-11-12",
+  },
+  {
+    id: "doc-7",
+    processId: "proc-2",
+    processCode: "LP-2024-015",
+    processObject: "Construcción de vía terciaria en zona rural",
+    name: "Matriz de Riesgos",
+    type: "matriz_riesgos",
+    version: 1,
+    status: "approved",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/matriz-riesgos-lp-2024-015-v1.docx",
+    fileSize: 125000,
+    createdBy: "Ana Martínez",
+    createdAt: "2024-10-25",
+    updatedAt: "2024-10-25",
+  },
+  {
+    id: "doc-8",
+    processId: "proc-2",
+    processCode: "LP-2024-015",
+    processObject: "Construcción de vía terciaria en zona rural",
+    name: "Cronograma",
+    type: "cronograma",
+    version: 1,
+    status: "pending",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/cronograma-lp-2024-015-v1.docx",
+    fileSize: 78000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-11-15",
+    updatedAt: "2024-11-15",
+  },
+  {
+    id: "doc-9",
+    processId: "proc-3",
+    processCode: "SA-2024-008",
+    processObject: "Suministro de insumos médicos hospitalarios",
+    name: "Estudios Previos",
+    type: "estudios_previos",
+    version: 1,
+    status: "draft",
+    entityId: "ent-1",
+    entityName: "Alcaldía de Bogotá",
+    fileUrl: "/documents/estudios-previos-sa-2024-008-v1.docx",
+    fileSize: 210000,
+    createdBy: "Ana Martínez",
+    createdAt: "2024-11-22",
+    updatedAt: "2024-11-22",
+  },
+  {
+    id: "doc-10",
+    processId: "proc-4",
+    processCode: "CM-2024-003",
+    processObject: "Consultoría para Plan de Ordenamiento Territorial",
+    name: "Términos de Referencia",
+    type: "terminos_referencia",
+    version: 4,
+    status: "approved",
+    entityId: "ent-3",
+    entityName: "Municipio de Chía",
+    fileUrl: "/documents/terminos-cm-2024-003-v4.docx",
+    fileSize: 450000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-08-25",
+    updatedAt: "2024-10-28",
+  },
+  {
+    id: "doc-11",
+    processId: "proc-4",
+    processCode: "CM-2024-003",
+    processObject: "Consultoría para Plan de Ordenamiento Territorial",
+    name: "Estudios Previos",
+    type: "estudios_previos",
+    version: 3,
+    status: "approved",
+    entityId: "ent-3",
+    entityName: "Municipio de Chía",
+    fileUrl: "/documents/estudios-previos-cm-2024-003-v3.docx",
+    fileSize: 320000,
+    createdBy: "Ana Martínez",
+    createdAt: "2024-08-22",
+    updatedAt: "2024-10-15",
+  },
+  {
+    id: "doc-12",
+    processId: "proc-5",
+    processCode: "MC-2024-042",
+    processObject: "Compra de útiles de oficina",
+    name: "Invitación Pública",
+    type: "invitacion",
+    version: 1,
+    status: "approved",
+    entityId: "ent-2",
+    entityName: "Gobernación de Cundinamarca",
+    fileUrl: "/documents/invitacion-mc-2024-042-v1.docx",
+    fileSize: 85000,
+    createdBy: "Juan Rodríguez",
+    createdAt: "2024-11-05",
+    updatedAt: "2024-11-08",
+  },
+  {
+    id: "doc-13",
+    processId: "proc-5",
+    processCode: "MC-2024-042",
+    processObject: "Compra de útiles de oficina",
+    name: "Estudios Previos",
+    type: "estudios_previos",
+    version: 1,
+    status: "approved",
+    entityId: "ent-2",
+    entityName: "Gobernación de Cundinamarca",
+    fileUrl: "/documents/estudios-previos-mc-2024-042-v1.docx",
+    fileSize: 145000,
+    createdBy: "Ana Martínez",
+    createdAt: "2024-11-05",
+    updatedAt: "2024-11-07",
   },
 ]
 
-export const mockComments: ProcessComment[] = [
+// Dashboard Stats
+export interface DashboardStats {
+  totalProcesses: number
+  activeProcesses: number
+  completedProcesses: number
+  draftProcesses: number
+  documentsGenerated: number
+  entitiesManaged: number
+}
+
+export const mockDashboardStats: DashboardStats = {
+  totalProcesses: 45,
+  activeProcesses: 12,
+  completedProcesses: 28,
+  draftProcesses: 5,
+  documentsGenerated: 156,
+  entitiesManaged: 5,
+}
+
+// AI Chat Messages
+export interface ChatMessage {
+  id: string
+  role: "user" | "assistant"
+  content: string
+  timestamp: string
+}
+
+export const mockChatMessages: ChatMessage[] = [
   {
-    id: "comment-1",
-    processId: "proc-2",
-    userId: "user-2",
-    type: "info_request",
-    content:
-      "Se requiere aclaración sobre el plazo de ejecución y la disponibilidad presupuestal. Por favor adjuntar certificado de disponibilidad presupuestal actualizado.",
-    createdAt: new Date("2024-03-06T11:00:00"),
+    id: "1",
+    role: "user",
+    content: "¿Cuáles son los requisitos para una contratación directa por urgencia manifiesta?",
+    timestamp: "2024-11-24T10:30:00",
   },
   {
-    id: "comment-2",
-    processId: "proc-2",
-    userId: "user-1",
-    type: "info_response",
-    content:
-      "Adjunto certificado de disponibilidad presupuestal CDP-2024-0156. El plazo se ajustó a 18 meses según recomendación del área técnica.",
-    createdAt: new Date("2024-03-08T09:30:00"),
-    attachments: ["/budget-certificate.jpg"],
+    id: "2",
+    role: "assistant",
+    content: `Según el artículo 42 de la Ley 80 de 1993 y el Decreto 1082 de 2015, la contratación directa por urgencia manifiesta procede cuando:
+
+**Requisitos principales:**
+1. **Situación de emergencia**: Debe existir una situación que afecte o amenace afectar la vida, salud, seguridad o que requiera atención inmediata.
+
+2. **Acto administrativo motivado**: La entidad debe expedir un acto administrativo que declare la urgencia manifiesta, explicando los hechos que la originan.
+
+3. **Imposibilidad de acudir a procesos de selección**: Debe demostrarse que no es posible adelantar un proceso de selección por el tiempo que este tomaría.
+
+**Procedimiento:**
+- Declaración mediante acto motivado
+- Comunicación a la Procuraduría y Contraloría
+- Informe detallado de los contratos celebrados
+
+**Importante:** Los contratos celebrados bajo urgencia manifiesta están sujetos a un control posterior más riguroso.`,
+    timestamp: "2024-11-24T10:31:00",
   },
 ]
 
-// Mock process types and templates
-export const mockProcessTypes: ProcessTypeTemplate[] = [
+// Document Types for filtering
+export const documentTypes = [
+  { id: "estudios_previos", name: "Estudios Previos" },
+  { id: "pliego_condiciones", name: "Pliego de Condiciones" },
+  { id: "analisis_sector", name: "Análisis del Sector" },
+  { id: "matriz_riesgos", name: "Matriz de Riesgos" },
+  { id: "anexo_tecnico", name: "Anexo Técnico" },
+  { id: "terminos_referencia", name: "Términos de Referencia" },
+  { id: "invitacion", name: "Invitación Pública" },
+  { id: "cronograma", name: "Cronograma" },
+]
+
+// Process Type Configurations with fields and requirements
+export interface ProcessTypeField {
+  id: string
+  name: string
+  label: string
+  type: "text" | "textarea" | "number" | "date" | "select"
+  placeholder?: string
+  required: boolean
+  helpText?: string
+  options?: { value: string; label: string }[]
+}
+
+export interface ProcessTypeConfig {
+  id: string
+  name: string
+  description: string
+  requirements: string[]
+  legalBasis: string
+  estimatedDuration: string
+  fields: ProcessTypeField[]
+}
+
+export const processTypeConfigs: ProcessTypeConfig[] = [
   {
     id: "pt-1",
     name: "Contratación Directa",
-    description: "Proceso de contratación directa para montos menores según normativa vigente",
-    active: true,
-    createdAt: new Date("2024-01-10"),
-    updatedAt: new Date("2024-01-10"),
-    documents: [
+    description:
+      "Modalidad de selección que permite contratar directamente con una persona natural o jurídica sin necesidad de realizar convocatoria pública.",
+    requirements: [
+      "Estudios previos que justifiquen la modalidad de contratación directa",
+      "Certificado de Disponibilidad Presupuestal (CDP)",
+      "Análisis del sector económico",
+      "Verificación de requisitos habilitantes del contratista",
+      "Acto administrativo de justificación (cuando aplique)",
+    ],
+    legalBasis: "Artículo 2 de la Ley 1150 de 2007 y artículos 2.2.1.2.1.4.1 al 2.2.1.2.1.4.9 del Decreto 1082 de 2015",
+    estimatedDuration: "15-30 días hábiles",
+    fields: [
       {
-        id: "doc-template-1",
-        processTypeId: "pt-1",
-        name: "Estudios Previos",
-        description: "Documento de estudios previos requerido para contratación directa",
-        objective: "Justificar la necesidad del contrato y establecer las condiciones técnicas y económicas",
-        structure: {
-          content: `ESTUDIOS PREVIOS
-
-1. DESCRIPCIÓN DE LA NECESIDAD
-***descripcion_necesidad***
-
-2. OBJETO DEL CONTRATO
-***objeto_contrato***
-
-3. VALOR ESTIMADO
-***valor_estimado***
-
-4. PLAZO DE EJECUCIÓN
-***plazo_ejecucion***
-
-5. DISPONIBILIDAD PRESUPUESTAL
-CDP No. ***numero_cdp*** por valor de ***valor_cdp***
-
-6. OBLIGACIONES DEL CONTRATISTA
-***obligaciones_contratista***`,
-          fields: [
-            {
-              id: "f1",
-              name: "descripcion_necesidad",
-              placeholder: "***descripcion_necesidad***",
-              description: "Descripción detallada de la necesidad que justifica la contratación",
-              type: "text",
-              required: true,
-              position: 1,
-            },
-            {
-              id: "f2",
-              name: "objeto_contrato",
-              placeholder: "***objeto_contrato***",
-              description: "Objeto específico del contrato a celebrar",
-              type: "text",
-              required: true,
-              position: 2,
-            },
-            {
-              id: "f3",
-              name: "valor_estimado",
-              placeholder: "***valor_estimado***",
-              description: "Valor estimado del contrato en pesos colombianos",
-              type: "currency",
-              required: true,
-              position: 3,
-            },
-            {
-              id: "f4",
-              name: "plazo_ejecucion",
-              placeholder: "***plazo_ejecucion***",
-              description: "Plazo estimado para la ejecución del contrato",
-              type: "text",
-              required: true,
-              position: 4,
-            },
-            {
-              id: "f5",
-              name: "numero_cdp",
-              placeholder: "***numero_cdp***",
-              description: "Número del certificado de disponibilidad presupuestal",
-              type: "text",
-              required: true,
-              position: 5,
-            },
-            {
-              id: "f6",
-              name: "valor_cdp",
-              placeholder: "***valor_cdp***",
-              description: "Valor del certificado de disponibilidad presupuestal",
-              type: "currency",
-              required: true,
-              position: 6,
-            },
-            {
-              id: "f7",
-              name: "obligaciones_contratista",
-              placeholder: "***obligaciones_contratista***",
-              description: "Obligaciones específicas del contratista",
-              type: "text",
-              required: true,
-              position: 7,
-            },
-          ],
-          metadata: {
-            totalFields: 7,
-            analyzedAt: new Date("2024-01-10T10:00:00"),
-            analyzedBy: "user-1",
-          },
-        },
-        createdAt: new Date("2024-01-10"),
-        updatedAt: new Date("2024-01-10"),
+        id: "object",
+        name: "object",
+        label: "Objeto del Contrato",
+        type: "textarea",
+        placeholder: "Describa el objeto del contrato de manera clara y precisa...",
+        required: true,
+        helpText: "Defina de manera clara qué se va a contratar",
       },
       {
-        id: "doc-template-2",
-        processTypeId: "pt-1",
-        name: "Minuta de Contrato",
-        description: "Plantilla de minuta para contrato de contratación directa",
-        objective: "Establecer las condiciones contractuales entre las partes",
-        structure: {
-          content: `MINUTA DE CONTRATO No. ***numero_contrato***
-
-Entre ***nombre_entidad***, NIT ***nit_entidad***, representada por ***nombre_representante***, 
-en adelante EL CONTRATANTE, y ***nombre_contratista***, identificado con ***identificacion_contratista***, 
-en adelante EL CONTRATISTA, se celebra el presente contrato:
-
-CLÁUSULA PRIMERA - OBJETO: ***objeto_contrato***
-
-CLÁUSULA SEGUNDA - VALOR: El valor del contrato es de ***valor_contrato*** pesos colombianos.
-
-CLÁUSULA TERCERA - PLAZO: El plazo de ejecución será de ***plazo_contrato***.
-
-CLÁUSULA CUARTA - FORMA DE PAGO: ***forma_pago***
-
-Firmado en ***ciudad_firma*** el ***fecha_firma***.`,
-          fields: [
-            {
-              id: "f8",
-              name: "numero_contrato",
-              placeholder: "***numero_contrato***",
-              description: "Número del contrato",
-              type: "text",
-              required: true,
-              position: 1,
-            },
-            {
-              id: "f9",
-              name: "nombre_entidad",
-              placeholder: "***nombre_entidad***",
-              description: "Nombre de la entidad contratante",
-              type: "text",
-              required: true,
-              position: 2,
-            },
-            {
-              id: "f10",
-              name: "nit_entidad",
-              placeholder: "***nit_entidad***",
-              description: "NIT de la entidad contratante",
-              type: "text",
-              required: true,
-              position: 3,
-            },
-          ],
-          metadata: {
-            totalFields: 10,
-            analyzedAt: new Date("2024-01-10T11:00:00"),
-            analyzedBy: "user-1",
-          },
-        },
-        createdAt: new Date("2024-01-10"),
-        updatedAt: new Date("2024-01-10"),
+        id: "justification",
+        name: "justification",
+        label: "Justificación de la Necesidad",
+        type: "textarea",
+        placeholder: "Explique por qué la entidad requiere este bien o servicio...",
+        required: true,
+        helpText: "Explique la necesidad que se pretende satisfacer con la contratación",
+      },
+      {
+        id: "directCause",
+        name: "directCause",
+        label: "Causal de Contratación Directa",
+        type: "select",
+        required: true,
+        helpText: "Seleccione la causal aplicable según la Ley 1150 de 2007",
+        options: [
+          { value: "urgencia", label: "Urgencia Manifiesta" },
+          { value: "prestacion_servicios", label: "Prestación de Servicios Profesionales y de Apoyo" },
+          { value: "interadministrativo", label: "Contrato Interadministrativo" },
+          { value: "arrendamiento", label: "Arrendamiento de Inmuebles" },
+          { value: "exclusividad", label: "No exista pluralidad de oferentes" },
+        ],
+      },
+      {
+        id: "scope",
+        name: "scope",
+        label: "Alcance y Especificaciones",
+        type: "textarea",
+        placeholder: "Detalle las especificaciones técnicas o el alcance del servicio...",
+        required: true,
+        helpText: "Describa las características técnicas del bien o servicio",
+      },
+      {
+        id: "estimatedValue",
+        name: "estimatedValue",
+        label: "Valor Estimado (COP)",
+        type: "number",
+        placeholder: "0",
+        required: true,
+        helpText: "Valor estimado del contrato en pesos colombianos",
+      },
+      {
+        id: "duration",
+        name: "duration",
+        label: "Plazo de Ejecución",
+        type: "text",
+        placeholder: "Ej: 6 meses",
+        required: true,
+        helpText: "Tiempo estimado para la ejecución del contrato",
+      },
+      {
+        id: "obligations",
+        name: "obligations",
+        label: "Obligaciones del Contratista",
+        type: "textarea",
+        placeholder: "Liste las obligaciones específicas del contratista...",
+        required: true,
+        helpText: "Enumere las obligaciones que deberá cumplir el contratista",
       },
     ],
   },
   {
     id: "pt-2",
     name: "Licitación Pública",
-    description: "Proceso de licitación pública para montos superiores según normativa",
-    active: true,
-    createdAt: new Date("2024-01-15"),
-    updatedAt: new Date("2024-01-15"),
-    documents: [],
+    description:
+      "Procedimiento mediante el cual la entidad formula públicamente una convocatoria para que los interesados presenten ofertas y seleccione la más favorable.",
+    requirements: [
+      "Estudios y documentos previos completos",
+      "Pliego de condiciones definitivo",
+      "Certificado de Disponibilidad Presupuestal (CDP)",
+      "Análisis del sector y estudio de mercado",
+      "Matriz de riesgos",
+      "Cronograma del proceso",
+      "Publicación en SECOP II",
+    ],
+    legalBasis: "Artículo 30 de la Ley 80 de 1993 y artículos 2.2.1.1.2.1.1 al 2.2.1.1.2.1.3 del Decreto 1082 de 2015",
+    estimatedDuration: "45-90 días hábiles",
+    fields: [
+      {
+        id: "object",
+        name: "object",
+        label: "Objeto del Contrato",
+        type: "textarea",
+        placeholder: "Describa el objeto del contrato de manera clara y precisa...",
+        required: true,
+        helpText: "Defina de manera clara qué se va a contratar",
+      },
+      {
+        id: "justification",
+        name: "justification",
+        label: "Justificación de la Necesidad",
+        type: "textarea",
+        placeholder: "Explique por qué la entidad requiere este bien o servicio...",
+        required: true,
+        helpText: "Relacione con el Plan de Desarrollo y el PAA",
+      },
+      {
+        id: "scope",
+        name: "scope",
+        label: "Alcance y Especificaciones Técnicas",
+        type: "textarea",
+        placeholder: "Detalle las especificaciones técnicas completas...",
+        required: true,
+        helpText: "Incluya características, cantidades y condiciones técnicas",
+      },
+      {
+        id: "estimatedValue",
+        name: "estimatedValue",
+        label: "Presupuesto Oficial (COP)",
+        type: "number",
+        placeholder: "0",
+        required: true,
+        helpText: "Presupuesto oficial para el proceso de licitación",
+      },
+      {
+        id: "duration",
+        name: "duration",
+        label: "Plazo de Ejecución",
+        type: "text",
+        placeholder: "Ej: 12 meses",
+        required: true,
+        helpText: "Tiempo estimado para la ejecución del contrato",
+      },
+      {
+        id: "qualificationCriteria",
+        name: "qualificationCriteria",
+        label: "Criterios de Calificación",
+        type: "textarea",
+        placeholder: "Describa los criterios de evaluación y ponderación...",
+        required: true,
+        helpText: "Defina los factores de evaluación y su peso porcentual",
+      },
+      {
+        id: "experience",
+        name: "experience",
+        label: "Experiencia Requerida",
+        type: "textarea",
+        placeholder: "Especifique la experiencia requerida...",
+        required: true,
+        helpText: "Defina la experiencia general y específica requerida",
+      },
+      {
+        id: "guarantees",
+        name: "guarantees",
+        label: "Garantías Requeridas",
+        type: "textarea",
+        placeholder: "Liste las garantías y sus porcentajes...",
+        required: true,
+        helpText: "Especifique las garantías, amparos y porcentajes",
+      },
+    ],
   },
   {
     id: "pt-3",
-    name: "Compra de Menor Cuantía",
-    description: "Proceso simplificado para compras menores",
-    active: true,
-    createdAt: new Date("2024-01-20"),
-    updatedAt: new Date("2024-01-20"),
-    documents: [],
+    name: "Selección Abreviada",
+    description:
+      "Modalidad de selección objetiva para contratos cuando se dan las circunstancias previstas en la ley que permiten un proceso más expedito.",
+    requirements: [
+      "Estudios previos simplificados",
+      "Certificado de Disponibilidad Presupuestal (CDP)",
+      "Análisis del sector",
+      "Invitación pública a cotizar",
+      "Verificación de menor cuantía según presupuesto de la entidad",
+    ],
+    legalBasis: "Artículo 2 numeral 2 de la Ley 1150 de 2007 y Decreto 1082 de 2015",
+    estimatedDuration: "20-45 días hábiles",
+    fields: [
+      {
+        id: "object",
+        name: "object",
+        label: "Objeto del Contrato",
+        type: "textarea",
+        placeholder: "Describa el objeto del contrato...",
+        required: true,
+        helpText: "Defina de manera clara qué se va a contratar",
+      },
+      {
+        id: "justification",
+        name: "justification",
+        label: "Justificación de la Necesidad",
+        type: "textarea",
+        placeholder: "Explique la necesidad de la contratación...",
+        required: true,
+        helpText: "Justifique la necesidad y la causal de selección abreviada",
+      },
+      {
+        id: "abbreviatedCause",
+        name: "abbreviatedCause",
+        label: "Causal de Selección Abreviada",
+        type: "select",
+        required: true,
+        helpText: "Seleccione la causal aplicable",
+        options: [
+          { value: "menor_cuantia", label: "Menor Cuantía" },
+          { value: "subasta_inversa", label: "Subasta Inversa" },
+          { value: "acuerdo_marco", label: "Acuerdo Marco de Precios" },
+          { value: "bolsa_productos", label: "Bolsa de Productos" },
+        ],
+      },
+      {
+        id: "scope",
+        name: "scope",
+        label: "Especificaciones Técnicas",
+        type: "textarea",
+        placeholder: "Detalle las especificaciones del bien o servicio...",
+        required: true,
+        helpText: "Describa las características técnicas requeridas",
+      },
+      {
+        id: "estimatedValue",
+        name: "estimatedValue",
+        label: "Valor Estimado (COP)",
+        type: "number",
+        placeholder: "0",
+        required: true,
+        helpText: "Valor estimado del contrato",
+      },
+      {
+        id: "duration",
+        name: "duration",
+        label: "Plazo de Ejecución",
+        type: "text",
+        placeholder: "Ej: 4 meses",
+        required: true,
+        helpText: "Tiempo estimado para la ejecución",
+      },
+    ],
   },
   {
     id: "pt-4",
-    name: "Consulta Legal",
-    description: "Proceso para consultas y conceptos jurídicos",
-    active: false,
-    createdAt: new Date("2024-02-01"),
-    updatedAt: new Date("2024-02-01"),
-    documents: [],
+    name: "Concurso de Méritos",
+    description:
+      "Modalidad prevista para la selección de consultores o proyectos, donde se evalúan aspectos técnicos y de experiencia.",
+    requirements: [
+      "Estudios previos y términos de referencia",
+      "Certificado de Disponibilidad Presupuestal (CDP)",
+      "Definición de criterios de evaluación técnica",
+      "Análisis del sector de consultoría",
+      "Cronograma del concurso",
+    ],
+    legalBasis: "Artículo 2 numeral 3 de la Ley 1150 de 2007 y Decreto 1082 de 2015",
+    estimatedDuration: "45-60 días hábiles",
+    fields: [
+      {
+        id: "object",
+        name: "object",
+        label: "Objeto de la Consultoría",
+        type: "textarea",
+        placeholder: "Describa el objeto de la consultoría...",
+        required: true,
+        helpText: "Defina claramente el trabajo de consultoría requerido",
+      },
+      {
+        id: "justification",
+        name: "justification",
+        label: "Justificación de la Consultoría",
+        type: "textarea",
+        placeholder: "Explique por qué se requiere esta consultoría...",
+        required: true,
+        helpText: "Justifique la necesidad del servicio de consultoría",
+      },
+      {
+        id: "scope",
+        name: "scope",
+        label: "Alcance de los Servicios",
+        type: "textarea",
+        placeholder: "Detalle el alcance de la consultoría...",
+        required: true,
+        helpText: "Describa las actividades y entregables esperados",
+      },
+      {
+        id: "estimatedValue",
+        name: "estimatedValue",
+        label: "Presupuesto Oficial (COP)",
+        type: "number",
+        placeholder: "0",
+        required: true,
+        helpText: "Presupuesto estimado para la consultoría",
+      },
+      {
+        id: "duration",
+        name: "duration",
+        label: "Plazo de Ejecución",
+        type: "text",
+        placeholder: "Ej: 8 meses",
+        required: true,
+        helpText: "Tiempo estimado para la ejecución",
+      },
+      {
+        id: "professionalProfile",
+        name: "professionalProfile",
+        label: "Perfil Profesional Requerido",
+        type: "textarea",
+        placeholder: "Describa el perfil del equipo consultor...",
+        required: true,
+        helpText: "Especifique formación y experiencia del equipo",
+      },
+      {
+        id: "technicalCriteria",
+        name: "technicalCriteria",
+        label: "Criterios de Evaluación Técnica",
+        type: "textarea",
+        placeholder: "Defina los criterios de evaluación...",
+        required: true,
+        helpText: "Establezca los factores técnicos de evaluación",
+      },
+      {
+        id: "deliverables",
+        name: "deliverables",
+        label: "Productos y Entregables",
+        type: "textarea",
+        placeholder: "Liste los productos esperados...",
+        required: true,
+        helpText: "Enumere los entregables de la consultoría",
+      },
+    ],
+  },
+  {
+    id: "pt-5",
+    name: "Mínima Cuantía",
+    description:
+      "Procedimiento simplificado para adquisiciones cuyo valor no excede el 10% de la menor cuantía de la entidad.",
+    requirements: [
+      "Estudios previos simplificados",
+      "Certificado de Disponibilidad Presupuestal (CDP)",
+      "Invitación pública (mínimo un día hábil)",
+      "Verificación del valor (máximo 10% menor cuantía)",
+    ],
+    legalBasis: "Artículo 94 de la Ley 1474 de 2011 y Decreto 1082 de 2015",
+    estimatedDuration: "5-10 días hábiles",
+    fields: [
+      {
+        id: "object",
+        name: "object",
+        label: "Objeto del Contrato",
+        type: "textarea",
+        placeholder: "Describa brevemente el objeto...",
+        required: true,
+        helpText: "Defina de manera clara qué se va a adquirir",
+      },
+      {
+        id: "justification",
+        name: "justification",
+        label: "Justificación de la Necesidad",
+        type: "textarea",
+        placeholder: "Explique brevemente la necesidad...",
+        required: true,
+        helpText: "Justifique la necesidad de la adquisición",
+      },
+      {
+        id: "specifications",
+        name: "specifications",
+        label: "Especificaciones del Bien o Servicio",
+        type: "textarea",
+        placeholder: "Liste las especificaciones requeridas...",
+        required: true,
+        helpText: "Describa las características del bien o servicio",
+      },
+      {
+        id: "estimatedValue",
+        name: "estimatedValue",
+        label: "Valor Estimado (COP)",
+        type: "number",
+        placeholder: "0",
+        required: true,
+        helpText: "Valor estimado (debe ser menor al 10% de la menor cuantía)",
+      },
+      {
+        id: "duration",
+        name: "duration",
+        label: "Plazo de Entrega/Ejecución",
+        type: "text",
+        placeholder: "Ej: 15 días",
+        required: true,
+        helpText: "Tiempo para la entrega o ejecución",
+      },
+      {
+        id: "deliveryPlace",
+        name: "deliveryPlace",
+        label: "Lugar de Entrega",
+        type: "text",
+        placeholder: "Dirección de entrega...",
+        required: true,
+        helpText: "Especifique el lugar de entrega del bien o servicio",
+      },
+    ],
   },
 ]
 
-// Mock knowledge documents
-export const mockKnowledgeDocuments: KnowledgeDocument[] = [
-  {
-    id: "kd-1",
-    name: "Ley 80 de 1993 - Estatuto General de Contratación",
-    description: "Estatuto General de Contratación de la Administración Pública",
-    fileUrl: "/docs/ley-80-1993.pdf",
-    fileType: "pdf",
-    fileSize: 2456789,
-    category: "normativa",
-    uploadedBy: "user-1",
-    uploadedAt: new Date("2024-01-15"),
-    lastIndexed: new Date("2024-01-15"),
-    active: true,
-    metadata: {
-      totalPages: 45,
-      keywords: ["contratación", "estatuto", "administración pública", "contratos estatales"],
-      summary: "Establece las reglas y principios que rigen los contratos de las entidades estatales.",
-    },
-  },
-  {
-    id: "kd-2",
-    name: "Decreto 1082 de 2015",
-    description: "Decreto Único Reglamentario del Sector Administrativo de Planeación Nacional",
-    fileUrl: "/docs/decreto-1082-2015.pdf",
-    fileType: "pdf",
-    fileSize: 3789456,
-    category: "normativa",
-    uploadedBy: "user-1",
-    uploadedAt: new Date("2024-01-20"),
-    lastIndexed: new Date("2024-01-20"),
-    active: true,
-    metadata: {
-      totalPages: 156,
-      keywords: ["decreto", "planeación", "reglamentario", "contratación pública"],
-      summary: "Recopila las normas reglamentarias sobre contratación estatal.",
-    },
-  },
-  {
-    id: "kd-3",
-    name: "Manual de Contratación Municipal",
-    description: "Manual de contratación adoptado por el municipio",
-    fileUrl: "/docs/manual-contratacion.docx",
-    fileType: "docx",
-    fileSize: 1234567,
-    category: "procedimientos",
-    uploadedBy: "user-1",
-    uploadedAt: new Date("2024-02-01"),
-    lastIndexed: new Date("2024-02-01"),
-    active: true,
-    metadata: {
-      totalPages: 78,
-      keywords: ["manual", "procedimientos", "municipal", "contratación"],
-      summary: "Define los procedimientos internos para la contratación en el municipio.",
-    },
-  },
-  {
-    id: "kd-4",
-    name: "Sentencia CE - 2023 sobre Contratación Directa",
-    description: "Jurisprudencia del Consejo de Estado sobre contratación directa",
-    fileUrl: "/docs/sentencia-ce-2023.pdf",
-    fileType: "pdf",
-    fileSize: 987654,
-    category: "jurisprudencia",
-    uploadedBy: "user-1",
-    uploadedAt: new Date("2024-02-10"),
-    lastIndexed: new Date("2024-02-10"),
-    active: true,
-    metadata: {
-      totalPages: 23,
-      keywords: ["jurisprudencia", "consejo de estado", "contratación directa"],
-      summary: "Criterios del alto tribunal sobre causales de contratación directa.",
-    },
-  },
-]
+// Chat Conversations History
+export interface ChatConversation {
+  id: string
+  title: string
+  preview: string
+  messages: ChatMessage[]
+  createdAt: string
+  updatedAt: string
+}
 
-// Mock chat sessions
-export const mockChatSessions: ChatSession[] = [
+export const mockChatConversations: ChatConversation[] = [
   {
-    id: "chat-1",
-    userId: "user-2",
-    title: "Consulta sobre contratación directa",
+    id: "conv-1",
+    title: "Urgencia Manifiesta - Requisitos",
+    preview: "¿Cuáles son los requisitos para declarar urgencia manifiesta?",
     messages: [
       {
         id: "msg-1",
         role: "user",
-        content: "¿Cuáles son las causales para contratar directamente según la Ley 80?",
-        timestamp: new Date("2024-03-18T10:00:00"),
+        content: "¿Cuáles son los requisitos para declarar urgencia manifiesta en contratación pública?",
+        timestamp: "2024-11-24T10:30:00",
       },
       {
         id: "msg-2",
         role: "assistant",
-        content: `Según la **Ley 80 de 1993** y sus modificaciones, las principales causales de contratación directa son:
+        content: `## Requisitos para Declarar Urgencia Manifiesta
 
-1. **Urgencia manifiesta**: Cuando la continuidad del servicio exige el suministro de bienes o servicios
-2. **Contratación de menor cuantía**: Para contratos cuya cuantía no exceda el 10% de la menor cuantía
-3. **Contratos de prestación de servicios profesionales y de apoyo a la gestión**
-4. **Contratación con empresas industriales y comerciales del Estado**
-5. **Contratos interadministrativos**
+Según el **artículo 42 de la Ley 80 de 1993** y el **Decreto 1082 de 2015**, la contratación directa por urgencia manifiesta procede cuando:
 
-Es importante verificar que se cumpla con los requisitos de cada causal y documentar adecuadamente la justificación.`,
-        timestamp: new Date("2024-03-18T10:00:15"),
-        sources: [
-          {
-            type: "internal",
-            title: "Ley 80 de 1993 - Estatuto General de Contratación",
-            documentId: "kd-1",
-            excerpt: "Artículo 24. Son causales de contratación directa: 1. La urgencia manifiesta...",
-            relevance: 0.95,
-          },
-          {
-            type: "internal",
-            title: "Decreto 1082 de 2015",
-            documentId: "kd-2",
-            excerpt: "Artículo 2.2.1.2.1.4.9. Causales de contratación directa...",
-            relevance: 0.88,
-          },
-        ],
+### Requisitos Principales
+1. **Situación de emergencia calificada**: Debe existir una situación que afecte o amenace afectar de manera inminente la vida, salud, seguridad pública o continuidad de servicios esenciales.
+
+2. **Acto administrativo motivado**: La entidad debe expedir un acto que declare formalmente la urgencia manifiesta.
+
+3. **Imposibilidad temporal**: Debe demostrarse que el tiempo requerido para un proceso ordinario agravaría la situación.
+
+### Control
+Los contratos están sujetos a control posterior por la Procuraduría y Contraloría.`,
+        timestamp: "2024-11-24T10:31:00",
       },
     ],
-    createdAt: new Date("2024-03-18T10:00:00"),
-    updatedAt: new Date("2024-03-18T10:00:15"),
-    active: true,
+    createdAt: "2024-11-24T10:30:00",
+    updatedAt: "2024-11-24T10:31:00",
   },
+  {
+    id: "conv-2",
+    title: "Estudios Previos - Contenido",
+    preview: "¿Qué elementos debe contener un estudio previo?",
+    messages: [
+      {
+        id: "msg-3",
+        role: "user",
+        content: "¿Qué elementos debe contener un estudio previo según el Decreto 1082 de 2015?",
+        timestamp: "2024-11-23T14:20:00",
+      },
+      {
+        id: "msg-4",
+        role: "assistant",
+        content: `## Elementos del Estudio Previo
+
+De acuerdo con el **artículo 2.2.1.1.2.1.1 del Decreto 1082 de 2015**, los estudios previos deben contener:
+
+### Contenido Obligatorio
+1. **Descripción de la necesidad** - Justificación clara de la contratación
+2. **Descripción del objeto** - Especificaciones técnicas detalladas
+3. **Modalidad de selección** - Justificación de la modalidad escogida
+4. **Valor estimado** - Análisis que soporta el valor del contrato
+5. **Criterios de selección** - Requisitos habilitantes y factores de evaluación
+6. **Análisis de riesgo** - Identificación y tipificación de riesgos`,
+        timestamp: "2024-11-23T14:21:00",
+      },
+    ],
+    createdAt: "2024-11-23T14:20:00",
+    updatedAt: "2024-11-23T14:21:00",
+  },
+  {
+    id: "conv-3",
+    title: "Inhabilidades - Régimen General",
+    preview: "¿Cuáles son las principales inhabilidades para contratar?",
+    messages: [
+      {
+        id: "msg-5",
+        role: "user",
+        content: "¿Cuáles son las principales inhabilidades e incompatibilidades para contratar con el Estado?",
+        timestamp: "2024-11-22T09:15:00",
+      },
+      {
+        id: "msg-6",
+        role: "assistant",
+        content: `## Inhabilidades e Incompatibilidades
+
+El régimen está regulado en los **artículos 8 y 9 de la Ley 80 de 1993**.
+
+### Principales Inhabilidades
+- **Por parentesco**: Cónyuge, parientes hasta 2do grado de consanguinidad
+- **Por sanciones**: Antecedentes fiscales, disciplinarios o penales
+- **Por situación jurídica**: Concordato o liquidación obligatoria
+
+### Verificación Obligatoria
+- Certificado de antecedentes disciplinarios (Procuraduría)
+- Certificado de antecedentes fiscales (Contraloría)
+- Consulta RNMC (Colombia Compra Eficiente)`,
+        timestamp: "2024-11-22T09:16:00",
+      },
+    ],
+    createdAt: "2024-11-22T09:15:00",
+    updatedAt: "2024-11-22T09:16:00",
+  },
+]
+
+// Prompt Library
+export interface PromptTemplate {
+  id: string
+  title: string
+  description: string
+  prompt: string
+  category: string
+  usageCount: number
+  isFavorite: boolean
+}
+
+export const mockPromptTemplates: PromptTemplate[] = [
+  {
+    id: "prompt-1",
+    title: "Análisis de Requisitos Habilitantes",
+    description: "Analiza los requisitos habilitantes para un proceso de contratación",
+    prompt:
+      "Analiza los requisitos habilitantes (capacidad jurídica, experiencia, capacidad financiera y capacidad organizacional) que debería establecer para un proceso de [TIPO_PROCESO] por valor de [VALOR] para contratar [OBJETO].",
+    category: "Evaluación",
+    usageCount: 45,
+    isFavorite: true,
+  },
+  {
+    id: "prompt-2",
+    title: "Redacción de Objeto Contractual",
+    description: "Ayuda a redactar el objeto del contrato de manera clara y precisa",
+    prompt:
+      "Ayúdame a redactar el objeto contractual para la contratación de [DESCRIPCIÓN_SERVICIO]. El objeto debe ser claro, preciso y cumplir con los requisitos del artículo 2.2.1.1.2.1.1 del Decreto 1082 de 2015.",
+    category: "Redacción",
+    usageCount: 38,
+    isFavorite: true,
+  },
+  {
+    id: "prompt-3",
+    title: "Análisis de Riesgos Contractuales",
+    description: "Identifica y tipifica los riesgos de un proceso de contratación",
+    prompt:
+      "Identifica y tipifica los riesgos previsibles para un contrato de [TIPO_CONTRATO] con objeto [OBJETO]. Incluye la probabilidad, impacto y asignación de cada riesgo según los lineamientos de Colombia Compra Eficiente.",
+    category: "Riesgos",
+    usageCount: 32,
+    isFavorite: false,
+  },
+  {
+    id: "prompt-4",
+    title: "Justificación de Modalidad de Selección",
+    description: "Genera justificación para la modalidad de selección escogida",
+    prompt:
+      "Genera la justificación jurídica para utilizar la modalidad de [MODALIDAD] para contratar [OBJETO] por valor de [VALOR]. Incluye los fundamentos normativos aplicables según la Ley 1150 de 2007 y el Decreto 1082 de 2015.",
+    category: "Modalidades",
+    usageCount: 28,
+    isFavorite: true,
+  },
+  {
+    id: "prompt-5",
+    title: "Revisión de Cláusulas Contractuales",
+    description: "Revisa y sugiere mejoras para cláusulas del contrato",
+    prompt:
+      "Revisa las siguientes cláusulas contractuales y sugiere mejoras para garantizar el cumplimiento normativo y proteger los intereses de la entidad:\n\n[CLÁUSULAS]",
+    category: "Revisión",
+    usageCount: 25,
+    isFavorite: false,
+  },
+  {
+    id: "prompt-6",
+    title: "Análisis de Adendas y Modificaciones",
+    description: "Evalúa la procedencia de adendas o modificaciones contractuales",
+    prompt:
+      "Analiza la procedencia de realizar una [ADENDA/MODIFICACIÓN] al contrato [NÚMERO] cuyo objeto es [OBJETO]. La modificación consiste en [DESCRIPCIÓN_MODIFICACIÓN]. ¿Es procedente según el artículo 14 de la Ley 80?",
+    category: "Modificaciones",
+    usageCount: 22,
+    isFavorite: false,
+  },
+  {
+    id: "prompt-7",
+    title: "Concepto sobre Inhabilidades",
+    description: "Consulta sobre inhabilidades e incompatibilidades específicas",
+    prompt:
+      "¿Existe inhabilidad o incompatibilidad para que [DESCRIPCIÓN_PERSONA_O_EMPRESA] contrate con [ENTIDAD] para [OBJETO]? Considera la relación [DESCRIPCIÓN_RELACIÓN] y los artículos 8 y 9 de la Ley 80 de 1993.",
+    category: "Inhabilidades",
+    usageCount: 20,
+    isFavorite: true,
+  },
+  {
+    id: "prompt-8",
+    title: "Liquidación de Contratos",
+    description: "Guía para el proceso de liquidación de contratos",
+    prompt:
+      "¿Cuál es el procedimiento para liquidar el contrato [NÚMERO] de [TIPO]? El contrato terminó el [FECHA] y presenta las siguientes situaciones pendientes: [SITUACIONES]. Indica los plazos y requisitos según el artículo 11 de la Ley 1150 de 2007.",
+    category: "Liquidación",
+    usageCount: 18,
+    isFavorite: false,
+  },
+]
+
+export const promptCategories = [
+  { id: "all", name: "Todas", count: 8 },
+  { id: "Evaluación", name: "Evaluación", count: 1 },
+  { id: "Redacción", name: "Redacción", count: 1 },
+  { id: "Riesgos", name: "Riesgos", count: 1 },
+  { id: "Modalidades", name: "Modalidades", count: 1 },
+  { id: "Revisión", name: "Revisión", count: 1 },
+  { id: "Modificaciones", name: "Modificaciones", count: 1 },
+  { id: "Inhabilidades", name: "Inhabilidades", count: 1 },
+  { id: "Liquidación", name: "Liquidación", count: 1 },
 ]
