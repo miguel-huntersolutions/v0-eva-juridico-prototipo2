@@ -44,14 +44,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { mockOrganizations, type Organization } from "@/lib/mock-data"
+import { getOrganizations, type Organization } from "@/lib/supabase/client-data-access"
 import { cn } from "@/lib/utils"
 import { useImpersonation } from "@/lib/impersonation-context"
 
 type TabFilter = "all" | "active" | "inactive"
 
 export function OrganizationsPage() {
-  const [organizations, setOrganizations] = React.useState(mockOrganizations)
+  const [organizations, setOrganizations] = React.useState<Organization[]>([])
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false)
   const [isInviteAdminOpen, setIsInviteAdminOpen] = React.useState(false)
   const [selectedOrg, setSelectedOrg] = React.useState<Organization | null>(null)
@@ -63,6 +65,22 @@ export function OrganizationsPage() {
   const [orgToImpersonate, setOrgToImpersonate] = React.useState<Organization | null>(null)
 
   const { startImpersonation } = useImpersonation()
+
+  React.useEffect(() => {
+    async function loadOrganizations() {
+      try {
+        setIsLoading(true)
+        const data = await getOrganizations()
+        setOrganizations(data)
+      } catch (err) {
+        console.error("[v0] Error loading organizations:", err)
+        setError("Error al cargar las organizaciones")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadOrganizations()
+  }, [])
 
   const handleImpersonate = (org: Organization) => {
     setOrgToImpersonate(org)
@@ -96,7 +114,7 @@ export function OrganizationsPage() {
     total: organizations.length,
     active: organizations.filter((o) => o.status === "active").length,
     inactive: organizations.filter((o) => o.status === "inactive").length,
-    totalMembers: organizations.reduce((acc, o) => acc + o.membersCount, 0),
+    totalMembers: organizations.reduce((acc, o) => acc + (o.members_count || 0), 0),
   }
 
   const filteredOrganizations = React.useMemo(() => {
@@ -112,8 +130,8 @@ export function OrganizationsPage() {
     }
 
     result.sort((a, b) => {
-      const dateA = new Date(a.createdAt).getTime()
-      const dateB = new Date(b.createdAt).getTime()
+      const dateA = new Date(a.created_at).getTime()
+      const dateB = new Date(b.created_at).getTime()
       return sortOrder === "desc" ? dateB - dateA : dateA - dateB
     })
 
@@ -121,6 +139,42 @@ export function OrganizationsPage() {
   }, [organizations, activeTab, searchQuery, sortOrder])
 
   const hasActiveFilters = searchQuery || activeTab !== "all"
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-8 p-8">
+        <PageHeader
+          title="Gestión de Organizaciones"
+          description="Administra los bufetes y firmas jurídicas registradas en la plataforma"
+        />
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent motion-reduce:animate-[spin_1.5s_linear_infinite]" />
+            <p className="mt-4 text-sm text-muted-foreground">Cargando organizaciones...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col gap-8 p-8">
+        <PageHeader
+          title="Gestión de Organizaciones"
+          description="Administra los bufetes y firmas jurídicas registradas en la plataforma"
+        />
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <p className="text-destructive">{error}</p>
+            <Button className="mt-4" onClick={() => window.location.reload()}>
+              Reintentar
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-8 p-8">
@@ -291,11 +345,11 @@ export function OrganizationsPage() {
                     <div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1.5">
                         <Users className="h-4 w-4" />
-                        <span>{org.membersCount} miembros</span>
+                        <span>{org.members_count || 0} miembros</span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Building className="h-4 w-4" />
-                        <span>{org.entitiesCount} entidades</span>
+                        <span>{org.entities_count || 0} entidades</span>
                       </div>
                     </div>
 
@@ -303,7 +357,7 @@ export function OrganizationsPage() {
                       <StatusBadge status={org.status} />
                       <span className="text-xs text-muted-foreground">
                         <Calendar className="mr-1 inline-block h-3 w-3" />
-                        {new Date(org.createdAt).toLocaleDateString("es-CO")}
+                        {new Date(org.created_at).toLocaleDateString("es-CO")}
                       </span>
                     </div>
                   </CardContent>
@@ -430,7 +484,7 @@ export function OrganizationsPage() {
                 <StatusBadge status={selectedOrg.status} />
                 <span className="text-sm text-muted-foreground">
                   Creada el{" "}
-                  {new Date(selectedOrg.createdAt).toLocaleDateString("es-CO", {
+                  {new Date(selectedOrg.created_at).toLocaleDateString("es-CO", {
                     year: "numeric",
                     month: "long",
                     day: "numeric",
@@ -444,7 +498,7 @@ export function OrganizationsPage() {
                     <Users className="h-4 w-4" />
                     Miembros
                   </div>
-                  <p className="mt-1 text-2xl font-bold">{selectedOrg.membersCount}</p>
+                  <p className="mt-1 text-2xl font-bold">{selectedOrg.members_count || 0}</p>
                   <p className="text-xs text-muted-foreground">usuarios activos</p>
                 </div>
                 <div className="rounded-lg border p-4">
@@ -452,7 +506,7 @@ export function OrganizationsPage() {
                     <Building className="h-4 w-4" />
                     Entidades
                   </div>
-                  <p className="mt-1 text-2xl font-bold">{selectedOrg.entitiesCount}</p>
+                  <p className="mt-1 text-2xl font-bold">{selectedOrg.entities_count || 0}</p>
                   <p className="text-xs text-muted-foreground">clientes gestionados</p>
                 </div>
               </div>
@@ -529,8 +583,8 @@ export function OrganizationsPage() {
                 <div>
                   <p className="font-medium">{orgToImpersonate.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    NIT: {orgToImpersonate.nit} • {orgToImpersonate.membersCount} miembros •{" "}
-                    {orgToImpersonate.entitiesCount} entidades
+                    NIT: {orgToImpersonate.nit} • {orgToImpersonate.members_count} miembros •{" "}
+                    {orgToImpersonate.entities_count} entidades
                   </p>
                 </div>
               </div>

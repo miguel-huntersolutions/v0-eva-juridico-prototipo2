@@ -126,45 +126,7 @@ export const mockUsers: User[] = [
   },
 ]
 
-// Mock Organizations
-export const mockOrganizations: Organization[] = [
-  {
-    id: "org-1",
-    name: "Bufete García & Asociados",
-    nit: "900.123.456-1",
-    status: "active",
-    membersCount: 8,
-    entitiesCount: 5,
-    createdAt: "2024-01-15",
-  },
-  {
-    id: "org-2",
-    name: "Consultores Jurídicos del Norte",
-    nit: "900.789.012-3",
-    status: "active",
-    membersCount: 12,
-    entitiesCount: 8,
-    createdAt: "2024-02-20",
-  },
-  {
-    id: "org-3",
-    name: "Asesores Legales Medellín",
-    nit: "900.345.678-9",
-    status: "active",
-    membersCount: 5,
-    entitiesCount: 3,
-    createdAt: "2024-03-10",
-  },
-  {
-    id: "org-4",
-    name: "Firma Jurídica Caribe",
-    nit: "900.901.234-5",
-    status: "inactive",
-    membersCount: 3,
-    entitiesCount: 2,
-    createdAt: "2024-04-05",
-  },
-]
+// Mock Organizations - ELIMINADO - Ahora se usa la base de datos
 
 // Mock Entities
 export const mockEntities: Entity[] = [
