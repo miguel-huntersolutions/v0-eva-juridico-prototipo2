@@ -2,7 +2,7 @@ import { createBrowserClient as createSupabaseBrowserClient } from "@supabase/ss
 
 let client: ReturnType<typeof createSupabaseBrowserClient> | null = null
 
-export function createClient() {
+export function createBrowserClient() {
   if (client) return client
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://djamkpkuxneexoyvzyez.supabase.co"
@@ -15,4 +15,5 @@ export function createClient() {
   return client
 }
 
-export const createBrowserClient = createClient
+// Alias for backward compatibility
+export const createClient = createBrowserClient

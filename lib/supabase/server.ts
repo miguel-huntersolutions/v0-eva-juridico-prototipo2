@@ -5,7 +5,7 @@ const SUPABASE_URL = "https://djamkpkuxneexoyvzyez.supabase.co"
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqYW1rcGt1eG5lZXhveXZ6eWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2NzIwMTAsImV4cCI6MjA4MDI0ODAxMH0.N9ZxBEIPFErtFQ9k79BugQkU8VqcHUd032Xt2X6E4AY"
 
-export async function createClient() {
+export async function createServerClient() {
   const cookieStore = await cookies()
 
   const supabaseUrl = process.env.SUPABASE_URL || SUPABASE_URL
@@ -32,4 +32,5 @@ export async function createClient() {
   })
 }
 
-export const createServerClient = createClient
+// Alias for backward compatibility
+export const createClient = createServerClient
