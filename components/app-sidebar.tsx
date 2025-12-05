@@ -18,6 +18,9 @@ import {
   LogOut,
   UserCircle,
   Book,
+  ShieldCheck,
+  UserCog,
+  ArrowLeftRight,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -29,12 +32,16 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient } from "@/lib/supabase/client"
 import type { Profile, UserRole } from "@/lib/types/database"
+import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
 interface NavItem {
   title: string
@@ -73,6 +80,7 @@ interface UserData {
   role: UserRole
   avatar_url?: string | null
   avatar?: string
+  full_name?: string
 }
 
 interface AppSidebarProps {
@@ -93,12 +101,14 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
       avatar_url: null,
     }
 
-  const userRole = userData.role || "member"
-  const userName = userData.name || "Usuario"
+  const actualRole = userData.role || "member"
+  const userName = userData.name || ("full_name" in userData ? (userData as any).full_name : "Usuario")
   const userAvatar =
     ("avatar_url" in userData ? userData.avatar_url : null) || ("avatar" in userData ? (userData as any).avatar : null)
 
-  const filteredItems = navItems.filter((item) => item.roles.includes(userRole))
+  const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(actualRole)
+
+  const filteredItems = navItems.filter((item) => item.roles.includes(effectiveRole))
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
@@ -123,10 +133,22 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
   }
 
   const handleLogout = async () => {
+    resetRole()
     const supabase = createClient()
     await supabase.auth.signOut()
     router.push("/auth/login")
     router.refresh()
+  }
+
+  const handleRoleSwitch = (role: UserRole | null) => {
+    switchToRole(role)
+    if (role === null || role === "superadmin") {
+      router.push("/dashboard")
+    } else if (role === "admin") {
+      router.push("/dashboard")
+    } else if (role === "member") {
+      router.push("/member/dashboard")
+    }
   }
 
   return (
@@ -142,13 +164,31 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
         </div>
       </div>
 
+      {isSimulating && (
+        <div className="mx-3 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/30 p-2">
+          <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+            <ArrowLeftRight className="h-3.5 w-3.5" />
+            <span className="font-medium">Modo vista: {getRoleLabel(effectiveRole)}</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-1.5 h-6 w-full text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/20"
+            onClick={() => handleRoleSwitch(null)}
+          >
+            <ShieldCheck className="mr-1.5 h-3 w-3" />
+            Volver a Superadmin
+          </Button>
+        </div>
+      )}
+
       {/* Navigation */}
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
         {filteredItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
           return (
             <Link
-              key={item.href}
+              key={item.href + item.title}
               href={item.href}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
@@ -190,15 +230,25 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
                 <AvatarFallback className="bg-primary/20 text-primary text-xs">
                   {userName
                     .split(" ")
-                    .map((n) => n[0])
+                    .map((n: string) => n[0])
                     .join("")}
                 </AvatarFallback>
               </Avatar>
               <div className="flex flex-col items-start text-left">
                 <span className="text-sm font-medium text-sidebar-foreground">{userName}</span>
-                <Badge variant="outline" className={cn("mt-0.5 text-[10px] h-4", getRoleBadgeColor(userRole))}>
-                  {getRoleLabel(userRole)}
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                  <Badge variant="outline" className={cn("text-[10px] h-4", getRoleBadgeColor(effectiveRole))}>
+                    {getRoleLabel(effectiveRole)}
+                  </Badge>
+                  {isSimulating && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] h-4 bg-amber-500/20 text-amber-600 border-amber-500/30"
+                    >
+                      Vista
+                    </Badge>
+                  )}
+                </div>
               </div>
               <ChevronDown className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
             </Button>
@@ -214,6 +264,47 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
               <Settings className="mr-2 h-4 w-4" />
               Configuración
             </DropdownMenuItem>
+            {canSwitchRole && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <ArrowLeftRight className="mr-2 h-4 w-4" />
+                    Cambiar Vista
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem
+                      onClick={() => handleRoleSwitch(null)}
+                      className={cn(!isSimulating && "bg-accent")}
+                    >
+                      <ShieldCheck className="mr-2 h-4 w-4 text-primary" />
+                      Superadministrador
+                      {!isSimulating && <span className="ml-auto text-xs text-muted-foreground">Actual</span>}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => handleRoleSwitch("admin")}
+                      className={cn(effectiveRole === "admin" && isSimulating && "bg-accent")}
+                    >
+                      <UserCog className="mr-2 h-4 w-4 text-chart-2" />
+                      Administrador
+                      {effectiveRole === "admin" && isSimulating && (
+                        <span className="ml-auto text-xs text-muted-foreground">Vista</span>
+                      )}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => handleRoleSwitch("member")}
+                      className={cn(effectiveRole === "member" && isSimulating && "bg-accent")}
+                    >
+                      <Users className="mr-2 h-4 w-4 text-chart-3" />
+                      Asesor Jurídico
+                      {effectiveRole === "member" && isSimulating && (
+                        <span className="ml-auto text-xs text-muted-foreground">Vista</span>
+                      )}
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" />
