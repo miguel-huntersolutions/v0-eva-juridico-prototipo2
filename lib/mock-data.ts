@@ -128,55 +128,6 @@ export const mockUsers: User[] = [
 
 // Mock Organizations - ELIMINADO - Ahora se usa la base de datos
 
-// Mock Entities
-export const mockEntities: Entity[] = [
-  {
-    id: "ent-1",
-    name: "Alcaldía de Bogotá",
-    nit: "899.999.061-9",
-    representativeName: "Carlos Fernando Galán",
-    organizationId: "org-1",
-    processesCount: 15,
-    status: "active",
-  },
-  {
-    id: "ent-2",
-    name: "Gobernación de Cundinamarca",
-    nit: "899.999.114-8",
-    representativeName: "Jorge Emilio Rey",
-    organizationId: "org-1",
-    processesCount: 8,
-    status: "active",
-  },
-  {
-    id: "ent-3",
-    name: "Municipio de Chía",
-    nit: "899.999.230-7",
-    representativeName: "Leonardo Donoso",
-    organizationId: "org-1",
-    processesCount: 12,
-    status: "active",
-  },
-  {
-    id: "ent-4",
-    name: "Hospital San Rafael",
-    nit: "860.013.570-3",
-    representativeName: "Patricia Muñoz",
-    organizationId: "org-1",
-    processesCount: 6,
-    status: "active",
-  },
-  {
-    id: "ent-5",
-    name: "Universidad Distrital",
-    nit: "899.999.063-5",
-    representativeName: "Giovanny Tarazona",
-    organizationId: "org-1",
-    processesCount: 4,
-    status: "inactive",
-  },
-]
-
 // Mock Secretaries
 export const mockSecretaries: Secretary[] = [
   {

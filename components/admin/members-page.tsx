@@ -51,7 +51,9 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { mockEntities, type User } from "@/lib/mock-data"
+import type { User } from "@/lib/mock-data"
+import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
 import { cn } from "@/lib/utils"
 
 interface MemberExtended extends User {
@@ -152,7 +154,23 @@ export function MembersPage() {
   const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
   const [isSending, setIsSending] = React.useState(false)
 
-  const entities = mockEntities.filter((e) => e.organizationId === "org-1")
+  const { profile } = useProfile()
+  const [entities, setEntities] = React.useState<Entity[]>([])
+
+  React.useEffect(() => {
+    async function loadEntities() {
+      if (!profile?.organization_id) return
+      try {
+        const data = await getEntities(profile.organization_id)
+        setEntities(data)
+      } catch (err) {
+        console.error("Error loading entities:", err)
+      }
+    }
+    if (profile?.organization_id) {
+      loadEntities()
+    }
+  }, [profile?.organization_id])
 
   // Stats
   const stats = {

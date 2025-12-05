@@ -35,17 +35,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Separator } from "@/components/ui/separator"
-import { mockDocuments, mockEntities, mockProcesses, documentTypes, type Document } from "@/lib/mock-data"
+import { mockDocuments, mockProcesses, documentTypes, type Document } from "@/lib/mock-data"
+import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
 
 type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
 
@@ -84,8 +77,24 @@ export function DocumentsPage() {
   const [activeTab, setActiveTab] = React.useState("all")
 
   const allDocuments = mockDocuments
-  const entities = mockEntities.filter((e) => e.organizationId === "org-1")
   const processes = mockProcesses
+  const { profile } = useProfile()
+  const [entities, setEntities] = React.useState<Entity[]>([])
+
+  React.useEffect(() => {
+    async function loadEntities() {
+      if (!profile?.organization_id) return
+      try {
+        const data = await getEntities(profile.organization_id)
+        setEntities(data)
+      } catch (err) {
+        console.error("Error loading entities:", err)
+      }
+    }
+    if (profile?.organization_id) {
+      loadEntities()
+    }
+  }, [profile?.organization_id])
 
   // Filter documents
   const filteredDocuments = React.useMemo(() => {
@@ -401,34 +410,33 @@ function DocumentDetailDialog({ document, open, onOpenChange }: DocumentDetailDi
   }))
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <FileText className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <DialogTitle className="flex items-center gap-2">
-                {document.name}
-                <Badge className={statusConfig[document.status].className}>{statusConfig[document.status].label}</Badge>
-              </DialogTitle>
-              <DialogDescription>{getDocumentTypeName(document.type)}</DialogDescription>
-            </div>
+    <div>
+      {/* Dialog Content */}
+      <div className="max-w-2xl">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+            <FileText className="h-5 w-5 text-primary" />
           </div>
-        </DialogHeader>
+          <div>
+            <div className="flex items-center gap-2">
+              {document.name}
+              <Badge className={statusConfig[document.status].className}>{statusConfig[document.status].label}</Badge>
+            </div>
+            <div>{getDocumentTypeName(document.type)}</div>
+          </div>
+        </div>
 
         <div className="space-y-6">
           {/* Process Info */}
           <div className="rounded-lg border p-4">
-            <h4 className="text-sm font-medium text-muted-foreground mb-2">Proceso Asociado</h4>
+            <div className="text-sm font-medium text-muted-foreground mb-2">Proceso Asociado</div>
             <div className="flex items-start gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
                 <FolderOpen className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="flex-1">
-                <p className="font-mono text-sm font-medium">{document.processCode}</p>
-                <p className="text-sm text-muted-foreground">{document.processObject}</p>
+                <div className="font-mono text-sm font-medium">{document.processCode}</div>
+                <div className="text-sm text-muted-foreground">{document.processObject}</div>
               </div>
               <Button variant="outline" size="sm">
                 <ExternalLink className="mr-2 h-4 w-4" />
@@ -440,39 +448,40 @@ function DocumentDetailDialog({ document, open, onOpenChange }: DocumentDetailDi
           {/* Details Grid */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-muted-foreground">Entidad</h4>
-              <p className="text-sm">{document.entityName}</p>
+              <div className="text-sm font-medium text-muted-foreground">Entidad</div>
+              <div className="text-sm">{document.entityName}</div>
             </div>
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-muted-foreground">Versión Actual</h4>
-              <p className="text-sm font-mono">V{document.version}</p>
+              <div className="text-sm font-medium text-muted-foreground">Versión Actual</div>
+              <div className="text-sm font-mono">V{document.version}</div>
             </div>
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-muted-foreground">Tamaño del Archivo</h4>
-              <p className="text-sm">{formatFileSize(document.fileSize)}</p>
+              <div className="text-sm font-medium text-muted-foreground">Tamaño del Archivo</div>
+              <div className="text-sm">{formatFileSize(document.fileSize)}</div>
             </div>
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-muted-foreground">Creado por</h4>
-              <p className="text-sm">{document.createdBy}</p>
+              <div className="text-sm font-medium text-muted-foreground">Creado por</div>
+              <div className="text-sm">{document.createdBy}</div>
             </div>
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-muted-foreground">Fecha de Creación</h4>
-              <p className="text-sm">{new Date(document.createdAt).toLocaleDateString("es-CO")}</p>
+              <div className="text-sm font-medium text-muted-foreground">Fecha de Creación</div>
+              <div className="text-sm">{new Date(document.createdAt).toLocaleDateString("es-CO")}</div>
             </div>
             <div className="space-y-1">
-              <h4 className="text-sm font-medium text-muted-foreground">Última Actualización</h4>
-              <p className="text-sm">{new Date(document.updatedAt).toLocaleDateString("es-CO")}</p>
+              <div className="text-sm font-medium text-muted-foreground">Última Actualización</div>
+              <div className="text-sm">{new Date(document.updatedAt).toLocaleDateString("es-CO")}</div>
             </div>
           </div>
 
-          <Separator />
+          {/* Separator */}
+          <div className="my-4 bg-slate-200" />
 
           {/* Version History */}
           <div>
-            <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
+            <div className="flex items-center gap-2 mb-3">
               <History className="h-4 w-4" />
-              Historial de Versiones
-            </h4>
+              <div className="text-sm font-medium">Historial de Versiones</div>
+            </div>
             <div className="space-y-2">
               {versionHistory.map((v) => (
                 <div
@@ -486,10 +495,10 @@ function DocumentDetailDialog({ document, open, onOpenChange }: DocumentDetailDi
                       V{v.version}
                     </Badge>
                     <div>
-                      <p className="text-sm">{v.isCurrent ? "Versión actual" : `Versión ${v.version}`}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <div className="text-sm">{v.isCurrent ? "Versión actual" : `Versión ${v.version}`}</div>
+                      <div className="text-xs text-muted-foreground">
                         {v.author} • {v.date}
-                      </p>
+                      </div>
                     </div>
                   </div>
                   <Button variant="ghost" size="sm">
@@ -501,7 +510,8 @@ function DocumentDetailDialog({ document, open, onOpenChange }: DocumentDetailDi
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
+        {/* Dialog Footer */}
+        <div className="flex gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cerrar
           </Button>
@@ -513,8 +523,8 @@ function DocumentDetailDialog({ document, open, onOpenChange }: DocumentDetailDi
             <Download className="mr-2 h-4 w-4" />
             Descargar Word
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </div>
+    </div>
   )
 }

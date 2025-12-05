@@ -104,7 +104,102 @@ export async function getEntities(organizationId?: string) {
 
   const { data, error } = await query
   if (error) throw error
-  return data as Entity[]
+
+  return (data || []).map((e) => ({
+    id: e.id,
+    name: e.name,
+    nit: e.nit,
+    representativeName: e.representative_name,
+    organizationId: e.organization_id,
+    logoUrl: e.logo_url,
+    status: e.status,
+    processesCount: 0, // Will be calculated separately if needed
+  })) as Entity[]
+}
+
+export async function createEntity(data: {
+  name: string
+  nit: string
+  representativeName: string
+  organizationId: string
+  logoUrl?: string
+  status?: string
+}) {
+  const supabase = createBrowserClient()
+
+  const { data: newEntity, error } = await supabase
+    .from("entities")
+    .insert({
+      name: data.name,
+      nit: data.nit,
+      representative_name: data.representativeName,
+      organization_id: data.organizationId,
+      logo_url: data.logoUrl,
+      status: data.status || "active",
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return {
+    id: newEntity.id,
+    name: newEntity.name,
+    nit: newEntity.nit,
+    representativeName: newEntity.representative_name,
+    organizationId: newEntity.organization_id,
+    logoUrl: newEntity.logo_url,
+    status: newEntity.status,
+    processesCount: 0,
+  } as Entity
+}
+
+export async function updateEntity(
+  id: string,
+  data: Partial<{
+    name: string
+    nit: string
+    representativeName: string
+    logoUrl: string
+    status: string
+  }>,
+) {
+  const supabase = createBrowserClient()
+
+  const updateData: Record<string, unknown> = {}
+  if (data.name !== undefined) updateData.name = data.name
+  if (data.nit !== undefined) updateData.nit = data.nit
+  if (data.representativeName !== undefined) updateData.representative_name = data.representativeName
+  if (data.logoUrl !== undefined) updateData.logo_url = data.logoUrl
+  if (data.status !== undefined) updateData.status = data.status
+
+  const { data: updatedEntity, error } = await supabase
+    .from("entities")
+    .update(updateData)
+    .eq("id", id)
+    .select()
+    .single()
+
+  if (error) throw error
+
+  return {
+    id: updatedEntity.id,
+    name: updatedEntity.name,
+    nit: updatedEntity.nit,
+    representativeName: updatedEntity.representative_name,
+    organizationId: updatedEntity.organization_id,
+    logoUrl: updatedEntity.logo_url,
+    status: updatedEntity.status,
+    processesCount: 0,
+  } as Entity
+}
+
+export async function deleteEntity(id: string) {
+  const supabase = createBrowserClient()
+
+  const { error } = await supabase.from("entities").delete().eq("id", id)
+
+  if (error) throw error
 }
 
 // Secretaries

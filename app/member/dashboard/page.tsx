@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Calendar,
   Building,
+  Loader2,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -35,7 +36,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { mockProcesses, mockEntities, type Process } from "@/lib/mock-data"
+import { mockProcesses, type Process } from "@/lib/mock-data"
+import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "@/components/member/create-process-dialog"
 import { AIAssistant } from "@/components/member/ai-assistant"
 import Link from "next/link"
@@ -43,14 +46,45 @@ import Link from "next/link"
 function MemberDashboardContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const entityId = searchParams.get("entity") || "ent-1"
+  const entityId = searchParams.get("entity")
 
   const [isCreateProcessOpen, setIsCreateProcessOpen] = React.useState(false)
   const [isAssistantOpen, setIsAssistantOpen] = React.useState(false)
 
-  const entity = mockEntities.find((e) => e.id === entityId)
+  const { profile, loading: profileLoading } = useProfile()
+  const [entity, setEntity] = React.useState<Entity | null>(null)
+  const [loading, setLoading] = React.useState(true)
 
-  if (!entity) {
+  React.useEffect(() => {
+    async function loadEntity() {
+      if (!profile?.organization_id || !entityId) {
+        setLoading(false)
+        return
+      }
+      try {
+        const entities = await getEntities(profile.organization_id)
+        const foundEntity = entities.find((e) => e.id === entityId)
+        setEntity(foundEntity || null)
+      } catch (err) {
+        console.error("Error loading entity:", err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    if (!profileLoading && profile?.organization_id) {
+      loadEntity()
+    }
+  }, [profile?.organization_id, profileLoading, entityId])
+
+  if (loading || profileLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!entity || !entityId) {
     router.push("/member")
     return null
   }
@@ -65,6 +99,8 @@ function MemberDashboardContent() {
   }
 
   const completionRate = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0
+
+  // ... existing code for processColumns ...
 
   const processColumns = [
     {

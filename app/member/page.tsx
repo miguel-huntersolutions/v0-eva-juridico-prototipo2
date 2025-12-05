@@ -19,13 +19,16 @@ import {
   Scale,
   FileCheck,
   Zap,
+  Loader2,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { mockEntities, mockProcesses, mockUsers } from "@/lib/mock-data"
+import { mockProcesses } from "@/lib/mock-data"
+import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
 
 const moduleOptions = [
   {
@@ -66,11 +69,29 @@ export default function MemberPage() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [hoveredEntity, setHoveredEntity] = React.useState<string | null>(null)
 
-  // Get current member user
-  const memberUser = mockUsers.find((u) => u.role === "member")
+  const { profile, loading: profileLoading } = useProfile()
+  const [assignedEntities, setAssignedEntities] = React.useState<Entity[]>([])
+  const [loading, setLoading] = React.useState(true)
 
-  // Filter entities assigned to member (for demo, show all)
-  const assignedEntities = mockEntities.filter((e) => e.status === "active")
+  React.useEffect(() => {
+    async function loadEntities() {
+      if (!profile?.organization_id) {
+        setLoading(false)
+        return
+      }
+      try {
+        const entities = await getEntities(profile.organization_id)
+        setAssignedEntities(entities.filter((e) => e.status === "active"))
+      } catch (err) {
+        console.error("Error loading entities:", err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    if (!profileLoading && profile?.organization_id) {
+      loadEntities()
+    }
+  }, [profile?.organization_id, profileLoading])
 
   const filteredEntities = assignedEntities.filter(
     (entity) => entity.name.toLowerCase().includes(searchQuery.toLowerCase()) || entity.nit.includes(searchQuery),
@@ -80,10 +101,18 @@ export default function MemberPage() {
   const totalProcesses = mockProcesses.length
   const inProgressProcesses = mockProcesses.filter((p) => p.status === "in_progress").length
   const completedProcesses = mockProcesses.filter((p) => p.status === "completed").length
-  const completionRate = Math.round((completedProcesses / totalProcesses) * 100)
+  const completionRate = totalProcesses > 0 ? Math.round((completedProcesses / totalProcesses) * 100) : 0
 
   const handleEntitySelect = (entityId: string) => {
     router.push(`/member/dashboard?entity=${entityId}`)
+  }
+
+  if (loading || profileLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
   return (
@@ -96,8 +125,8 @@ export default function MemberPage() {
             <h1 className="text-3xl font-bold tracking-tight">Panel del Asesor</h1>
           </div>
           <p className="text-muted-foreground max-w-2xl">
-            Bienvenido, <span className="font-medium text-foreground">{memberUser?.name || "Asesor"}</span>. Accede a
-            tus herramientas de gestión jurídica y selecciona una entidad para comenzar.
+            Bienvenido, <span className="font-medium text-foreground">{profile?.name || "Asesor"}</span>. Accede a tus
+            herramientas de gestión jurídica y selecciona una entidad para comenzar.
           </p>
         </div>
 

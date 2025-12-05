@@ -45,10 +45,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { mockEntities, mockUsers, mockSecretaries, type Entity } from "@/lib/mock-data"
+import { mockUsers, mockSecretaries, type Entity } from "@/lib/mock-data"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
+
+import { getEntities, createEntity, updateEntity, deleteEntity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
+import { Loader2 } from "lucide-react" // Added for edit/delete/loading states
 
 interface SecretaryForm {
   name: string
@@ -58,15 +62,24 @@ interface SecretaryForm {
 }
 
 export function EntitiesPage() {
-  const [entities, setEntities] = React.useState(mockEntities.filter((e) => e.organizationId === "org-1"))
+  // Use useProfile hook to get organization_id
+  const { profile, loading: profileLoading } = useProfile()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive">("all")
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
   const [isEditOpen, setIsEditOpen] = React.useState(false)
-  const [isDetailOpen, setIsDetailOpen] = React.useState(false)
+  // Added isDeleteOpen state
+  const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
   const [isAssignMembersOpen, setIsAssignMembersOpen] = React.useState(false)
   const [selectedEntity, setSelectedEntity] = React.useState<Entity | null>(null)
   const [currentStep, setCurrentStep] = React.useState(1)
+
+  const [entities, setEntities] = React.useState<Entity[]>([])
+  // Added loading and saving states
+  const [loading, setLoading] = React.useState(true)
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const [isDetailOpen, setIsDetailOpen] = React.useState(false) // Added state for detail dialog
 
   const [formData, setFormData] = React.useState({
     name: "",
@@ -84,8 +97,35 @@ export function EntitiesPage() {
   const members = mockUsers.filter((u) => u.organizationId === "org-1" && u.role === "member")
   const [selectedMembers, setSelectedMembers] = React.useState<string[]>([])
 
+  React.useEffect(() => {
+    async function loadEntities() {
+      // Ensure profile is loaded and has organization_id
+      if (!profile?.organization_id) return
+
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await getEntities(profile.organization_id)
+        setEntities(data)
+      } catch (err) {
+        console.error("Error loading entities:", err)
+        setError("Error al cargar las entidades")
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    // Only load if profile is not loading and has an organization_id
+    if (!profileLoading && profile?.organization_id) {
+      loadEntities()
+    }
+  }, [profile?.organization_id, profileLoading])
+
   const filteredEntities = entities.filter((entity) => {
-    const matchesSearch = entity.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesSearch =
+      entity.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      entity.nit.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      entity.representativeName.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = statusFilter === "all" || entity.status === statusFilter
     return matchesSearch && matchesStatus
   })
@@ -115,6 +155,33 @@ export function EntitiesPage() {
     resetForm()
   }
 
+  const handleCreateDB = async () => {
+    if (!profile?.organization_id) return
+
+    try {
+      setSaving(true)
+      setError(null)
+
+      const newEntity = await createEntity({
+        name: formData.name,
+        nit: formData.nit,
+        representativeName: formData.representativeName,
+        organizationId: profile.organization_id,
+        logoUrl: formData.logoFile ? URL.createObjectURL(formData.logoFile) : undefined, // This will need to be handled for actual upload
+        status: "active", // Default status
+      })
+
+      setEntities([newEntity, ...entities])
+      setIsCreateOpen(false)
+      resetForm()
+    } catch (err) {
+      console.error("Error creating entity:", err)
+      setError("Error al crear la entidad")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleEdit = () => {
     if (!selectedEntity) return
     const updatedEntities = entities.map((entity) => {
@@ -134,9 +201,53 @@ export function EntitiesPage() {
     resetForm()
   }
 
+  const handleEditDB = async () => {
+    if (!selectedEntity) return
+
+    try {
+      setSaving(true)
+      setError(null)
+
+      const updatedEntity = await updateEntity(selectedEntity.id, {
+        name: formData.name,
+        nit: formData.nit,
+        representativeName: formData.representativeName,
+        logoUrl: formData.logoFile ? URL.createObjectURL(formData.logoFile) : undefined, // Handle actual upload
+      })
+
+      setEntities(entities.map((e) => (e.id === selectedEntity.id ? updatedEntity : e)))
+      setIsEditOpen(false)
+      resetForm()
+    } catch (err) {
+      console.error("Error updating entity:", err)
+      setError("Error al actualizar la entidad")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleDelete = (entity: Entity) => {
     console.log("Deleting entity:", entity)
     setEntities(entities.filter((e) => e.id !== entity.id))
+  }
+
+  const handleDeleteDB = async () => {
+    if (!selectedEntity) return
+
+    try {
+      setSaving(true)
+      setError(null)
+
+      await deleteEntity(selectedEntity.id)
+      setEntities(entities.filter((e) => e.id !== selectedEntity.id))
+      setIsDeleteOpen(false)
+      setSelectedEntity(null)
+    } catch (err) {
+      console.error("Error deleting entity:", err)
+      setError("Error al eliminar la entidad")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const resetForm = () => {
@@ -153,6 +264,7 @@ export function EntitiesPage() {
       planFile: null,
     })
     setCurrentStep(1)
+    setSelectedMembers([]) // Reset selected members as well
   }
 
   const openEditDialog = (entity: Entity) => {
@@ -170,9 +282,9 @@ export function EntitiesPage() {
       name: entity.name,
       nit: entity.nit,
       representativeName: entity.representativeName,
-      representativeEmail: "representante@entidad.gov.co",
-      address: "Calle 123 #45-67, Bogotá",
-      phone: "+57 1 234 5678",
+      representativeEmail: "representante@entidad.gov.co", // Placeholder, needs to be fetched or set
+      address: "Calle 123 #45-67, Bogotá", // Placeholder, needs to be fetched or set
+      phone: "+57 1 234 5678", // Placeholder, needs to be fetched or set
       secretaries:
         entitySecretaries.length > 0 ? entitySecretaries : [{ name: "", secretaryName: "", email: "", phone: "" }],
       logoFile: null,
@@ -184,13 +296,19 @@ export function EntitiesPage() {
 
   const openDetailDialog = (entity: Entity) => {
     setSelectedEntity(entity)
-    setIsDetailOpen(true)
+    setIsDetailOpen(true) // Set the state for the detail dialog
   }
 
   const openAssignDialog = (entity: Entity) => {
     setSelectedEntity(entity)
     setSelectedMembers(["3", "4"]) // Mock pre-selected members
     setIsAssignMembersOpen(true)
+  }
+
+  // Added openDeleteDialog
+  const openDeleteDialog = (entity: Entity) => {
+    setSelectedEntity(entity)
+    setIsDeleteOpen(true)
   }
 
   const addSecretaryField = () => {
@@ -248,6 +366,14 @@ export function EntitiesPage() {
       ))}
     </div>
   )
+
+  if (loading || profileLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-8 p-8">
@@ -345,7 +471,7 @@ export function EntitiesPage() {
                               Asignar Miembros
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(entity)}>
+                            <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(entity)}>
                               <Trash2 className="mr-2 h-4 w-4" />
                               Eliminar
                             </DropdownMenuItem>
@@ -671,7 +797,7 @@ export function EntitiesPage() {
             {currentStep < 3 ? (
               <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
             ) : (
-              <Button onClick={handleCreate}>Crear Entidad</Button>
+              <Button onClick={handleCreateDB}>Crear Entidad</Button>
             )}
           </DialogFooter>
         </DialogContent>
@@ -975,7 +1101,7 @@ export function EntitiesPage() {
             {currentStep < 3 ? (
               <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
             ) : (
-              <Button onClick={handleEdit}>Guardar Cambios</Button>
+              <Button onClick={handleEditDB}>Guardar Cambios</Button>
             )}
           </DialogFooter>
         </DialogContent>

@@ -45,8 +45,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { mockProcesses, mockEntities, type Process } from "@/lib/mock-data"
-import { getProcessTypes, type ProcessType } from "@/lib/supabase/client-data-access"
+import { mockProcesses, type Process } from "@/lib/mock-data"
+import { getProcessTypes, getEntities, type ProcessType, type Entity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "./create-process-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
@@ -64,6 +65,10 @@ export function ProcessesPage() {
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
 
+  const { profile } = useProfile()
+  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [isLoadingEntities, setIsLoadingEntities] = React.useState(true)
+
   React.useEffect(() => {
     async function loadProcessTypes() {
       try {
@@ -77,6 +82,23 @@ export function ProcessesPage() {
     }
     loadProcessTypes()
   }, [])
+
+  React.useEffect(() => {
+    async function loadEntities() {
+      if (!profile?.organization_id) return
+      try {
+        const data = await getEntities(profile.organization_id)
+        setEntities(data)
+      } catch (err) {
+        console.error("Error loading entities:", err)
+      } finally {
+        setIsLoadingEntities(false)
+      }
+    }
+    if (profile?.organization_id) {
+      loadEntities()
+    }
+  }, [profile?.organization_id])
 
   const hasActiveFilters = statusFilter !== "all" || entityFilter !== "all" || processTypeFilter !== "all"
 
@@ -206,11 +228,18 @@ export function ProcessesPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas las entidades</SelectItem>
-                {mockEntities.map((entity) => (
-                  <SelectItem key={entity.id} value={entity.id}>
-                    {entity.name}
+                {isLoadingEntities ? (
+                  <SelectItem value="loading" disabled>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Cargando...
                   </SelectItem>
-                ))}
+                ) : (
+                  entities.map((entity) => (
+                    <SelectItem key={entity.id} value={entity.id}>
+                      {entity.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
 
