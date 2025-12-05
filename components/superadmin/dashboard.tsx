@@ -156,10 +156,7 @@ export function SuperadminDashboard() {
   return (
     <div className="flex flex-col gap-8 p-8">
       <PageHeader title="Panel de Superadministrador" description="Gestiona la plataforma EVA Jurídico de forma global">
-        <Button onClick={() => setIsCreateOrgOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Nueva Organización
-        </Button>
+        
       </PageHeader>
 
       {/* Stats Grid */}
