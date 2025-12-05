@@ -692,3 +692,119 @@ export async function getCurrentProfile() {
   if (error) return null
   return data as Profile
 }
+
+export async function getOrganizationMembers(organizationId: string) {
+  const supabase = createBrowserClient()
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .order("name")
+
+  if (error) throw error
+  return data as Profile[]
+}
+
+export async function createMember(data: {
+  email: string
+  name: string
+  role: "admin" | "member"
+  organizationId: string
+  avatarUrl?: string
+}) {
+  const supabase = createBrowserClient()
+
+  // First, create the auth user by sending an invite
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email: data.email,
+    email_confirm: true,
+    user_metadata: {
+      name: data.name,
+      role: data.role,
+    },
+  })
+
+  // If admin API is not available, we'll create profile directly
+  // The user will need to sign up separately
+  if (authError) {
+    console.log("[v0] Admin API not available, creating profile only")
+  }
+
+  const userId = authData?.user?.id || crypto.randomUUID()
+
+  const { data: newProfile, error } = await supabase
+    .from("profiles")
+    .insert({
+      id: userId,
+      email: data.email,
+      name: data.name,
+      role: data.role,
+      organization_id: data.organizationId,
+      avatar_url: data.avatarUrl,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  return newProfile as Profile
+}
+
+export async function updateMember(
+  id: string,
+  data: Partial<{
+    name: string
+    role: string
+    avatarUrl: string
+  }>,
+) {
+  const supabase = createBrowserClient()
+
+  const updateData: Record<string, unknown> = {}
+  if (data.name !== undefined) updateData.name = data.name
+  if (data.role !== undefined) updateData.role = data.role
+  if (data.avatarUrl !== undefined) updateData.avatar_url = data.avatarUrl
+
+  const { data: updatedProfile, error } = await supabase
+    .from("profiles")
+    .update(updateData)
+    .eq("id", id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return updatedProfile as Profile
+}
+
+export async function deleteMember(id: string) {
+  const supabase = createBrowserClient()
+
+  const { error } = await supabase.from("profiles").delete().eq("id", id)
+
+  if (error) throw error
+}
+
+export async function inviteMemberByEmail(data: {
+  email: string
+  name: string
+  role: "admin" | "member"
+  organizationId: string
+}) {
+  const supabase = createBrowserClient()
+
+  // Create a pending profile that will be linked when user signs up
+  const { data: newProfile, error } = await supabase
+    .from("profiles")
+    .insert({
+      id: crypto.randomUUID(),
+      email: data.email,
+      name: data.name,
+      role: data.role,
+      organization_id: data.organizationId,
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  return newProfile as Profile
+}

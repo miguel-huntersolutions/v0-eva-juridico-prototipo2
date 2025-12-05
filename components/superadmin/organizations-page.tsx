@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/router"
 import {
   Building2,
   Users,
@@ -95,6 +96,7 @@ export function OrganizationsPage() {
   const [isDeleting, setIsDeleting] = React.useState(false)
 
   const { startImpersonation } = useImpersonation()
+  const router = useRouter()
 
   const loadOrganizations = React.useCallback(async () => {
     try {
@@ -181,8 +183,7 @@ export function OrganizationsPage() {
   }
 
   const handleViewDetails = (org: Organization) => {
-    setSelectedOrg(org)
-    setIsDetailOpen(true)
+    router.push(`/superadmin/organizations/${org.id}`)
   }
 
   const handleInviteAdmin = (org: Organization) => {
@@ -764,7 +765,7 @@ export function OrganizationsPage() {
                     <UserPlus className="mr-2 h-4 w-4" />
                     Invitar Administrador
                   </Button>
-                  
+
                   <Button variant="outline" size="sm">
                     <Pencil className="mr-2 h-4 w-4" />
                     Editar Datos
