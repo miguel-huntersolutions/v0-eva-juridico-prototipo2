@@ -2,10 +2,13 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { Building2, FileText, Shield, Scale, ArrowRight, Sparkles } from "lucide-react"
+import { Building2, FileText, Shield, Scale, ArrowRight, Sparkles, Mail, Lock, Eye, EyeOff } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { mockUsers, type UserRole } from "@/lib/mock-data"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { createBrowserClient } from "@/lib/supabase/client"
+import type { UserRole } from "@/lib/mock-data"
 
 interface ProfileOption {
   role: UserRole
@@ -57,23 +60,51 @@ const profileOptions: ProfileOption[] = [
 
 export default function LoginPage() {
   const router = useRouter()
-  const [selectedRole, setSelectedRole] = React.useState<UserRole | null>(null)
+  const [email, setEmail] = React.useState("")
+  const [password, setPassword] = React.useState("")
+  const [showPassword, setShowPassword] = React.useState(false)
   const [isLoading, setIsLoading] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const [mode, setMode] = React.useState<"login" | "demo">("login")
 
-  const handleLogin = (role: UserRole, route: string) => {
-    setSelectedRole(role)
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
     setIsLoading(true)
+    setError(null)
 
-    // Simulate login delay
-    setTimeout(() => {
-      // Store selected role in localStorage for persistence
-      localStorage.setItem("eva_user_role", role)
-      router.push(route)
-    }, 800)
+    try {
+      const supabase = createBrowserClient()
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (authError) {
+        setError(authError.message)
+        setIsLoading(false)
+        return
+      }
+
+      if (data.user) {
+        // Get user profile to determine redirect
+        const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
+
+        const role = profile?.role || "member"
+        const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+        router.push(route)
+      }
+    } catch (err) {
+      setError("Error al iniciar sesión")
+      setIsLoading(false)
+    }
   }
 
-  const getUserByRole = (role: UserRole) => {
-    return mockUsers.find((u) => u.role === role)
+  const handleDemoLogin = (role: UserRole, route: string) => {
+    setIsLoading(true)
+    localStorage.setItem("eva_user_role", role)
+    setTimeout(() => {
+      router.push(route)
+    }, 800)
   }
 
   return (
@@ -96,112 +127,183 @@ export default function LoginPage() {
       {/* Main Content */}
       <main className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-4xl">
-          {/* Welcome Section */}
-          <div className="text-center mb-10">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 mb-4">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <span className="text-xs font-medium text-primary">Demo Mode</span>
+          {/* Mode Toggle */}
+          <div className="flex justify-center mb-8">
+            <div className="inline-flex rounded-lg border border-border p-1">
+              <button
+                onClick={() => setMode("login")}
+                className={cn(
+                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                  mode === "login"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Iniciar Sesión
+              </button>
+              <button
+                onClick={() => setMode("demo")}
+                className={cn(
+                  "px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                  mode === "demo"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Modo Demo
+              </button>
             </div>
-            <h2 className="text-3xl font-bold tracking-tight mb-3">Selecciona tu Perfil</h2>
-            <p className="text-muted-foreground max-w-md mx-auto">
-              Elige el rol con el que deseas ingresar a la plataforma para explorar sus funcionalidades
-            </p>
           </div>
 
-          {/* Profile Cards */}
-          <div className="grid md:grid-cols-3 gap-4">
-            {profileOptions.map((option) => {
-              const user = getUserByRole(option.role)
-              const isSelected = selectedRole === option.role
-              const isLoadingThis = isLoading && isSelected
+          {mode === "login" ? (
+            /* Login Form */
+            <div className="max-w-md mx-auto">
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-bold tracking-tight mb-2">Bienvenido de nuevo</h2>
+                <p className="text-muted-foreground">Ingresa tus credenciales para acceder</p>
+              </div>
 
-              return (
-                <button
-                  key={option.role}
-                  onClick={() => handleLogin(option.role, option.route)}
-                  disabled={isLoading}
-                  className={cn(
-                    "group relative flex flex-col rounded-2xl border-2 bg-card p-6 text-left transition-all duration-300",
-                    "hover:bg-accent/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-1",
-                    "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0",
-                    option.borderColor,
-                    isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">Correo electrónico</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="tu@email.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="pl-10"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="password">Contraseña</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-10 pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+                    {error}
+                  </div>
+                )}
+
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      Ingresando...
+                    </span>
+                  ) : (
+                    "Iniciar Sesión"
                   )}
-                >
-                  {/* Icon */}
-                  <div
-                    className={cn(
-                      "flex h-12 w-12 items-center justify-center rounded-xl mb-4 transition-transform group-hover:scale-110",
-                      option.bgColor,
-                    )}
-                  >
-                    <option.icon className={cn("h-6 w-6", option.color)} />
-                  </div>
+                </Button>
+              </form>
 
-                  {/* Title & Description */}
-                  <h3 className="text-lg font-semibold mb-1">{option.title}</h3>
-                  <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{option.description}</p>
+              <div className="mt-6 text-center">
+                <a href="/auth/sign-up" className="text-sm text-primary hover:underline">
+                  ¿No tienes cuenta? Regístrate
+                </a>
+              </div>
+            </div>
+          ) : (
+            /* Demo Mode */
+            <>
+              <div className="text-center mb-10">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 mb-4">
+                  <Sparkles className="h-3.5 w-3.5 text-primary" />
+                  <span className="text-xs font-medium text-primary">Demo Mode</span>
+                </div>
+                <h2 className="text-3xl font-bold tracking-tight mb-3">Selecciona tu Perfil</h2>
+                <p className="text-muted-foreground max-w-md mx-auto">
+                  Elige el rol con el que deseas ingresar a la plataforma para explorar sus funcionalidades
+                </p>
+              </div>
 
-                  {/* Features */}
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    {option.features.map((feature) => (
-                      <span
-                        key={feature}
-                        className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-muted text-muted-foreground"
+              {/* Profile Cards */}
+              <div className="grid md:grid-cols-3 gap-4">
+                {profileOptions.map((option) => {
+                  return (
+                    <button
+                      key={option.role}
+                      onClick={() => handleDemoLogin(option.role, option.route)}
+                      disabled={isLoading}
+                      className={cn(
+                        "group relative flex flex-col rounded-2xl border-2 bg-card p-6 text-left transition-all duration-300",
+                        "hover:bg-accent/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-1",
+                        "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0",
+                        option.borderColor,
+                      )}
+                    >
+                      {/* Icon */}
+                      <div
+                        className={cn(
+                          "flex h-12 w-12 items-center justify-center rounded-xl mb-4 transition-transform group-hover:scale-110",
+                          option.bgColor,
+                        )}
                       >
-                        {feature}
-                      </span>
-                    ))}
-                  </div>
+                        <option.icon className={cn("h-6 w-6", option.color)} />
+                      </div>
 
-                  {/* User Preview */}
-                  {user && (
-                    <div className="mt-auto pt-4 border-t border-border/50">
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8">
-                          <AvatarImage src={user.avatar || "/placeholder.svg"} alt={user.name} />
-                          <AvatarFallback className={cn(option.bgColor, option.color, "text-xs")}>
-                            {user.name
-                              .split(" ")
-                              .map((n) => n[0])
-                              .join("")}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{user.name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                        </div>
+                      {/* Title & Description */}
+                      <h3 className="text-lg font-semibold mb-1">{option.title}</h3>
+                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{option.description}</p>
+
+                      {/* Features */}
+                      <div className="flex flex-wrap gap-1.5 mb-4">
+                        {option.features.map((feature) => (
+                          <span
+                            key={feature}
+                            className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-muted text-muted-foreground"
+                          >
+                            {feature}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="mt-auto pt-4 border-t border-border/50 flex justify-end">
                         <ArrowRight
                           className={cn(
-                            "h-4 w-4 text-muted-foreground transition-transform",
+                            "h-5 w-5 text-muted-foreground transition-transform",
                             "group-hover:translate-x-1 group-hover:text-foreground",
-                            isLoadingThis && "animate-pulse",
                           )}
                         />
                       </div>
-                    </div>
-                  )}
+                    </button>
+                  )
+                })}
+              </div>
 
-                  {/* Loading Overlay */}
-                  {isLoadingThis && (
-                    <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background/80 backdrop-blur-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                        <span className="text-sm font-medium">Ingresando...</span>
-                      </div>
-                    </div>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Info Section */}
-          <div className="mt-8 text-center">
-            <p className="text-xs text-muted-foreground">
-              Esta es una versión de demostración. Los datos mostrados son ficticios.
-            </p>
-          </div>
+              {/* Info Section */}
+              <div className="mt-8 text-center">
+                <p className="text-xs text-muted-foreground">
+                  Esta es una versión de demostración. Los datos mostrados son ficticios.
+                </p>
+              </div>
+            </>
+          )}
         </div>
       </main>
 

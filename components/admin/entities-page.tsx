@@ -46,7 +46,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { mockUsers, mockSecretaries, type Entity } from "@/lib/mock-data"
+import type { Entity } from "@/lib/mock-data"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -57,7 +57,11 @@ import {
   updateEntity,
   deleteEntity,
   getOrganizations,
+  getSecretaries,
+  getOrganizationMembers,
   type Organization,
+  type Profile,
+  type Secretary,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
@@ -105,6 +109,10 @@ export function EntitiesPage() {
   const [organizations, setOrganizations] = React.useState<Organization[]>([])
   const [loadingOrgs, setLoadingOrgs] = React.useState(false)
 
+  const [members, setMembers] = React.useState<Profile[]>([])
+  const [secretaries, setSecretaries] = React.useState<Secretary[]>([])
+  const [loadingMembers, setLoadingMembers] = React.useState(false)
+
   const [formData, setFormData] = React.useState({
     name: "",
     nit: "",
@@ -118,8 +126,26 @@ export function EntitiesPage() {
     planFile: null as File | null,
   })
 
-  const members = mockUsers.filter((u) => u.organizationId === "org-1" && u.role === "member")
+  // const members = mockUsers.filter((u) => u.organizationId === "org-1" && u.role === "member")
   const [selectedMembers, setSelectedMembers] = React.useState<string[]>([])
+
+  React.useEffect(() => {
+    async function loadMembers() {
+      if (!effectiveOrganizationId) return
+      setLoadingMembers(true)
+      try {
+        const data = await getOrganizationMembers(effectiveOrganizationId)
+        setMembers(data.filter((m) => m.role === "member"))
+      } catch (err) {
+        console.error("Error loading members:", err)
+      } finally {
+        setLoadingMembers(false)
+      }
+    }
+    if (effectiveOrganizationId) {
+      loadMembers()
+    }
+  }, [effectiveOrganizationId])
 
   React.useEffect(() => {
     async function loadOrganizations() {
@@ -310,30 +336,47 @@ export function EntitiesPage() {
     setSelectedMembers([]) // Reset selected members as well
   }
 
-  const openEditDialog = (entity: Entity) => {
+  const openEditDialog = async (entity: Entity) => {
     setSelectedEntity(entity)
-    const entitySecretaries = mockSecretaries
-      .filter((s) => s.entityId === entity.id)
-      .map((s) => ({
+
+    // Load secretaries from database
+    try {
+      const entitySecretaries = await getSecretaries(entity.id)
+      const secretaryForms = entitySecretaries.map((s) => ({
         name: s.name,
-        secretaryName: s.secretaryName,
-        email: s.email,
-        phone: s.phone,
+        secretaryName: s.secretary_name || "",
+        email: s.email || "",
+        phone: s.phone || "",
       }))
 
-    setFormData({
-      name: entity.name,
-      nit: entity.nit,
-      representativeName: entity.representativeName,
-      representativeEmail: "representante@entidad.gov.co", // Placeholder, needs to be fetched or set
-      address: "Calle 123 #45-67, Bogotá", // Placeholder, needs to be fetched or set
-      phone: "+57 1 234 5678", // Placeholder, needs to be fetched or set
-      secretaries:
-        entitySecretaries.length > 0 ? entitySecretaries : [{ name: "", secretaryName: "", email: "", phone: "" }],
-      logoFile: null,
-      paaFile: null,
-      planFile: null,
-    })
+      setFormData({
+        name: entity.name,
+        nit: entity.nit,
+        representativeName: entity.representativeName,
+        representativeEmail: "",
+        address: "",
+        phone: "",
+        secretaries:
+          secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }],
+        logoFile: null,
+        paaFile: null,
+        planFile: null,
+      })
+    } catch (err) {
+      console.error("Error loading secretaries:", err)
+      setFormData({
+        name: entity.name,
+        nit: entity.nit,
+        representativeName: entity.representativeName,
+        representativeEmail: "",
+        address: "",
+        phone: "",
+        secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
+        logoFile: null,
+        paaFile: null,
+        planFile: null,
+      })
+    }
     setIsEditOpen(true)
   }
 
@@ -344,7 +387,7 @@ export function EntitiesPage() {
 
   const openAssignDialog = (entity: Entity) => {
     setSelectedEntity(entity)
-    setSelectedMembers(["3", "4"]) // Mock pre-selected members
+    // setSelectedMembers(["3", "4"]) // Mock pre-selected members
     setIsAssignMembersOpen(true)
   }
 
@@ -1266,8 +1309,9 @@ export function EntitiesPage() {
                   <CardTitle className="text-sm">Secretarías</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {mockSecretaries
-                    .filter((s) => s.entityId === selectedEntity?.id)
+                  {/* < For mockSecretaries.filter((s) => s.entityId === selectedEntity?.id).map((secretary) => ( */}
+                  {secretaries
+                    .filter((s) => s.entity_id === selectedEntity?.id)
                     .map((secretary) => (
                       <div key={secretary.id} className="rounded-lg border p-3 space-y-2">
                         <div className="flex items-center justify-between">
@@ -1279,7 +1323,7 @@ export function EntitiesPage() {
                         <div className="grid gap-1 text-xs text-muted-foreground">
                           <div className="flex items-center gap-2">
                             <User className="h-3 w-3" />
-                            <span>{secretary.secretaryName}</span>
+                            <span>{secretary.secretary_name}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <Mail className="h-3 w-3" />
@@ -1391,6 +1435,7 @@ export function EntitiesPage() {
             <DialogDescription>Selecciona los miembros que tendrán acceso a {selectedEntity?.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {/* {members.map((member) => ( */}
             {members.map((member) => (
               <div
                 key={member.id}
@@ -1399,7 +1444,7 @@ export function EntitiesPage() {
               >
                 <Checkbox checked={selectedMembers.includes(member.id)} />
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback>{member.name.charAt(0)}</AvatarFallback>
+                  <AvatarFallback>{member.name?.charAt(0)}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1">
                   <p className="text-sm font-medium">{member.name}</p>

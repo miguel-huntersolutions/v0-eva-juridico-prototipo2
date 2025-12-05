@@ -1,14 +1,24 @@
 "use client"
+
 import { AppSidebar } from "@/components/app-sidebar"
-import { mockUsers } from "@/lib/mock-data"
 import { ProcessesPage } from "@/components/member/processes-page"
+import { useProfile } from "@/hooks/use-profile"
+import { Loader2 } from "lucide-react"
 
 export default function MemberProcessesRoute() {
-  const memberUser = mockUsers.find((u) => u.role === "member") || mockUsers[0]
+  const { profile, loading } = useProfile()
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen">
-      <AppSidebar user={memberUser} />
+      <AppSidebar profile={profile} />
       <main className="flex-1 overflow-auto">
         <ProcessesPage />
       </main>
