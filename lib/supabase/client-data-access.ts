@@ -784,27 +784,32 @@ export async function deleteMember(id: string) {
   if (error) throw error
 }
 
-export async function inviteMemberByEmail(data: {
-  email: string
-  name: string
+export async function assignExistingMember(data: {
+  userId: string
   role: "admin" | "member"
   organizationId: string
 }) {
   const supabase = createBrowserClient()
 
-  // Create a pending profile that will be linked when user signs up
-  const { data: newProfile, error } = await supabase
+  const { data: updatedProfile, error } = await supabase
     .from("profiles")
-    .insert({
-      id: crypto.randomUUID(),
-      email: data.email,
-      name: data.name,
+    .update({
       role: data.role,
       organization_id: data.organizationId,
     })
+    .eq("id", data.userId)
     .select()
     .single()
 
   if (error) throw error
-  return newProfile as Profile
+  return updatedProfile as Profile
+}
+
+export async function searchUserByEmail(email: string) {
+  const supabase = createBrowserClient()
+
+  const { data, error } = await supabase.from("profiles").select("*").eq("email", email).single()
+
+  if (error && error.code !== "PGRST116") throw error
+  return data as Profile | null
 }

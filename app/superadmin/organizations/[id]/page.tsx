@@ -41,7 +41,8 @@ import {
   getOrganizations,
   getOrganizationMembers,
   getEntities,
-  inviteMemberByEmail,
+  assignExistingMember,
+  searchUserByEmail,
   updateMember,
   deleteMember,
   createEntity,
@@ -124,18 +125,29 @@ export default function OrganizationDetailPage() {
     try {
       setSavingMember(true)
       setMemberError(null)
-      await inviteMemberByEmail({
-        email: memberForm.email,
-        name: memberForm.name,
+
+      const existingUser = await searchUserByEmail(memberForm.email)
+
+      if (!existingUser) {
+        setMemberError(
+          "No se encontró un usuario con este correo. El usuario debe haberse registrado previamente en la plataforma.",
+        )
+        setSavingMember(false)
+        return
+      }
+
+      await assignExistingMember({
+        userId: existingUser.id,
         role: memberForm.role,
         organizationId,
       })
+
       await loadData()
       setIsAddMemberOpen(false)
       setMemberForm({ name: "", email: "", role: "member" })
     } catch (err) {
       console.error("[v0] Error adding member:", err)
-      setMemberError("Error al agregar el miembro. El correo puede ya estar en uso.")
+      setMemberError("Error al agregar el miembro. Puede que ya pertenezca a esta organización.")
     } finally {
       setSavingMember(false)
     }
@@ -483,7 +495,10 @@ export default function OrganizationDetailPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Agregar Miembro</DialogTitle>
-            <DialogDescription>Invita un nuevo administrador o asesor jurídico a la organización</DialogDescription>
+            <DialogDescription>
+              Busca un usuario existente por correo electrónico y asígnalo a esta organización. El usuario debe haberse
+              registrado previamente en la plataforma.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {memberError && (
