@@ -1,14 +1,24 @@
 "use client"
+
 import { AppSidebar } from "@/components/app-sidebar"
-import { mockUsers } from "@/lib/mock-data"
 import { ProcessTypesPage } from "@/components/superadmin/process-types-page"
+import { useProfile } from "@/hooks/use-profile"
+import { Loader2 } from "lucide-react"
 
 export default function SuperadminProcessTypesPage() {
-  const superadminUser = mockUsers.find((u) => u.role === "superadmin") || mockUsers[0]
+  const { profile, isLoading } = useProfile()
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen">
-      <AppSidebar user={superadminUser} />
+      <AppSidebar profile={profile} />
       <main className="flex-1 overflow-auto">
         <ProcessTypesPage />
       </main>

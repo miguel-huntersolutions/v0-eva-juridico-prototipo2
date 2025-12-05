@@ -1,14 +1,24 @@
 "use client"
-import { AppSidebar } from "@/components/app-sidebar"
-import { mockUsers } from "@/lib/mock-data"
-import { TemplatesPage } from "@/components/superadmin/templates-page"
 
-export default function SuperadminTemplatesPage() {
-  const superadminUser = mockUsers.find((u) => u.role === "superadmin") || mockUsers[0]
+import { AppSidebar } from "@/components/app-sidebar"
+import { TemplatesPage } from "@/components/superadmin/templates-page"
+import { useProfile } from "@/hooks/use-profile"
+import { Loader2 } from "lucide-react"
+
+export default function SuperadminTemplatesPageRoute() {
+  const { profile, isLoading } = useProfile()
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-screen">
-      <AppSidebar user={superadminUser} />
+      <AppSidebar profile={profile} />
       <main className="flex-1 overflow-auto">
         <TemplatesPage />
       </main>
