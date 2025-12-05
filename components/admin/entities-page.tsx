@@ -20,6 +20,7 @@ import {
   Briefcase,
   Mail,
   Phone,
+  Loader2,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -52,7 +53,8 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 
 import { getEntities, createEntity, updateEntity, deleteEntity } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
-import { Loader2 } from "lucide-react" // Added for edit/delete/loading states
+import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
 interface SecretaryForm {
   name: string
@@ -62,8 +64,16 @@ interface SecretaryForm {
 }
 
 export function EntitiesPage() {
-  // Use useProfile hook to get organization_id
   const { profile, loading: profileLoading } = useProfile()
+  const { effectiveRole, isSuperadmin } = useRoleSwitcher()
+  const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
+
+  const { effectiveOrganizationId, isLoaded: orgLoaded } = useOrganizationSelector({
+    userOrganizationId: profile?.organization_id,
+    isSuperadmin,
+    isSimulatingAdmin,
+  })
+
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive">("all")
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
@@ -99,13 +109,12 @@ export function EntitiesPage() {
 
   React.useEffect(() => {
     async function loadEntities() {
-      // Ensure profile is loaded and has organization_id
-      if (!profile?.organization_id) return
+      if (!effectiveOrganizationId) return
 
       try {
         setLoading(true)
         setError(null)
-        const data = await getEntities(profile.organization_id)
+        const data = await getEntities(effectiveOrganizationId)
         setEntities(data)
       } catch (err) {
         console.error("Error loading entities:", err)
@@ -115,11 +124,14 @@ export function EntitiesPage() {
       }
     }
 
-    // Only load if profile is not loading and has an organization_id
-    if (!profileLoading && profile?.organization_id) {
+    if (!profileLoading && orgLoaded && effectiveOrganizationId) {
       loadEntities()
+    } else if (!profileLoading && orgLoaded && !effectiveOrganizationId) {
+      // No organization selected, stop loading
+      setLoading(false)
+      setError("No hay organización seleccionada")
     }
-  }, [profile?.organization_id, profileLoading])
+  }, [effectiveOrganizationId, profileLoading, orgLoaded])
 
   const filteredEntities = entities.filter((entity) => {
     const matchesSearch =
@@ -156,7 +168,7 @@ export function EntitiesPage() {
   }
 
   const handleCreateDB = async () => {
-    if (!profile?.organization_id) return
+    if (!effectiveOrganizationId) return // Use effectiveOrganizationId
 
     try {
       setSaving(true)
@@ -166,7 +178,7 @@ export function EntitiesPage() {
         name: formData.name,
         nit: formData.nit,
         representativeName: formData.representativeName,
-        organizationId: profile.organization_id,
+        organizationId: effectiveOrganizationId, // Use effectiveOrganizationId
         logoUrl: formData.logoFile ? URL.createObjectURL(formData.logoFile) : undefined, // This will need to be handled for actual upload
         status: "active", // Default status
       })
@@ -367,10 +379,27 @@ export function EntitiesPage() {
     </div>
   )
 
-  if (loading || profileLoading) {
+  if (loading || profileLoading || !orgLoaded) {
+    // Added !orgLoaded to the condition
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!effectiveOrganizationId) {
+    // Handle case where no organization is selected
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Card>
+          <CardHeader>
+            <CardTitle>Selecciona una Organización</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground">Por favor, selecciona una organización del selector para continuar.</p>
+          </CardContent>
+        </Card>
       </div>
     )
   }
