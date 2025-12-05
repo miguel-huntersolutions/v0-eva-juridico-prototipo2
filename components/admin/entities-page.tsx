@@ -51,7 +51,14 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
-import { getEntities, createEntity, updateEntity, deleteEntity } from "@/lib/supabase/client-data-access"
+import {
+  getEntities,
+  createEntity,
+  updateEntity,
+  deleteEntity,
+  getOrganizations,
+  type Organization,
+} from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
@@ -68,7 +75,11 @@ export function EntitiesPage() {
   const { effectiveRole, isSuperadmin } = useRoleSwitcher()
   const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
 
-  const { effectiveOrganizationId, isLoaded: orgLoaded } = useOrganizationSelector({
+  const {
+    effectiveOrganizationId,
+    isLoaded: orgLoaded,
+    selectOrganization,
+  } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
     isSuperadmin,
     isSimulatingAdmin,
@@ -91,6 +102,9 @@ export function EntitiesPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false) // Added state for detail dialog
 
+  const [organizations, setOrganizations] = React.useState<Organization[]>([])
+  const [loadingOrgs, setLoadingOrgs] = React.useState(false)
+
   const [formData, setFormData] = React.useState({
     name: "",
     nit: "",
@@ -106,6 +120,23 @@ export function EntitiesPage() {
 
   const members = mockUsers.filter((u) => u.organizationId === "org-1" && u.role === "member")
   const [selectedMembers, setSelectedMembers] = React.useState<string[]>([])
+
+  React.useEffect(() => {
+    async function loadOrganizations() {
+      if (isSuperadmin && isSimulatingAdmin && !effectiveOrganizationId && orgLoaded) {
+        setLoadingOrgs(true)
+        try {
+          const orgs = await getOrganizations()
+          setOrganizations(orgs)
+        } catch (err) {
+          console.error("Error loading organizations:", err)
+        } finally {
+          setLoadingOrgs(false)
+        }
+      }
+    }
+    loadOrganizations()
+  }, [isSuperadmin, isSimulatingAdmin, effectiveOrganizationId, orgLoaded])
 
   React.useEffect(() => {
     async function loadEntities() {
@@ -389,15 +420,45 @@ export function EntitiesPage() {
   }
 
   if (!effectiveOrganizationId) {
-    // Handle case where no organization is selected
     return (
-      <div className="flex h-full items-center justify-center">
-        <Card>
-          <CardHeader>
+      <div className="flex h-full items-center justify-center p-8">
+        <Card className="w-full max-w-lg">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+              <Building className="h-6 w-6 text-primary" />
+            </div>
             <CardTitle>Selecciona una Organización</CardTitle>
+            <CardDescription>
+              Para gestionar entidades, primero debes seleccionar la organización con la que trabajarás.
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-muted-foreground">Por favor, selecciona una organización del selector para continuar.</p>
+            {loadingOrgs ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : organizations.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">
+                No hay organizaciones disponibles. Crea una primero desde el panel de Superadministrador.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {organizations.map((org) => (
+                  <Button
+                    key={org.id}
+                    variant="outline"
+                    className="w-full justify-start h-auto py-3 bg-transparent"
+                    onClick={() => selectOrganization(org)}
+                  >
+                    <Building className="mr-3 h-5 w-5 text-muted-foreground" />
+                    <div className="text-left">
+                      <div className="font-medium">{org.name}</div>
+                      <div className="text-xs text-muted-foreground">NIT: {org.nit}</div>
+                    </div>
+                  </Button>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
