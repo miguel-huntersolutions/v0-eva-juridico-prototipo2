@@ -819,14 +819,17 @@ export function EntitiesPage() {
 
           <DialogFooter className="flex-shrink-0 pt-4 border-t">
             {currentStep > 1 && (
-              <Button variant="outline" onClick={() => setCurrentStep(currentStep - 1)}>
+              <Button variant="outline" onClick={() => setCurrentStep(currentStep - 1)} disabled={saving}>
                 Anterior
               </Button>
             )}
             {currentStep < 3 ? (
               <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
             ) : (
-              <Button onClick={handleCreateDB}>Crear Entidad</Button>
+              <Button onClick={handleCreateDB} disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {saving ? "Creando..." : "Crear Entidad"}
+              </Button>
             )}
           </DialogFooter>
         </DialogContent>
@@ -1123,14 +1126,17 @@ export function EntitiesPage() {
 
           <DialogFooter className="flex-shrink-0 pt-4 border-t">
             {currentStep > 1 && (
-              <Button variant="outline" onClick={() => setCurrentStep(currentStep - 1)}>
+              <Button variant="outline" onClick={() => setCurrentStep(currentStep - 1)} disabled={saving}>
                 Anterior
               </Button>
             )}
             {currentStep < 3 ? (
               <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
             ) : (
-              <Button onClick={handleEditDB}>Guardar Cambios</Button>
+              <Button onClick={handleEditDB} disabled={saving}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {saving ? "Guardando..." : "Guardar Cambios"}
+              </Button>
             )}
           </DialogFooter>
         </DialogContent>
