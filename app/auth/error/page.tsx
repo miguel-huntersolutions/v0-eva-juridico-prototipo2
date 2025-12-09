@@ -1,9 +1,13 @@
+import { logger } from "@/lib/logger"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FileText, AlertCircle } from "lucide-react"
 import Link from "next/link"
 
 export default function AuthErrorPage() {
+  logger.pageView("/auth/error")
+  logger.error("/auth/error", "User landed on auth error page")
+
   return (
     <div className="flex min-h-svh w-full items-center justify-center bg-background p-6 md:p-10">
       <div className="w-full max-w-sm">

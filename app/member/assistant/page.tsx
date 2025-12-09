@@ -1,3 +1,4 @@
+import { logger } from "@/lib/logger"
 import { AssistantPage } from "@/components/member/assistant-page"
 import type { Metadata } from "next"
 
@@ -7,5 +8,7 @@ export const metadata: Metadata = {
 }
 
 export default function MemberAssistantRoute() {
+  logger.pageView("/member/assistant")
+
   return <AssistantPage />
 }

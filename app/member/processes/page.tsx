@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect } from "react"
+import { logger } from "@/lib/logger"
 import { AppSidebar } from "@/components/app-sidebar"
 import { ProcessesPage } from "@/components/member/processes-page"
 import { useProfile } from "@/hooks/use-profile"
@@ -7,6 +9,10 @@ import { Loader2 } from "lucide-react"
 
 export default function MemberProcessesRoute() {
   const { profile, loading } = useProfile()
+
+  useEffect(() => {
+    logger.pageView("/member/processes", profile?.id, profile?.role)
+  }, [profile?.id, profile?.role])
 
   if (loading) {
     return (

@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect } from "react"
+import { logger } from "@/lib/logger"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SuperadminDashboard } from "@/components/superadmin/dashboard"
 import { useProfile } from "@/hooks/use-profile"
@@ -7,6 +9,12 @@ import { Loader2 } from "lucide-react"
 
 export default function SuperadminPage() {
   const { profile, isLoading } = useProfile(true)
+
+  useEffect(() => {
+    if (profile) {
+      logger.pageView("/superadmin", profile.id, profile.role)
+    }
+  }, [profile])
 
   if (isLoading) {
     return (

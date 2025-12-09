@@ -1,6 +1,7 @@
 "use client"
 
 import type React from "react"
+import { logger } from "@/lib/logger"
 
 import { createBrowserClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { FileText, Loader2 } from "lucide-react"
 
 export default function LoginPage() {
@@ -19,9 +20,18 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [checkingAuth, setCheckingAuth] = useState(true)
   const router = useRouter()
+  const pageLoadTime = useRef(Date.now())
+
+  useEffect(() => {
+    logger.pageView("/auth/login")
+    return () => {
+      logger.pageLoaded("/auth/login", Date.now() - pageLoadTime.current)
+    }
+  }, [])
 
   useEffect(() => {
     async function checkExistingSession() {
+      logger.auth("SESSION_CHECK")
       try {
         const supabase = createBrowserClient()
         const {
@@ -32,12 +42,14 @@ export default function LoginPage() {
           const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single()
 
           const role = profile?.role || "member"
+          logger.auth("SESSION_CHECK", session.user.id, role, true)
           const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
           router.replace(route)
           return
         }
+        logger.auth("SESSION_CHECK", undefined, undefined, false)
       } catch (err) {
-        console.log("[v0] Error checking session:", err)
+        logger.error("/auth/login", "Session check failed", err)
       } finally {
         setCheckingAuth(false)
       }
@@ -51,6 +63,7 @@ export default function LoginPage() {
     const supabase = createBrowserClient()
     setIsLoading(true)
     setError(null)
+    logger.action("/auth/login", "LOGIN_ATTEMPT", undefined, undefined, { email })
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -58,6 +71,7 @@ export default function LoginPage() {
         password,
       })
       if (error) {
+        logger.error("/auth/login", "Login failed", error)
         setError(
           error.message === "Invalid login credentials"
             ? "Credenciales inválidas. Verifica tu correo y contraseña."
@@ -73,11 +87,13 @@ export default function LoginPage() {
         const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
 
         const role = profile?.role || "member"
+        logger.auth("LOGIN", data.user.id, role, true)
         const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
 
         window.location.href = route
       }
     } catch (error: unknown) {
+      logger.error("/auth/login", "Login exception", error)
       setError(error instanceof Error ? error.message : "Ocurrió un error")
       setIsLoading(false)
     }

@@ -1,21 +1,26 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { DashboardClient } from "@/components/dashboard/dashboard-client"
 import { Loader2 } from "lucide-react"
+import { logger } from "@/lib/logger"
 
 export default function DashboardPage() {
   const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const pageLoadTime = useRef(Date.now())
 
   useEffect(() => {
+    logger.pageView("/dashboard")
+
     let isMounted = true
 
     async function checkAuth() {
+      const startTime = Date.now()
       try {
         const supabase = createClient()
 
@@ -27,9 +32,8 @@ export default function DashboardPage() {
           user = result.data?.user
           userError = result.error
         } catch (fetchError: any) {
-          // Handle TypeError: Failed to fetch specifically
           if (!isMounted) return
-          console.log("[v0] Fetch error during auth:", fetchError?.message || fetchError)
+          logger.error("/dashboard", "Fetch error during auth", fetchError)
           setError("Error de conexión con el servidor. Por favor, recarga la página.")
           setLoading(false)
           return
@@ -38,18 +42,18 @@ export default function DashboardPage() {
         if (!isMounted) return
 
         if (userError) {
-          console.log("[v0] Auth error:", userError.message)
+          logger.error("/dashboard", "Auth error", userError)
           router.push("/auth/login")
           return
         }
 
         if (!user) {
-          console.log("[v0] No user found, redirecting to login")
+          logger.warn("/dashboard", "No user found, redirecting to login")
           router.push("/auth/login")
           return
         }
 
-        console.log("[v0] User authenticated:", user.id)
+        logger.auth("SESSION_CHECK", user.id, undefined, true)
 
         try {
           const { data: profileData, error: profileError } = await supabase
@@ -61,10 +65,11 @@ export default function DashboardPage() {
           if (!isMounted) return
 
           if (profileData) {
-            console.log("[v0] Profile found:", profileData.role)
+            logger.fetch("/dashboard", "Profile", true, Date.now() - startTime)
+            logger.pageLoaded("/dashboard", Date.now() - pageLoadTime.current, user.id, profileData.role)
             setProfile(profileData)
           } else {
-            console.log("[v0] No profile found, creating default")
+            logger.warn("/dashboard", "No profile found, creating default")
             const newProfile = {
               id: user.id,
               email: user.email || "",
@@ -82,12 +87,12 @@ export default function DashboardPage() {
           }
         } catch (profileFetchError: any) {
           if (!isMounted) return
-          console.log("[v0] Profile fetch error:", profileFetchError?.message || profileFetchError)
+          logger.error("/dashboard", "Profile fetch error", profileFetchError)
           setError("Error al cargar el perfil. Por favor, recarga la página.")
         }
       } catch (err: any) {
         if (!isMounted) return
-        console.log("[v0] General error:", err?.message || err)
+        logger.error("/dashboard", "General error", err)
         setError("Error de conexión. Por favor, recarga la página.")
       } finally {
         if (isMounted) {

@@ -1,6 +1,7 @@
 "use client"
 
 import type React from "react"
+import { logger } from "@/lib/logger"
 
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { FileText } from "lucide-react"
 
 export default function SignUpPage() {
@@ -20,20 +21,31 @@ export default function SignUpPage() {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
+  const pageLoadTime = useRef(Date.now())
+
+  useEffect(() => {
+    logger.pageView("/auth/sign-up")
+    return () => {
+      logger.pageLoaded("/auth/sign-up", Date.now() - pageLoadTime.current)
+    }
+  }, [])
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     const supabase = createClient()
     setIsLoading(true)
     setError(null)
+    logger.action("/auth/sign-up", "SIGNUP_ATTEMPT", undefined, undefined, { email })
 
     if (password !== repeatPassword) {
+      logger.warn("/auth/sign-up", "Passwords do not match")
       setError("Las contraseñas no coinciden")
       setIsLoading(false)
       return
     }
 
     if (password.length < 6) {
+      logger.warn("/auth/sign-up", "Password too short")
       setError("La contraseña debe tener al menos 6 caracteres")
       setIsLoading(false)
       return
@@ -52,8 +64,10 @@ export default function SignUpPage() {
         },
       })
       if (error) throw error
+      logger.action("/auth/sign-up", "SIGNUP_SUCCESS", undefined, undefined, { email })
       router.push("/auth/sign-up-success")
     } catch (error: unknown) {
+      logger.error("/auth/sign-up", "Signup failed", error)
       setError(error instanceof Error ? error.message : "Ocurrió un error")
     } finally {
       setIsLoading(false)

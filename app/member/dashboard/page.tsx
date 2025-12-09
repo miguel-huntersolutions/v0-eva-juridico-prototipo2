@@ -42,11 +42,13 @@ import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "@/components/member/create-process-dialog"
 import { AIAssistant } from "@/components/member/ai-assistant"
 import Link from "next/link"
+import { logger } from "@/lib/logger"
 
 function MemberDashboardContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const entityId = searchParams.get("entity")
+  const pageLoadTime = React.useRef(Date.now())
 
   const [isCreateProcessOpen, setIsCreateProcessOpen] = React.useState(false)
   const [isAssistantOpen, setIsAssistantOpen] = React.useState(false)
@@ -58,17 +60,23 @@ function MemberDashboardContent() {
   const [loadingProcesses, setLoadingProcesses] = React.useState(true)
 
   React.useEffect(() => {
+    logger.pageView("/member/dashboard", undefined, undefined, { entityId })
+  }, [entityId])
+
+  React.useEffect(() => {
     async function loadEntity() {
       if (!profile?.organization_id || !entityId) {
         setLoading(false)
         return
       }
+      const startTime = Date.now()
       try {
         const entities = await getEntities(profile.organization_id)
         const foundEntity = entities.find((e) => e.id === entityId)
         setEntity(foundEntity || null)
+        logger.fetch("/member/dashboard", "Entity", true, Date.now() - startTime)
       } catch (err) {
-        console.error("Error loading entity:", err)
+        logger.error("/member/dashboard", "Error loading entity", err)
       } finally {
         setLoading(false)
       }
@@ -84,11 +92,14 @@ function MemberDashboardContent() {
         setLoadingProcesses(false)
         return
       }
+      const startTime = Date.now()
       try {
         const data = await getProcessesMapped({ entityId })
         setProcesses(data)
+        logger.fetch("/member/dashboard", "Processes", true, Date.now() - startTime)
+        logger.pageLoaded("/member/dashboard", Date.now() - pageLoadTime.current)
       } catch (err) {
-        console.error("Error loading processes:", err)
+        logger.error("/member/dashboard", "Error loading processes", err)
       } finally {
         setLoadingProcesses(false)
       }

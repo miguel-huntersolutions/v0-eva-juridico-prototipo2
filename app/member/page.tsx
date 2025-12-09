@@ -29,6 +29,7 @@ import { Progress } from "@/components/ui/progress"
 import { getEntities, getProcessesMapped, type Entity } from "@/lib/supabase/client-data-access"
 import type { Process } from "@/lib/mock-data"
 import { useProfile } from "@/hooks/use-profile"
+import { logger } from "@/lib/logger"
 
 const moduleOptions = [
   {
@@ -68,6 +69,7 @@ export default function MemberPage() {
   const router = useRouter()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [hoveredEntity, setHoveredEntity] = React.useState<string | null>(null)
+  const pageLoadTime = React.useRef(Date.now())
 
   const { profile, isLoading: profileLoading } = useProfile()
   const [assignedEntities, setAssignedEntities] = React.useState<Entity[]>([])
@@ -75,16 +77,22 @@ export default function MemberPage() {
   const [allProcesses, setAllProcesses] = React.useState<Process[]>([])
 
   React.useEffect(() => {
+    logger.pageView("/member", profile?.id, profile?.role)
+  }, [profile?.id, profile?.role])
+
+  React.useEffect(() => {
     async function loadEntities() {
       if (!profile?.organization_id) {
         setLoading(false)
         return
       }
+      const startTime = Date.now()
       try {
         const entities = await getEntities(profile.organization_id)
         setAssignedEntities(entities.filter((e) => e.status === "active"))
+        logger.fetch("/member", "Entities", true, Date.now() - startTime)
       } catch (err) {
-        console.error("Error loading entities:", err)
+        logger.error("/member", "Error loading entities", err)
       } finally {
         setLoading(false)
       }
@@ -96,15 +104,18 @@ export default function MemberPage() {
 
   React.useEffect(() => {
     async function loadProcesses() {
+      const startTime = Date.now()
       try {
         const data = await getProcessesMapped()
         setAllProcesses(data)
+        logger.fetch("/member", "Processes", true, Date.now() - startTime)
+        logger.pageLoaded("/member", Date.now() - pageLoadTime.current, profile?.id, profile?.role)
       } catch (err) {
-        console.error("Error loading processes:", err)
+        logger.error("/member", "Error loading processes", err)
       }
     }
     loadProcesses()
-  }, [])
+  }, [profile?.id, profile?.role])
 
   const filteredEntities = assignedEntities.filter(
     (entity) => entity.name.toLowerCase().includes(searchQuery.toLowerCase()) || entity.nit.includes(searchQuery),

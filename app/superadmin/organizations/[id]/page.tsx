@@ -51,11 +51,13 @@ import {
   type Profile,
   type Entity,
 } from "@/lib/supabase/client-data-access"
+import { logger } from "@/lib/logger"
 
 export default function OrganizationDetailPage() {
   const params = useParams()
   const router = useRouter()
   const organizationId = params.id as string
+  const pageLoadTime = React.useRef(Date.now())
 
   const [organization, setOrganization] = React.useState<Organization | null>(null)
   const [members, setMembers] = React.useState<Profile[]>([])
@@ -92,7 +94,12 @@ export default function OrganizationDetailPage() {
   const [entityToDelete, setEntityToDelete] = React.useState<Entity | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
 
+  React.useEffect(() => {
+    logger.pageView("/superadmin/organizations/[id]", undefined, undefined, { organizationId })
+  }, [organizationId])
+
   const loadData = React.useCallback(async () => {
+    const startTime = Date.now()
     try {
       setLoading(true)
       const [orgs, membersList, entitiesList] = await Promise.all([
@@ -105,8 +112,10 @@ export default function OrganizationDetailPage() {
       setOrganization(org || null)
       setMembers(membersList)
       setEntities(entitiesList)
+      logger.fetch("/superadmin/organizations/[id]", "Organization data", true, Date.now() - startTime)
+      logger.pageLoaded("/superadmin/organizations/[id]", Date.now() - pageLoadTime.current)
     } catch (err) {
-      console.error("[v0] Error loading organization data:", err)
+      logger.error("/superadmin/organizations/[id]", "Error loading organization data", err)
     } finally {
       setLoading(false)
     }
@@ -145,9 +154,11 @@ export default function OrganizationDetailPage() {
       await loadData()
       setIsAddMemberOpen(false)
       setMemberForm({ name: "", email: "", role: "member" })
+      logger.action("/superadmin/organizations/[id]", "Add Member", { organizationId, member: memberForm })
     } catch (err) {
       console.error("[v0] Error adding member:", err)
       setMemberError("Error al agregar el miembro. Puede que ya pertenezca a esta organización.")
+      logger.error("/superadmin/organizations/[id]", "Error adding member", err)
     } finally {
       setSavingMember(false)
     }
@@ -166,9 +177,11 @@ export default function OrganizationDetailPage() {
       await loadData()
       setIsEditMemberOpen(false)
       setSelectedMember(null)
+      logger.action("/superadmin/organizations/[id]", "Edit Member", { organizationId, member: memberForm })
     } catch (err) {
       console.error("[v0] Error updating member:", err)
       setMemberError("Error al actualizar el miembro")
+      logger.error("/superadmin/organizations/[id]", "Error editing member", err)
     } finally {
       setSavingMember(false)
     }
@@ -183,8 +196,10 @@ export default function OrganizationDetailPage() {
       await loadData()
       setIsDeleteMemberOpen(false)
       setMemberToDelete(null)
+      logger.action("/superadmin/organizations/[id]", "Delete Member", { organizationId, member: memberToDelete })
     } catch (err) {
       console.error("[v0] Error deleting member:", err)
+      logger.error("/superadmin/organizations/[id]", "Error deleting member", err)
     } finally {
       setIsDeleting(false)
     }
@@ -208,9 +223,11 @@ export default function OrganizationDetailPage() {
       await loadData()
       setIsAddEntityOpen(false)
       setEntityForm({ name: "", nit: "", representativeName: "" })
+      logger.action("/superadmin/organizations/[id]", "Add Entity", { organizationId, entity: entityForm })
     } catch (err) {
       console.error("[v0] Error adding entity:", err)
       setEntityError("Error al crear la entidad")
+      logger.error("/superadmin/organizations/[id]", "Error adding entity", err)
     } finally {
       setSavingEntity(false)
     }
@@ -225,8 +242,10 @@ export default function OrganizationDetailPage() {
       await loadData()
       setIsDeleteEntityOpen(false)
       setEntityToDelete(null)
+      logger.action("/superadmin/organizations/[id]", "Delete Entity", { organizationId, entity: entityToDelete })
     } catch (err) {
       console.error("[v0] Error deleting entity:", err)
+      logger.error("/superadmin/organizations/[id]", "Error deleting entity", err)
     } finally {
       setIsDeleting(false)
     }
