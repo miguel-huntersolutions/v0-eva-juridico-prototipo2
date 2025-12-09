@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createBrowserClient } from "@/lib/supabase/client"
 import type { UserRole } from "@/lib/mock-data"
+import { logger } from "@/lib/logger"
 
 interface ProfileOption {
   role: UserRole
@@ -79,9 +80,18 @@ export default function LoginPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [mode, setMode] = React.useState<"login" | "demo">("login")
   const [checkingAuth, setCheckingAuth] = React.useState(true)
+  const pageLoadTime = React.useRef(Date.now())
+
+  React.useEffect(() => {
+    logger.pageView("/login", undefined, undefined, { mode })
+    return () => {
+      logger.pageLoaded("/login", Date.now() - pageLoadTime.current)
+    }
+  }, [])
 
   React.useEffect(() => {
     async function checkExistingSession() {
+      logger.auth("SESSION_CHECK")
       try {
         const supabase = createBrowserClient()
         const {
@@ -92,12 +102,14 @@ export default function LoginPage() {
           const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single()
 
           const role = profile?.role || "member"
+          logger.auth("SESSION_CHECK", session.user.id, role, true)
           const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
           router.replace(route)
           return
         }
+        logger.auth("SESSION_CHECK", undefined, undefined, false)
       } catch (err) {
-        console.log("[v0] Error checking session:", err)
+        logger.error("/login", "Session check failed", err)
       } finally {
         setCheckingAuth(false)
       }
@@ -110,6 +122,7 @@ export default function LoginPage() {
     e.preventDefault()
     setIsLoading(true)
     setError(null)
+    logger.action("/login", "LOGIN_ATTEMPT", undefined, undefined, { email })
 
     try {
       const supabase = createBrowserClient()
@@ -119,6 +132,7 @@ export default function LoginPage() {
       })
 
       if (authError) {
+        logger.error("/login", "Login failed", authError)
         setError(
           authError.message === "Invalid login credentials"
             ? "Credenciales inválidas. Verifica tu correo y contraseña."
@@ -134,18 +148,20 @@ export default function LoginPage() {
         const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
 
         const role = profile?.role || "member"
+        logger.auth("LOGIN", data.user.id, role, true)
         const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
 
         window.location.href = route
       }
     } catch (err) {
-      console.error("[v0] Login error:", err)
+      logger.error("/login", "Login error", err)
       setError("Error al iniciar sesión. Intenta de nuevo.")
       setIsLoading(false)
     }
   }
 
   const handleDemoLogin = (role: UserRole, route: string) => {
+    logger.action("/login", "DEMO_LOGIN", undefined, role)
     setIsLoading(true)
     localStorage.setItem("eva_user_role", role)
     setTimeout(() => {

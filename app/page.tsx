@@ -2,8 +2,11 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Scale, Shield, Sparkles } from "lucide-react"
+import { logger } from "@/lib/logger"
 
 export default function Home() {
+  logger.pageView("/", undefined, undefined, { type: "landing" })
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
       <div className="container mx-auto px-4 py-16">
