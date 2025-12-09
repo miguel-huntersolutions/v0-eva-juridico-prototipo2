@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { createClient } from "@/lib/supabase/client"
+import { createBrowserClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,7 +23,7 @@ export default function LoginPage() {
   useEffect(() => {
     async function checkExistingSession() {
       try {
-        const supabase = createClient()
+        const supabase = createBrowserClient()
         const {
           data: { session },
         } = await supabase.auth.getSession()
@@ -48,7 +48,7 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    const supabase = createClient()
+    const supabase = createBrowserClient()
     setIsLoading(true)
     setError(null)
 
@@ -57,19 +57,28 @@ export default function LoginPage() {
         email,
         password,
       })
-      if (error) throw error
+      if (error) {
+        setError(
+          error.message === "Invalid login credentials"
+            ? "Credenciales inválidas. Verifica tu correo y contraseña."
+            : error.message,
+        )
+        setIsLoading(false)
+        return
+      }
 
-      if (data.user) {
+      if (data.session) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+
         const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
 
         const role = profile?.role || "member"
         const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
-        router.replace(route)
-        router.refresh()
+
+        window.location.href = route
       }
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "Ocurrió un error")
-    } finally {
       setIsLoading(false)
     }
   }
@@ -127,7 +136,14 @@ export default function LoginPage() {
                   </div>
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
+                    {isLoading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Iniciando sesión...
+                      </span>
+                    ) : (
+                      "Iniciar Sesión"
+                    )}
                   </Button>
                 </div>
                 <div className="mt-4 text-center text-sm">

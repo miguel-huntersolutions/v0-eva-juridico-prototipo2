@@ -119,21 +119,28 @@ export default function LoginPage() {
       })
 
       if (authError) {
-        setError(authError.message)
+        setError(
+          authError.message === "Invalid login credentials"
+            ? "Credenciales inválidas. Verifica tu correo y contraseña."
+            : authError.message,
+        )
         setIsLoading(false)
         return
       }
 
-      if (data.user) {
+      if (data.session) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+
         const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
 
         const role = profile?.role || "member"
         const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
-        router.replace(route)
-        router.refresh()
+
+        window.location.href = route
       }
     } catch (err) {
-      setError("Error al iniciar sesión")
+      console.error("[v0] Login error:", err)
+      setError("Error al iniciar sesión. Intenta de nuevo.")
       setIsLoading(false)
     }
   }
@@ -262,7 +269,7 @@ export default function LoginPage() {
                 <Button type="submit" className="w-full" disabled={isLoading}>
                   {isLoading ? (
                     <span className="flex items-center gap-2">
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Ingresando...
                     </span>
                   ) : (
