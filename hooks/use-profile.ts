@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { createBrowserClient } from "@/lib/supabase/client"
+import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 
 export interface Profile {
@@ -24,15 +24,17 @@ export function useProfile(redirectOnUnauthenticated = true) {
   React.useEffect(() => {
     async function loadProfile() {
       try {
-        const supabase = createBrowserClient()
+        const supabase = createClient()
 
         const {
-          data: { session },
-        } = await supabase.auth.getSession()
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser()
 
-        if (!session?.user) {
+        if (userError || !user) {
+          console.log("[v0] No authenticated user")
           if (redirectOnUnauthenticated) {
-            router.replace("/login")
+            router.push("/login")
           }
           setIsLoading(false)
           return
@@ -41,22 +43,23 @@ export function useProfile(redirectOnUnauthenticated = true) {
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
           .select("*")
-          .eq("id", session.user.id)
+          .eq("id", user.id)
           .single()
 
         if (profileError) {
-          console.error("[v0] Error loading profile:", profileError)
+          console.error("[v0] Profile error:", profileError)
           if (profileError.code === "PGRST116") {
-            setProfile({
-              id: session.user.id,
-              email: session.user.email || "",
-              full_name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "Usuario",
+            const defaultProfile: Profile = {
+              id: user.id,
+              email: user.email || "",
+              full_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
               role: "member",
               organization_id: null,
               avatar_url: null,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
-            })
+            }
+            setProfile(defaultProfile)
           } else {
             setError(profileError.message)
           }
@@ -64,12 +67,13 @@ export function useProfile(redirectOnUnauthenticated = true) {
           setProfile(profileData as Profile)
         }
       } catch (err) {
-        console.error("[v0] Error in useProfile:", err)
+        console.error("[v0] useProfile error:", err)
         setError(err instanceof Error ? err.message : "Error loading profile")
       } finally {
         setIsLoading(false)
       }
     }
+
     loadProfile()
   }, [router, redirectOnUnauthenticated])
 

@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { createBrowserClient } from "@/lib/supabase/client"
+import { createClient } from "@/lib/supabase/client"
 import type { UserRole } from "@/lib/mock-data"
 import { logger } from "@/lib/logger"
 
@@ -93,18 +93,18 @@ export default function LoginPage() {
     async function checkExistingSession() {
       logger.auth("SESSION_CHECK")
       try {
-        const supabase = createBrowserClient()
+        const supabase = createClient()
         const {
-          data: { session },
-        } = await supabase.auth.getSession()
+          data: { user },
+        } = await supabase.auth.getUser()
 
-        if (session?.user) {
-          const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single()
+        if (user) {
+          const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
 
           const role = profile?.role || "member"
-          logger.auth("SESSION_CHECK", session.user.id, role, true)
+          logger.auth("SESSION_CHECK", user.id, role, true)
           const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
-          router.replace(route)
+          window.location.href = route
           return
         }
         logger.auth("SESSION_CHECK", undefined, undefined, false)
@@ -125,7 +125,7 @@ export default function LoginPage() {
     logger.action("/login", "LOGIN_ATTEMPT", undefined, undefined, { email })
 
     try {
-      const supabase = createBrowserClient()
+      const supabase = createClient()
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -142,8 +142,8 @@ export default function LoginPage() {
         return
       }
 
-      if (data.session) {
-        await new Promise((resolve) => setTimeout(resolve, 100))
+      if (data.user) {
+        await new Promise((resolve) => setTimeout(resolve, 200))
 
         const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
 

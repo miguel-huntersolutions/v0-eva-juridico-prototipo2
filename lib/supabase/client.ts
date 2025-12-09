@@ -1,13 +1,5 @@
-import { createBrowserClient as createSupabaseBrowserClient } from "@supabase/ssr"
+import { createBrowserClient } from "@supabase/ssr"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://djamkpkuxneexoyvzyez.supabase.co"
-const supabaseAnonKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqYW1rcGt1eG5lZXhveXZ6eWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2NzIwMTAsImV4cCI6MjA4MDI0ODAxMH0.N9ZxBEIPFErtFQ9k79BugQkU8VqcHUd032Xt2X6E4AY"
-
-export function createBrowserClient() {
-  return createSupabaseBrowserClient(supabaseUrl, supabaseAnonKey)
+export function createClient() {
+  return createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
 }
-
-// Alias for backward compatibility
-export const createClient = createBrowserClient
