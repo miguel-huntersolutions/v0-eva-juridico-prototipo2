@@ -44,26 +44,29 @@ export function useProfile(redirectOnUnauthenticated = true) {
           .from("profiles")
           .select("*")
           .eq("id", user.id)
-          .single()
+          .maybeSingle()
 
         if (profileError) {
-          console.error("[v0] Profile error:", profileError)
-          if (profileError.code === "PGRST116") {
-            const defaultProfile: Profile = {
-              id: user.id,
-              email: user.email || "",
-              full_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
-              role: "member",
-              organization_id: null,
-              avatar_url: null,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            }
-            setProfile(defaultProfile)
-          } else {
-            setError(profileError.message)
+          console.error("[v0] Profile error:", profileError.message)
+          setError(profileError.message)
+          setIsLoading(false)
+          return
+        }
+
+        if (!profileData) {
+          console.log("[v0] No profile found, creating default")
+          const defaultProfile: Profile = {
+            id: user.id,
+            email: user.email || "",
+            full_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
+            role: "member",
+            organization_id: null,
+            avatar_url: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           }
-        } else if (profileData) {
+          setProfile(defaultProfile)
+        } else {
           setProfile(profileData as Profile)
         }
       } catch (err) {
