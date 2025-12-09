@@ -69,7 +69,7 @@ export default function MemberPage() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [hoveredEntity, setHoveredEntity] = React.useState<string | null>(null)
 
-  const { profile, loading: profileLoading } = useProfile()
+  const { profile, isLoading: profileLoading } = useProfile()
   const [assignedEntities, setAssignedEntities] = React.useState<Entity[]>([])
   const [loading, setLoading] = React.useState(true)
   const [allProcesses, setAllProcesses] = React.useState<Process[]>([])
@@ -137,8 +137,8 @@ export default function MemberPage() {
             <h1 className="text-3xl font-bold tracking-tight">Panel del Asesor</h1>
           </div>
           <p className="text-muted-foreground max-w-2xl">
-            Bienvenido, <span className="font-medium text-foreground">{profile?.name || "Asesor"}</span>. Accede a tus
-            herramientas de gestión jurídica y selecciona una entidad para comenzar.
+            Bienvenido, <span className="font-medium text-foreground">{profile?.full_name || "Asesor"}</span>. Accede a
+            tus herramientas de gestión jurídica y selecciona una entidad para comenzar.
           </p>
         </div>
 
