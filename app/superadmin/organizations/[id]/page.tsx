@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   ArrowLeft,
   Building2,
@@ -47,16 +47,17 @@ import {
   createEntity,
   deleteEntity,
   getUsersWithoutOrganization,
+  createMember,
   type Organization,
   type Profile,
   type Entity,
 } from "@/lib/supabase/client-data-access"
 import { logger } from "@/lib/logger"
+import { useState } from "react"
 
-export default function OrganizationDetailPage() {
-  const params = useParams()
+export default function OrganizationDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter()
-  const organizationId = params.id as string
+  const organizationId = params.id
   const pageLoadTime = React.useRef(Date.now())
 
   const [organization, setOrganization] = React.useState<Organization | null>(null)
@@ -96,6 +97,14 @@ export default function OrganizationDetailPage() {
   const [isDeleteEntityOpen, setIsDeleteEntityOpen] = React.useState(false)
   const [entityToDelete, setEntityToDelete] = React.useState<Entity | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+
+  // State for managing member creation mode
+  const [memberMode, setMemberMode] = useState<"existing" | "new">("existing")
+  const [newUserForm, setNewUserForm] = useState({
+    name: "",
+    email: "",
+    role: "member" as "admin" | "member",
+  })
 
   React.useEffect(() => {
     logger.pageView("/superadmin/organizations/[id]", undefined, undefined, { organizationId })
@@ -165,7 +174,7 @@ export default function OrganizationDetailPage() {
     } catch (err) {
       console.error("[v0] Error adding member:", err)
       setMemberError("Error al agregar el miembro. Puede que ya pertenezca a esta organización.")
-      logger.error("/superadmin/organizations/[id]", err as Error, { action: "handleAddMember" })
+      logger.error("/superadmin/organizations/[id]", "Error adding member", err)
     } finally {
       setSavingMember(false)
     }
@@ -278,6 +287,47 @@ export default function OrganizationDetailPage() {
         )
       default:
         return <Badge variant="secondary">{role}</Badge>
+    }
+  }
+
+  const handleCreateNewMember = async () => {
+    if (!newUserForm.name.trim() || !newUserForm.email.trim()) {
+      setMemberError("Todos los campos son obligatorios")
+      return
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(newUserForm.email)) {
+      setMemberError("Por favor ingresa un correo electrónico válido")
+      return
+    }
+
+    try {
+      setSavingMember(true)
+      setMemberError(null)
+
+      await createMember({
+        email: newUserForm.email,
+        name: newUserForm.name,
+        role: newUserForm.role,
+        organizationId,
+      })
+
+      await loadData()
+      setIsAddMemberOpen(false)
+      setNewUserForm({ name: "", email: "", role: "member" })
+      setMemberMode("existing")
+      logger.action("/superadmin/organizations/[id]", "Create New Member", {
+        organizationId,
+        email: newUserForm.email,
+      })
+    } catch (err) {
+      console.error("[v0] Error creating member:", err)
+      setMemberError("Error al crear el usuario. Es posible que el correo ya esté registrado.")
+      logger.error("/superadmin/organizations/[id]", err as Error, { action: "handleCreateNewMember" })
+    } finally {
+      setSavingMember(false)
     }
   }
 
@@ -527,6 +577,8 @@ export default function OrganizationDetailPage() {
             setSearchQuery("")
             setSelectedUserId(null)
             setMemberError(null)
+            setMemberMode("existing")
+            setNewUserForm({ name: "", email: "", role: "member" })
           }
         }}
       >
@@ -534,105 +586,199 @@ export default function OrganizationDetailPage() {
           <DialogHeader>
             <DialogTitle>Agregar Miembro</DialogTitle>
             <DialogDescription>
-              Selecciona un usuario que no tiene organización asignada para agregarlo a esta organización.
+              Selecciona un usuario existente o crea uno nuevo para agregarlo a esta organización.
             </DialogDescription>
           </DialogHeader>
+
+          {/* Add tabs for switching between existing and new user */}
+          <div className="flex gap-2 border-b">
+            <button
+              type="button"
+              className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${
+                memberMode === "existing"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setMemberMode("existing")}
+            >
+              Seleccionar Existente
+            </button>
+            <button
+              type="button"
+              className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${
+                memberMode === "new"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setMemberMode("new")}
+            >
+              Crear Nuevo Usuario
+            </button>
+          </div>
+
           <div className="space-y-4 py-4">
             {memberError && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{memberError}</div>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="search">Buscar usuario</Label>
-              <Input
-                id="search"
-                placeholder="Buscar por nombre o correo..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+            {/* Conditional rendering based on mode */}
+            {memberMode === "existing" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="search">Buscar usuario</Label>
+                  <Input
+                    id="search"
+                    placeholder="Buscar por nombre o correo..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label>Usuarios disponibles ({availableUsers.length})</Label>
-              <div className="border rounded-lg max-h-[300px] overflow-y-auto">
-                {availableUsers.length === 0 ? (
-                  <div className="p-4 text-center text-sm text-muted-foreground">
-                    No hay usuarios sin organización asignada
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {availableUsers
-                      .filter(
-                        (user) =>
-                          user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          user.email?.toLowerCase().includes(searchQuery.toLowerCase()),
-                      )
-                      .map((user) => (
-                        <button
-                          key={user.id}
-                          type="button"
-                          className={`w-full p-3 text-left hover:bg-accent transition-colors ${
-                            selectedUserId === user.id ? "bg-accent" : ""
-                          }`}
-                          onClick={() => setSelectedUserId(user.id)}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <p className="font-medium text-sm">{user.full_name || "Sin nombre"}</p>
-                              <p className="text-xs text-muted-foreground">{user.email}</p>
-                            </div>
-                            {selectedUserId === user.id && (
-                              <div className="ml-2 h-5 w-5 rounded-full bg-primary flex items-center justify-center">
-                                <svg
-                                  className="h-3 w-3 text-primary-foreground"
-                                  fill="none"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth="2"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                >
-                                  <path d="M5 13l4 4L19 7"></path>
-                                </svg>
+                <div className="space-y-2">
+                  <Label>Usuarios disponibles ({availableUsers.length})</Label>
+                  <div className="border rounded-lg max-h-[300px] overflow-y-auto">
+                    {availableUsers.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-muted-foreground">
+                        No hay usuarios sin organización asignada
+                      </div>
+                    ) : (
+                      <div className="divide-y">
+                        {availableUsers
+                          .filter(
+                            (user) =>
+                              user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              user.email?.toLowerCase().includes(searchQuery.toLowerCase()),
+                          )
+                          .map((user) => (
+                            <button
+                              key={user.id}
+                              type="button"
+                              className={`w-full p-3 text-left hover:bg-accent transition-colors ${
+                                selectedUserId === user.id ? "bg-accent" : ""
+                              }`}
+                              onClick={() => setSelectedUserId(user.id)}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <p className="font-medium text-sm">{user.full_name || "Sin nombre"}</p>
+                                  <p className="text-xs text-muted-foreground">{user.email}</p>
+                                </div>
+                                {selectedUserId === user.id && (
+                                  <div className="ml-2 h-5 w-5 rounded-full bg-primary flex items-center justify-center">
+                                    <svg
+                                      className="h-3 w-3 text-primary-foreground"
+                                      fill="none"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth="2"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                    >
+                                      <path d="M5 13l4 4L19 7"></path>
+                                    </svg>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        </button>
-                      ))}
+                            </button>
+                          ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="role">Rol</Label>
-              <Select
-                value={memberForm.role}
-                onValueChange={(value: "admin" | "member") => setMemberForm({ ...memberForm, role: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Administrador</SelectItem>
-                  <SelectItem value="member">Asesor Jurídico</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {memberForm.role === "admin"
-                  ? "Los administradores pueden gestionar entidades y miembros"
-                  : "Los asesores jurídicos pueden gestionar procesos y documentos"}
-              </p>
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor="role">Rol</Label>
+                  <Select
+                    value={memberForm.role}
+                    onValueChange={(value: "admin" | "member") => setMemberForm({ ...memberForm, role: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="admin">Administrador</SelectItem>
+                      <SelectItem value="member">Asesor Jurídico</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {memberForm.role === "admin"
+                      ? "Los administradores pueden gestionar entidades y miembros"
+                      : "Los asesores jurídicos pueden gestionar procesos y documentos"}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* New user creation form */}
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="newUserName">Nombre completo</Label>
+                    <Input
+                      id="newUserName"
+                      placeholder="Ej: Juan Pérez"
+                      value={newUserForm.name}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="newUserEmail">Correo electrónico</Label>
+                    <Input
+                      id="newUserEmail"
+                      type="email"
+                      placeholder="usuario@ejemplo.com"
+                      value={newUserForm.email}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Se enviará una invitación a este correo para configurar su contraseña
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="newUserRole">Rol</Label>
+                    <Select
+                      value={newUserForm.role}
+                      onValueChange={(value: "admin" | "member") => setNewUserForm({ ...newUserForm, role: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="member">Asesor Jurídico</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {newUserForm.role === "admin"
+                        ? "Los administradores pueden gestionar entidades y miembros"
+                        : "Los asesores jurídicos pueden gestionar procesos y documentos"}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddMemberOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleAddMember} disabled={savingMember || !selectedUserId}>
-              {savingMember && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Agregar Miembro
-            </Button>
+            {/* Conditional button based on mode */}
+            {memberMode === "existing" ? (
+              <Button onClick={handleAddMember} disabled={savingMember || !selectedUserId}>
+                {savingMember && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Agregar Miembro
+              </Button>
+            ) : (
+              <Button
+                onClick={handleCreateNewMember}
+                disabled={savingMember || !newUserForm.name.trim() || !newUserForm.email.trim()}
+              >
+                {savingMember && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Crear y Agregar
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
