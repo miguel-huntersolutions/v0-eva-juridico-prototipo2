@@ -42,11 +42,11 @@ import {
   getOrganizationMembers,
   getEntities,
   assignExistingMember,
-  searchUserByEmail,
   updateMember,
   deleteMember,
   createEntity,
   deleteEntity,
+  getUsersWithoutOrganization,
   type Organization,
   type Profile,
   type Entity,
@@ -69,6 +69,9 @@ export default function OrganizationDetailPage() {
   const [isAddMemberOpen, setIsAddMemberOpen] = React.useState(false)
   const [isEditMemberOpen, setIsEditMemberOpen] = React.useState(false)
   const [selectedMember, setSelectedMember] = React.useState<Profile | null>(null)
+  const [availableUsers, setAvailableUsers] = React.useState<Profile[]>([])
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [selectedUserId, setSelectedUserId] = React.useState<string | null>(null)
   const [memberForm, setMemberForm] = React.useState({
     name: "",
     email: "",
@@ -125,9 +128,20 @@ export default function OrganizationDetailPage() {
     loadData()
   }, [loadData])
 
+  const loadAvailableUsers = React.useCallback(async () => {
+    try {
+      const users = await getUsersWithoutOrganization()
+      setAvailableUsers(users)
+      logger.action("/superadmin/organizations/[id]", "Load Available Users", { count: users.length })
+    } catch (err) {
+      console.error("[v0] Error loading available users:", err)
+      logger.error("/superadmin/organizations/[id]", err as Error, { action: "loadAvailableUsers" })
+    }
+  }, [])
+
   const handleAddMember = async () => {
-    if (!memberForm.name || !memberForm.email) {
-      setMemberError("Nombre y correo son requeridos")
+    if (!selectedUserId) {
+      setMemberError("Debes seleccionar un usuario")
       return
     }
 
@@ -135,30 +149,23 @@ export default function OrganizationDetailPage() {
       setSavingMember(true)
       setMemberError(null)
 
-      const existingUser = await searchUserByEmail(memberForm.email)
-
-      if (!existingUser) {
-        setMemberError(
-          "No se encontró un usuario con este correo. El usuario debe haberse registrado previamente en la plataforma.",
-        )
-        setSavingMember(false)
-        return
-      }
-
       await assignExistingMember({
-        userId: existingUser.id,
+        userId: selectedUserId,
         role: memberForm.role,
         organizationId,
       })
 
       await loadData()
+      await loadAvailableUsers() // Refresh available users list
       setIsAddMemberOpen(false)
       setMemberForm({ name: "", email: "", role: "member" })
-      logger.action("/superadmin/organizations/[id]", "Add Member", { organizationId, member: memberForm })
+      setSelectedUserId(null)
+      setSearchQuery("")
+      logger.action("/superadmin/organizations/[id]", "Add Member", { organizationId, userId: selectedUserId })
     } catch (err) {
       console.error("[v0] Error adding member:", err)
       setMemberError("Error al agregar el miembro. Puede que ya pertenezca a esta organización.")
-      logger.error("/superadmin/organizations/[id]", "Error adding member", err)
+      logger.error("/superadmin/organizations/[id]", err as Error, { action: "handleAddMember" })
     } finally {
       setSavingMember(false)
     }
@@ -510,38 +517,93 @@ export default function OrganizationDetailPage() {
       </Tabs>
 
       {/* Add Member Dialog */}
-      <Dialog open={isAddMemberOpen} onOpenChange={setIsAddMemberOpen}>
-        <DialogContent>
+      <Dialog
+        open={isAddMemberOpen}
+        onOpenChange={(open) => {
+          setIsAddMemberOpen(open)
+          if (open) {
+            loadAvailableUsers()
+          } else {
+            setSearchQuery("")
+            setSelectedUserId(null)
+            setMemberError(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Agregar Miembro</DialogTitle>
             <DialogDescription>
-              Busca un usuario existente por correo electrónico y asígnalo a esta organización. El usuario debe haberse
-              registrado previamente en la plataforma.
+              Selecciona un usuario que no tiene organización asignada para agregarlo a esta organización.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {memberError && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{memberError}</div>
             )}
+
             <div className="space-y-2">
-              <Label htmlFor="name">Nombre completo</Label>
+              <Label htmlFor="search">Buscar usuario</Label>
               <Input
-                id="name"
-                placeholder="Juan Pérez"
-                value={memberForm.name}
-                onChange={(e) => setMemberForm({ ...memberForm, name: e.target.value })}
+                id="search"
+                placeholder="Buscar por nombre o correo..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
+
             <div className="space-y-2">
-              <Label htmlFor="email">Correo electrónico</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="juan@empresa.com"
-                value={memberForm.email}
-                onChange={(e) => setMemberForm({ ...memberForm, email: e.target.value })}
-              />
+              <Label>Usuarios disponibles ({availableUsers.length})</Label>
+              <div className="border rounded-lg max-h-[300px] overflow-y-auto">
+                {availableUsers.length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">
+                    No hay usuarios sin organización asignada
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {availableUsers
+                      .filter(
+                        (user) =>
+                          user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          user.email?.toLowerCase().includes(searchQuery.toLowerCase()),
+                      )
+                      .map((user) => (
+                        <button
+                          key={user.id}
+                          type="button"
+                          className={`w-full p-3 text-left hover:bg-accent transition-colors ${
+                            selectedUserId === user.id ? "bg-accent" : ""
+                          }`}
+                          onClick={() => setSelectedUserId(user.id)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="font-medium text-sm">{user.full_name || "Sin nombre"}</p>
+                              <p className="text-xs text-muted-foreground">{user.email}</p>
+                            </div>
+                            {selectedUserId === user.id && (
+                              <div className="ml-2 h-5 w-5 rounded-full bg-primary flex items-center justify-center">
+                                <svg
+                                  className="h-3 w-3 text-primary-foreground"
+                                  fill="none"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth="2"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path d="M5 13l4 4L19 7"></path>
+                                </svg>
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
+
             <div className="space-y-2">
               <Label htmlFor="role">Rol</Label>
               <Select
@@ -567,7 +629,7 @@ export default function OrganizationDetailPage() {
             <Button variant="outline" onClick={() => setIsAddMemberOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleAddMember} disabled={savingMember}>
+            <Button onClick={handleAddMember} disabled={savingMember || !selectedUserId}>
               {savingMember && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Agregar Miembro
             </Button>

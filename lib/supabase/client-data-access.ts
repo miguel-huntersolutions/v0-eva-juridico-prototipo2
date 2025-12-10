@@ -813,3 +813,13 @@ export async function searchUserByEmail(email: string) {
   if (error && error.code !== "PGRST116") throw error
   return data as Profile | null
 }
+
+// Users without Organization
+export async function getUsersWithoutOrganization() {
+  const supabase = createBrowserClient()
+
+  const { data, error } = await supabase.from("profiles").select("*").is("organization_id", null).order("full_name")
+
+  if (error) throw error
+  return data as Profile[]
+}
