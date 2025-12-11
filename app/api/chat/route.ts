@@ -1,6 +1,6 @@
-import { convertToModelMessages, streamText, type UIMessage } from "ai"
+import { createChatRoute, getMaxDuration } from "@/lib/ai-chat/create-chat-api-route"
 
-export const maxDuration = 60
+export const maxDuration = getMaxDuration(60)
 
 const SYSTEM_PROMPT = `Eres EVA, un asistente jurídico especializado en contratación pública colombiana. Tu rol es proporcionar información precisa y actualizada sobre:
 
@@ -72,29 +72,8 @@ Para preguntas sobre requisitos:
 
 Recuerda: Eres un asistente especializado, no reemplazas el consejo de un abogado. Siempre recomienda consultar con un profesional para casos específicos.`
 
-export async function POST(req: Request) {
-  try {
-    const { messages }: { messages: UIMessage[] } = await req.json()
-
-    const result = streamText({
-      model: "openai/gpt-4o",
-      system: SYSTEM_PROMPT,
-      messages: convertToModelMessages(messages),
-      temperature: 0.7,
-      maxTokens: 4096,
-    })
-
-    return result.toUIMessageStreamResponse()
-  } catch (error) {
-    console.error("[v0] Chat API error:", error)
-    return new Response(
-      JSON.stringify({
-        error: "Error al procesar la solicitud. Por favor intenta de nuevo.",
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      },
-    )
-  }
-}
+export const POST = createChatRoute({
+  systemPrompt: SYSTEM_PROMPT,
+  model: "openai/gpt-4o",
+  maxDuration: 60,
+})

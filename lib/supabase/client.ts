@@ -5,3 +5,4 @@ export function createClient() {
 }
 
 export const createBrowserClient = createClient
+

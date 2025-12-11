@@ -1,8 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useChat } from "@ai-sdk/react"
-import { DefaultChatTransport } from "ai"
+import { useAIChat, useConversations, convertToChatMessage, convertToAIMessages, getMessageText, filterConversations, groupConversationsByDate } from "@/lib/ai-chat"
 import {
   Send,
   Bot,
@@ -105,8 +104,24 @@ export function AssistantPage() {
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 
-  const [conversations, setConversations] = React.useState<ChatConversation[]>(mockChatConversations)
   const [activeConversationId, setActiveConversationId] = React.useState<string | null>(null)
+  
+  // Use Supabase-backed conversations hook
+  const {
+    conversations,
+    isLoading: isLoadingConversations,
+    createConversation: createConversationAPI,
+    addMessages: addMessagesAPI,
+    deleteConversation: deleteConversationAPI,
+    loadConversation: loadConversationAPI,
+  } = useConversations({
+    // TODO: Get userId from auth context
+    // userId: currentUser?.id,
+    autoLoad: true,
+    onConversationCreated: (conv) => {
+      setActiveConversationId(conv.id)
+    },
+  })
   const [prompts, setPrompts] = React.useState<PromptTemplate[]>(mockPromptTemplates)
   const [sidebarTab, setSidebarTab] = React.useState<"history" | "prompts">("history")
   const [historySearch, setHistorySearch] = React.useState("")
@@ -118,16 +133,81 @@ export function AssistantPage() {
   const [conversationToDelete, setConversationToDelete] = React.useState<string | null>(null)
   const [historyExpanded, setHistoryExpanded] = React.useState(true)
 
-  const { messages, sendMessage, status, error, setMessages, stop, reload } = useChat({
-    transport: new DefaultChatTransport({
-      api: "/api/chat",
-    }),
-    onError: (error) => {
-      console.error("[v0] Chat error:", error)
-    },
-  })
+  // Track last saved assistant message ID to avoid duplicates
+  const lastSavedAssistantIdRef = React.useRef<string | null>(null)
+  const isSavingRef = React.useRef(false)
 
-  const isLoading = status === "submitted" || status === "streaming"
+  const { messages, sendMessage, status, error, setMessages, stop, reload, isLoading, getMessageText: getAIMessageText } = useAIChat(
+    {
+      apiEndpoint: "/api/chat",
+    },
+    {
+      onResponseReceived: async (message) => {
+        // Prevent duplicate saves
+        if (isSavingRef.current || lastSavedAssistantIdRef.current === message.id) {
+          return
+        }
+
+        // Auto-save conversation when response is received
+        if (activeConversationId) {
+          isSavingRef.current = true
+          lastSavedAssistantIdRef.current = message.id
+          
+          try {
+            // Find the last user message (the one that triggered this response)
+            // It should be the last user message before this assistant message
+            const assistantIndex = messages.findIndex((m) => m.id === message.id)
+            const lastUserMessage = assistantIndex > 0 
+              ? messages.slice(0, assistantIndex).reverse().find((m) => m.role === "user")
+              : messages.find((m) => m.role === "user")
+
+            const newMessages: ChatMessage[] = []
+            
+            // Add user message if found
+            if (lastUserMessage) {
+              newMessages.push(convertToChatMessage(lastUserMessage))
+            }
+            // Add assistant response
+            newMessages.push(message)
+
+            // If it's a temporary ID, create a real conversation first
+            if (activeConversationId.startsWith("temp-")) {
+              const firstUserMessage = messages.find((m) => m.role === "user")
+              const userMessageText = firstUserMessage 
+                ? getMessageText(firstUserMessage)
+                : "Nueva conversación"
+              
+              const newConv = await createConversationAPI(userMessageText)
+              setActiveConversationId(newConv.id)
+              
+              // Add only the new messages (user + assistant)
+              if (newMessages.length > 0) {
+                await addMessagesAPI(newConv.id, newMessages)
+              }
+            } else {
+              // Existing conversation, add only new messages
+              if (newMessages.length > 0) {
+                await addMessagesAPI(activeConversationId, newMessages)
+              }
+            }
+          } catch (error) {
+            console.error("[Assistant] Error saving conversation:", error)
+            // Reset on error so we can retry
+            lastSavedAssistantIdRef.current = null
+          } finally {
+            isSavingRef.current = false
+          }
+        }
+      },
+      onError: (error) => {
+        console.error("[AI Chat] Error:", error)
+        // Show user-friendly error messages
+        if (error?.message?.includes("quota") || error?.message?.includes("insufficient")) {
+          // Error will be shown in the UI via the error state
+        }
+      },
+    }
+  )
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -139,32 +219,7 @@ export function AssistantPage() {
     scrollToBottom()
   }, [messages])
 
-  React.useEffect(() => {
-    if (activeConversationId && messages.length > 0) {
-      setConversations((prev) =>
-        prev.map((conv) => {
-          if (conv.id === activeConversationId) {
-            const updatedMessages: ChatMessage[] = messages.map((m) => ({
-              id: m.id,
-              role: m.role as "user" | "assistant",
-              content: m.parts
-                .filter((p): p is { type: "text"; text: string } => p.type === "text")
-                .map((p) => p.text)
-                .join(""),
-              timestamp: new Date().toISOString(),
-            }))
-            return {
-              ...conv,
-              messages: updatedMessages,
-              preview: updatedMessages[0]?.content.slice(0, 100) || conv.preview,
-              updatedAt: new Date().toISOString(),
-            }
-          }
-          return conv
-        }),
-      )
-    }
-  }, [messages, activeConversationId])
+  // Sync messages with conversation (handled by onResponseReceived callback now)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -173,19 +228,17 @@ export function AssistantPage() {
     const messageText = input.trim()
     setInput("")
 
+    // Only create conversation if we don't have one
+    // We'll create it after the first successful AI response
     if (!activeConversationId) {
-      const newConv: ChatConversation = {
-        id: `conv-${Date.now()}`,
-        title: messageText.slice(0, 50) + (messageText.length > 50 ? "..." : ""),
-        preview: messageText,
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }
-      setConversations((prev) => [newConv, ...prev])
-      setActiveConversationId(newConv.id)
+      // Create a temporary local conversation ID
+      // The real conversation will be created when we get the AI response
+      const tempId = `temp-${Date.now()}`
+      setActiveConversationId(tempId)
     }
 
+    // Send message to AI
+    // If OpenAI fails, the error will be shown in the UI
     sendMessage({ text: messageText })
   }
 
@@ -204,26 +257,41 @@ export function AssistantPage() {
     setMessages([])
     setActiveConversationId(null)
     setInput("")
+    lastSavedAssistantIdRef.current = null
+    isSavingRef.current = false
   }
 
-  const handleLoadConversation = (conversation: ChatConversation) => {
-    setActiveConversationId(conversation.id)
-    // Convert stored messages to AI SDK format
-    const loadedMessages = conversation.messages.map((m) => ({
-      id: m.id,
-      role: m.role as "user" | "assistant",
-      parts: [{ type: "text" as const, text: m.content }],
-    }))
-    setMessages(loadedMessages as any)
-  }
-
-  const handleDeleteConversation = (convId: string) => {
-    setConversations((prev) => prev.filter((c) => c.id !== convId))
-    if (activeConversationId === convId) {
-      handleNewChat()
+  const handleLoadConversation = async (conversation: ChatConversation) => {
+    try {
+      // Load full conversation with messages from Supabase
+      const fullConversation = await loadConversationAPI(conversation.id)
+      if (fullConversation) {
+        setActiveConversationId(fullConversation.id)
+        // Convert stored messages to AI SDK format using helper
+        const loadedMessages = convertToAIMessages(fullConversation.messages)
+        setMessages(loadedMessages)
+      }
+    } catch (error) {
+      console.error("[Assistant] Error loading conversation:", error)
+      // Fallback to local data
+      setActiveConversationId(conversation.id)
+      const loadedMessages = convertToAIMessages(conversation.messages)
+      setMessages(loadedMessages)
     }
-    setShowDeleteDialog(false)
-    setConversationToDelete(null)
+  }
+
+  const handleDeleteConversation = async (convId: string) => {
+    try {
+      await deleteConversationAPI(convId)
+      if (activeConversationId === convId) {
+        handleNewChat()
+      }
+    } catch (error) {
+      console.error("[Assistant] Error deleting conversation:", error)
+    } finally {
+      setShowDeleteDialog(false)
+      setConversationToDelete(null)
+    }
   }
 
   const handleToggleFavorite = (promptId: string) => {
@@ -249,12 +317,8 @@ export function AssistantPage() {
     }
   }
 
-  const getMessageText = (message: (typeof messages)[0]) => {
-    return message.parts
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("")
-  }
+  // Use helper function from library
+  const getMessageText = getAIMessageText
 
   const renderContent = (content: string) => {
     return content
@@ -280,10 +344,9 @@ export function AssistantPage() {
       })
   }
 
-  const filteredConversations = conversations.filter(
-    (conv) =>
-      conv.title.toLowerCase().includes(historySearch.toLowerCase()) ||
-      conv.preview.toLowerCase().includes(historySearch.toLowerCase()),
+  const filteredConversations = React.useMemo(
+    () => filterConversations(conversations, historySearch),
+    [conversations, historySearch]
   )
 
   const filteredPrompts = prompts.filter((prompt) => {
@@ -294,35 +357,10 @@ export function AssistantPage() {
     return matchesSearch && matchesCategory
   })
 
-  const groupedConversations = React.useMemo(() => {
-    const today = new Date()
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    const lastWeek = new Date(today)
-    lastWeek.setDate(lastWeek.getDate() - 7)
-
-    const groups: { label: string; conversations: ChatConversation[] }[] = [
-      { label: "Hoy", conversations: [] },
-      { label: "Ayer", conversations: [] },
-      { label: "Últimos 7 días", conversations: [] },
-      { label: "Anteriores", conversations: [] },
-    ]
-
-    filteredConversations.forEach((conv) => {
-      const convDate = new Date(conv.updatedAt)
-      if (convDate.toDateString() === today.toDateString()) {
-        groups[0].conversations.push(conv)
-      } else if (convDate.toDateString() === yesterday.toDateString()) {
-        groups[1].conversations.push(conv)
-      } else if (convDate > lastWeek) {
-        groups[2].conversations.push(conv)
-      } else {
-        groups[3].conversations.push(conv)
-      }
-    })
-
-    return groups.filter((g) => g.conversations.length > 0)
-  }, [filteredConversations])
+  const groupedConversations = React.useMemo(
+    () => groupConversationsByDate(filteredConversations),
+    [filteredConversations]
+  )
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] p-8">
@@ -640,12 +678,25 @@ export function AssistantPage() {
                 {error && (
                   <Alert variant="destructive" className="mb-4">
                     <AlertCircle className="h-4 w-4" />
-                    <AlertDescription className="flex items-center justify-between">
-                      <span>Ocurrió un error al procesar tu consulta.</span>
-                      <Button variant="outline" size="sm" onClick={() => reload()}>
-                        <RotateCcw className="h-3 w-3 mr-1" />
-                        Reintentar
-                      </Button>
+                    <AlertDescription>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">
+                            {error.message?.includes("quota") || error.message?.includes("insufficient")
+                              ? "Cuota de OpenAI agotada"
+                              : "Error al procesar tu consulta"}
+                          </span>
+                          <Button variant="outline" size="sm" onClick={() => reload?.()}>
+                            <RotateCcw className="h-3 w-3 mr-1" />
+                            Reintentar
+                          </Button>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {error.message?.includes("quota") || error.message?.includes("insufficient")
+                            ? "Por favor, agrega créditos a tu cuenta de OpenAI en platform.openai.com/account/billing"
+                            : error.message || "Ocurrió un error inesperado"}
+                        </p>
+                      </div>
                     </AlertDescription>
                   </Alert>
                 )}

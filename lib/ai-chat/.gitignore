@@ -1,0 +1,8 @@
+# Ignorar archivos temporales
+*.log
+*.tmp
+.DS_Store
+
+# No ignorar nada - todos los archivos deben estar en el repo
+# para que sea fácil copiar la carpeta completa
+
