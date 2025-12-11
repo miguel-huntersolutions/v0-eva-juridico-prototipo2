@@ -208,6 +208,10 @@ export function AssistantPage() {
 
   const handleLoadConversation = (conversation: ChatConversation) => {
     setActiveConversationId(conversation.id)
+    if (!conversation.messages || conversation.messages.length === 0) {
+      setMessages([])
+      return
+    }
     // Convert stored messages to AI SDK format
     const loadedMessages = conversation.messages.map((m) => ({
       id: m.id,
