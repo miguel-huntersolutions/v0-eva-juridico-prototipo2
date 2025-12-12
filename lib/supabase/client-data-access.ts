@@ -97,6 +97,9 @@ export async function impersonateOrganization(organizationId: string) {
 export async function getEntities(organizationId?: string) {
   const supabase = createBrowserClient()
   let query = supabase.from("entities").select("*").order("name")
+ 
+  console.log("organization_id", organizationId)
+  
 
   if (organizationId) {
     query = query.eq("organization_id", organizationId)
@@ -205,6 +208,7 @@ export async function deleteEntity(id: string) {
 // Secretaries
 export async function getSecretaries(entityId?: string) {
   const supabase = createBrowserClient()
+  console.log("secretaries", entityId)
   let query = supabase.from("secretaries").select("*").order("name")
 
   if (entityId) {

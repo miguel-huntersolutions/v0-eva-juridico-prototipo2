@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Loader2, Scale, FileText, ChevronRight } from "lucide-react"
+import { Loader2, Scale, FileText, ChevronRight, Wand2, Sparkles } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -16,14 +16,18 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 import {
   getProcessTypes,
   getSecretaries,
+  getEntities,
   createProcess,
   generateProcessCode,
   type ProcessType,
+  type Entity,
+  type Process,
 } from "@/lib/supabase/client-data-access"
-import type { Process } from "@/lib/mock-data"
 import { useProfile } from "@/hooks/use-profile"
 
 interface CreateProcessDialogProps {
@@ -60,10 +64,14 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
 
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
+  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [isLoadingEntities, setIsLoadingEntities] = React.useState(false)
   const [secretaries, setSecretaries] = React.useState<Secretary[]>([])
   const [isLoadingSecretaries, setIsLoadingSecretaries] = React.useState(false)
   const [isSaving, setIsSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [improvingField, setImprovingField] = React.useState<string | null>(null)
+  const [improvedFields, setImprovedFields] = React.useState<Set<string>>(new Set())
 
   React.useEffect(() => {
     async function loadProcessTypes() {
@@ -80,6 +88,27 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
       loadProcessTypes()
     }
   }, [open])
+
+  React.useEffect(() => {
+    async function loadEntities() {
+      if (!profile?.organization_id || !open) {
+        setEntities([])
+        return
+      }
+      try {
+        setIsLoadingEntities(true)
+        const data = await getEntities(profile.organization_id)
+        setEntities(data.filter((e) => e.status === "active"))
+      } catch (error) {
+        console.error("Error loading entities:", error)
+      } finally {
+        setIsLoadingEntities(false)
+      }
+    }
+    if (open && profile?.organization_id) {
+      loadEntities()
+    }
+  }, [open, profile?.organization_id])
 
   React.useEffect(() => {
     async function loadSecretaries() {
@@ -111,7 +140,73 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
     })
     setSelectedProcessType(null)
     setError(null)
+    setImprovedFields(new Set())
+    setImprovingField(null)
     onOpenChange(false)
+  }
+
+  const handleAIImprove = async (fieldName: "object" | "description") => {
+    const currentValue = formData[fieldName] || ""
+    if (!currentValue.trim()) return
+
+    setImprovingField(fieldName)
+
+    try {
+      const selectedEntity = entities.find((e) => e.id === formData.entityId)
+      const selectedSecretary = secretaries.find((s) => s.id === formData.secretaryId)
+
+      const response = await fetch("/api/improve-text", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: currentValue,
+          fieldName: fieldName,
+          fieldLabel: fieldName === "object" ? "Objeto del Proceso" : "Descripción Detallada",
+          fieldHelpText:
+            fieldName === "object"
+              ? "Describe brevemente el objeto del contrato o proceso"
+              : "Proporciona detalles adicionales sobre el proceso, alcance, especificaciones técnicas, etc.",
+          entityName: selectedEntity?.name,
+          processTypeName: selectedProcessType?.name,
+          processTypeDescription: selectedProcessType?.description,
+          secretaryName: selectedSecretary?.name,
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to improve text")
+      }
+
+      const data = await response.json()
+      const improvedText = data.improvedText
+
+      setFormData((prev) => ({
+        ...prev,
+        [fieldName]: improvedText,
+      }))
+
+      setImprovedFields((prev) => new Set(prev).add(fieldName))
+    } catch (error) {
+      console.error("[Create Process Dialog] Error improving text:", error)
+      setError(error instanceof Error ? error.message : "Error al mejorar el texto. Por favor intenta de nuevo.")
+    } finally {
+      setImprovingField(null)
+    }
+  }
+
+  const handleFieldChange = (fieldName: "object" | "description", value: string) => {
+    setFormData((prev) => ({ ...prev, [fieldName]: value }))
+    // Remove from improved fields if user edits after improvement
+    if (improvedFields.has(fieldName)) {
+      setImprovedFields((prev) => {
+        const newSet = new Set(prev)
+        newSet.delete(fieldName)
+        return newSet
+      })
+    }
   }
 
   const handleProcessTypeChange = (value: string) => {
@@ -159,7 +254,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
     }
   }
 
-  const canContinue = formData.secretaryId && formData.processTypeId && selectedProcessType
+  const canContinue = formData.entityId && formData.entityId !== "placeholder" && formData.secretaryId && formData.processTypeId && selectedProcessType
   const canCreate = formData.object.trim().length > 0
 
   return (
@@ -203,12 +298,28 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
                   onValueChange={(v) => {
                     setFormData((prev) => ({ ...prev, entityId: v, secretaryId: "" }))
                   }}
+                  disabled={isLoadingEntities}
                 >
                   <SelectTrigger id="entity">
-                    <SelectValue placeholder="Seleccionar entidad..." />
+                    <SelectValue placeholder={isLoadingEntities ? "Cargando..." : "Seleccionar entidad..."} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="placeholder">Seleccione primero una entidad</SelectItem>
+                    {isLoadingEntities ? (
+                      <SelectItem value="loading" disabled>
+                        Cargando entidades...
+                      </SelectItem>
+                    ) : (
+                      entities.map((entity) => (
+                        <SelectItem key={entity.id} value={entity.id}>
+                          {entity.name}
+                        </SelectItem>
+                      ))
+                    )}
+                    {entities.length === 0 && !isLoadingEntities && (
+                      <SelectItem value="none" disabled>
+                        No hay entidades disponibles
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">Selecciona la entidad para la cual se creará el proceso</p>
@@ -279,25 +390,125 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
           ) : (
             <div className="space-y-6 py-4">
               <div className="space-y-2">
-                <Label htmlFor="object">Objeto del Proceso *</Label>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="object">Objeto del Proceso *</Label>
+                    {improvedFields.has("object") && (
+                      <Badge
+                        variant="secondary"
+                        className="h-5 gap-1 text-xs bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        Mejorado
+                      </Badge>
+                    )}
+                  </div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-7 gap-1.5 text-xs transition-all",
+                            formData.object.trim().length > 0 && !improvedFields.has("object")
+                              ? "text-primary hover:text-primary hover:bg-primary/10"
+                              : "text-muted-foreground",
+                          )}
+                          disabled={!formData.object.trim() || improvingField === "object"}
+                          onClick={() => handleAIImprove("object")}
+                        >
+                          {improvingField === "object" ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Mejorando...
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="h-3 w-3" />
+                              Mejorar con IA
+                            </>
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="left">
+                        <p className="text-xs">La IA mejorará la redacción jurídica de este campo</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
                 <Textarea
                   id="object"
                   placeholder="Ej: Adquisición de equipos de cómputo para la Secretaría de Hacienda"
                   value={formData.object}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, object: e.target.value }))}
-                  className="min-h-[80px]"
+                  onChange={(e) => handleFieldChange("object", e.target.value)}
+                  className={cn(
+                    "min-h-[80px] transition-all",
+                    improvedFields.has("object") && "border-emerald-500/30 bg-emerald-500/5",
+                  )}
                 />
                 <p className="text-xs text-muted-foreground">Describe brevemente el objeto del contrato o proceso</p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="description">Descripción Detallada</Label>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="description">Descripción Detallada</Label>
+                    {improvedFields.has("description") && (
+                      <Badge
+                        variant="secondary"
+                        className="h-5 gap-1 text-xs bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        Mejorado
+                      </Badge>
+                    )}
+                  </div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-7 gap-1.5 text-xs transition-all",
+                            formData.description.trim().length > 0 && !improvedFields.has("description")
+                              ? "text-primary hover:text-primary hover:bg-primary/10"
+                              : "text-muted-foreground",
+                          )}
+                          disabled={!formData.description.trim() || improvingField === "description"}
+                          onClick={() => handleAIImprove("description")}
+                        >
+                          {improvingField === "description" ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Mejorando...
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="h-3 w-3" />
+                              Mejorar con IA
+                            </>
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="left">
+                        <p className="text-xs">La IA mejorará la redacción jurídica de este campo</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
                 <Textarea
                   id="description"
                   placeholder="Proporciona detalles adicionales sobre el proceso, alcance, especificaciones técnicas, etc."
                   value={formData.description}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
-                  className="min-h-[120px]"
+                  onChange={(e) => handleFieldChange("description", e.target.value)}
+                  className={cn(
+                    "min-h-[120px] transition-all",
+                    improvedFields.has("description") && "border-emerald-500/30 bg-emerald-500/5",
+                  )}
                 />
               </div>
 
