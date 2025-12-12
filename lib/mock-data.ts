@@ -114,32 +114,71 @@ export interface ChatMessage {
 export interface ChatConversation {
   id: string
   title: string
-  lastMessage: string
-  timestamp: string
-  unread: boolean
+  preview: string
+  messages: ChatMessage[]
+  createdAt: string
+  updatedAt: string
 }
 
 export const mockChatConversations: ChatConversation[] = [
   {
     id: "conv-1",
     title: "Consulta sobre contratación directa",
-    lastMessage: "¿Cuáles son los requisitos para una contratación directa por urgencia manifiesta?",
-    timestamp: "2024-11-24T10:30:00",
-    unread: false,
+    preview: "¿Cuáles son los requisitos para una contratación directa por urgencia manifiesta?",
+    messages: [
+      {
+        id: "msg-1-1",
+        role: "user",
+        content: "¿Cuáles son los requisitos para una contratación directa por urgencia manifiesta?",
+        timestamp: "2024-11-24T10:30:00",
+      },
+      {
+        id: "msg-1-2",
+        role: "assistant",
+        content:
+          "Para una contratación directa por urgencia manifiesta según la Ley 1150 de 2007, se requiere:\n\n1. Situación que afecte el funcionamiento de la entidad o la prestación de servicios\n2. Que la situación no pueda ser atendida mediante los procedimientos ordinarios\n3. Acto administrativo motivado que declare la urgencia\n4. Certificado de disponibilidad presupuestal\n5. Estudios previos simplificados\n\n¿Necesitas más detalles sobre alguno de estos requisitos?",
+        timestamp: "2024-11-24T10:30:15",
+      },
+    ],
+    createdAt: "2024-11-24T10:30:00",
+    updatedAt: "2024-11-24T10:30:15",
   },
   {
     id: "conv-2",
     title: "Pliego de condiciones",
-    lastMessage: "¿Cómo estructurar un pliego de condiciones para licitación?",
-    timestamp: "2024-11-23T15:45:00",
-    unread: true,
+    preview: "¿Cómo estructurar un pliego de condiciones para licitación?",
+    messages: [
+      {
+        id: "msg-2-1",
+        role: "user",
+        content: "¿Cómo estructurar un pliego de condiciones para licitación?",
+        timestamp: "2024-11-23T15:45:00",
+      },
+      {
+        id: "msg-2-2",
+        role: "assistant",
+        content:
+          "Un pliego de condiciones debe incluir:\n\n1. Información general del proceso\n2. Objeto del contrato\n3. Especificaciones técnicas\n4. Requisitos habilitantes\n5. Factores de evaluación\n6. Cronograma\n7. Garantías requeridas\n8. Obligaciones contractuales\n\n¿Sobre qué sección necesitas más información?",
+        timestamp: "2024-11-23T15:45:20",
+      },
+    ],
+    createdAt: "2024-11-23T15:45:00",
+    updatedAt: "2024-11-23T15:45:20",
   },
   {
     id: "conv-3",
     title: "Análisis del sector",
-    lastMessage: "Necesito ayuda con el análisis del sector para servicios de consultoría",
-    timestamp: "2024-11-22T09:20:00",
-    unread: false,
+    preview: "Necesito ayuda con el análisis del sector para servicios de consultoría",
+    messages: [
+      {
+        id: "msg-3-1",
+        role: "user",
+        content: "Necesito ayuda con el análisis del sector para servicios de consultoría",
+        timestamp: "2024-11-22T09:20:00",
+      },
+    ],
+    createdAt: "2024-11-22T09:20:00",
+    updatedAt: "2024-11-22T09:20:00",
   },
 ]
 
