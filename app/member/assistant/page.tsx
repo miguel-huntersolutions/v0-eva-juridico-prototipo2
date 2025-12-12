@@ -1,5 +1,5 @@
 import { logger } from "@/lib/logger"
-import { AssistantPage } from "@/components/member/assistant-page.ant"
+import { AssistantPage } from "@/components/member/assistant-page"
 import type { Metadata } from "next"
 
 export const metadata: Metadata = {
