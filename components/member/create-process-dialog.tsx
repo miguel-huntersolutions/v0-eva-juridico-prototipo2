@@ -155,6 +155,18 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
       const selectedEntity = entities.find((e) => e.id === formData.entityId)
       const selectedSecretary = secretaries.find((s) => s.id === formData.secretaryId)
 
+      // Build context message for better prompts
+      const contextInfo: string[] = []
+      if (selectedEntity?.name) {
+        contextInfo.push(`Entidad: ${selectedEntity.name}`)
+      }
+      if (selectedSecretary?.name) {
+        contextInfo.push(`Secretaría: ${selectedSecretary.name}`)
+      }
+      if (selectedProcessType?.name) {
+        contextInfo.push(`Tipo de proceso: ${selectedProcessType.name}`)
+      }
+
       const response = await fetch("/api/improve-text", {
         method: "POST",
         headers: {
@@ -166,8 +178,8 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
           fieldLabel: fieldName === "object" ? "Objeto del Proceso" : "Descripción Detallada",
           fieldHelpText:
             fieldName === "object"
-              ? "Describe brevemente el objeto del contrato o proceso"
-              : "Proporciona detalles adicionales sobre el proceso, alcance, especificaciones técnicas, etc.",
+              ? "Describe brevemente el objeto del contrato o proceso. Debe identificar claramente el bien o servicio a contratar, su finalidad, y permitir determinar el alcance exacto de la prestación."
+              : "Proporciona detalles adicionales sobre el proceso, incluyendo alcance completo, especificaciones técnicas, actividades, entregables, condiciones de calidad, y cualquier otro elemento necesario para la correcta ejecución del contrato.",
           entityName: selectedEntity?.name,
           processTypeName: selectedProcessType?.name,
           processTypeDescription: selectedProcessType?.description,
