@@ -21,6 +21,7 @@ function mapConversationFromDB(row: any): ChatConversation {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     userId: row.user_id || undefined,
+    openaiThreadId: row.openai_thread_id || undefined,
   }
 }
 
@@ -126,6 +127,7 @@ export async function createConversation(
         title: conversation.title,
         preview: conversation.preview,
         user_id: user.id,
+        openai_thread_id: conversation.openaiThreadId || null,
       })
       .select()
       .single()
@@ -184,6 +186,7 @@ export async function updateConversation(
     if (updates.title !== undefined) updateData.title = updates.title
     if (updates.preview !== undefined) updateData.preview = updates.preview
     if (updates.userId !== undefined) updateData.user_id = updates.userId
+    if (updates.openaiThreadId !== undefined) updateData.openai_thread_id = updates.openaiThreadId
 
     const { data, error } = await supabase
       .from("conversations")

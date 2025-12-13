@@ -31,6 +31,7 @@ export interface ChatConversation {
   createdAt: string
   updatedAt: string
   userId?: string
+  openaiThreadId?: string
 }
 
 export interface AIChatOptions {

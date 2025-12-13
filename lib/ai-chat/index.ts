@@ -24,6 +24,7 @@
 
 export * from "./types"
 export * from "./use-ai-chat"
+export * from "./use-assistant-chat"
 export * from "./use-conversations"
 export * from "./create-chat-api-route"
 export * from "./improve-text"

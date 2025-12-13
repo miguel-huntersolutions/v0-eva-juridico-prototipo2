@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { useAIChat, useConversations, convertToChatMessage, convertToAIMessages, getMessageText, filterConversations, groupConversationsByDate } from "@/lib/ai-chat"
+import { useAssistantChat } from "@/lib/ai-chat/use-assistant-chat"
+import { useConversations, convertToAIMessages, filterConversations, groupConversationsByDate } from "@/lib/ai-chat"
 import {
   Send,
   Bot,
@@ -114,6 +115,7 @@ export function AssistantPage() {
     addMessages: addMessagesAPI,
     deleteConversation: deleteConversationAPI,
     loadConversation: loadConversationAPI,
+    updateConversation: updateConversationAPI,
   } = useConversations({
     // TODO: Get userId from auth context
     // userId: currentUser?.id,
@@ -137,77 +139,83 @@ export function AssistantPage() {
   const lastSavedAssistantIdRef = React.useRef<string | null>(null)
   const isSavingRef = React.useRef(false)
 
-  const { messages, sendMessage, status, error, setMessages, stop, reload, isLoading, getMessageText: getAIMessageText } = useAIChat(
-    {
-      apiEndpoint: "/api/chat",
+  const {
+    messages,
+    sendMessage,
+    status,
+    error,
+    setMessages,
+    isLoading,
+    threadId,
+    setThreadId,
+    conversationId: hookConversationId,
+    setConversationId: setHookConversationId,
+  } = useAssistantChat({
+    apiEndpoint: "/api/assistant",
+    initialConversationId: activeConversationId || undefined,
+    onResponseReceived: async (userMessage, assistantMessage) => {
+      // Prevent duplicate saves
+      if (isSavingRef.current || lastSavedAssistantIdRef.current === assistantMessage.id) {
+        return
+      }
+
+      isSavingRef.current = true
+      lastSavedAssistantIdRef.current = assistantMessage.id
+
+      try {
+        const newMessages: ChatMessage[] = [userMessage, assistantMessage]
+
+        // If it's a temporary ID, create a real conversation first
+        if (activeConversationId && activeConversationId.startsWith("temp-")) {
+          const userMessageText = userMessage.content || "Nueva conversación"
+
+            const newConv = await createConversationAPI(userMessageText)
+            setActiveConversationId(newConv.id)
+            setHookConversationId(newConv.id)
+
+            // Update conversation with thread ID
+            // For workflows, we use conversationId as thread identifier
+            await updateConversationAPI(newConv.id, { openaiThreadId: newConv.id })
+
+            // Add all messages (user + assistant)
+            await addMessagesAPI(newConv.id, newMessages)
+        } else if (activeConversationId) {
+          // Existing conversation, update thread ID if needed
+          // For workflows, we use conversationId as thread identifier
+          await updateConversationAPI(activeConversationId, { openaiThreadId: activeConversationId })
+
+          // Add only new messages (check for duplicates)
+          await addMessagesAPI(activeConversationId, newMessages)
+        } else {
+          // No conversation ID yet, create one
+          const userMessageText = userMessage.content || "Nueva conversación"
+
+          const newConv = await createConversationAPI(userMessageText)
+          setActiveConversationId(newConv.id)
+          setHookConversationId(newConv.id)
+
+          // Update conversation with thread ID
+          await updateConversationAPI(newConv.id, { openaiThreadId: newConv.id })
+
+          // Add all messages
+          await addMessagesAPI(newConv.id, newMessages)
+        }
+      } catch (error) {
+        console.error("[Assistant] Error saving conversation:", error)
+        // Reset on error so we can retry
+        lastSavedAssistantIdRef.current = null
+      } finally {
+        isSavingRef.current = false
+      }
     },
-    {
-      onResponseReceived: async (message) => {
-        // Prevent duplicate saves
-        if (isSavingRef.current || lastSavedAssistantIdRef.current === message.id) {
-          return
-        }
-
-        // Auto-save conversation when response is received
-        if (activeConversationId) {
-          isSavingRef.current = true
-          lastSavedAssistantIdRef.current = message.id
-          
-          try {
-            // Find the last user message (the one that triggered this response)
-            // It should be the last user message before this assistant message
-            const assistantIndex = messages.findIndex((m) => m.id === message.id)
-            const lastUserMessage = assistantIndex > 0 
-              ? messages.slice(0, assistantIndex).reverse().find((m) => m.role === "user")
-              : messages.find((m) => m.role === "user")
-
-            const newMessages: ChatMessage[] = []
-            
-            // Add user message if found
-            if (lastUserMessage) {
-              newMessages.push(convertToChatMessage(lastUserMessage))
-            }
-            // Add assistant response
-            newMessages.push(message)
-
-            // If it's a temporary ID, create a real conversation first
-            if (activeConversationId.startsWith("temp-")) {
-              const firstUserMessage = messages.find((m) => m.role === "user")
-              const userMessageText = firstUserMessage 
-                ? getMessageText(firstUserMessage)
-                : "Nueva conversación"
-              
-              const newConv = await createConversationAPI(userMessageText)
-              setActiveConversationId(newConv.id)
-              
-              // Add only the new messages (user + assistant)
-              if (newMessages.length > 0) {
-                await addMessagesAPI(newConv.id, newMessages)
-              }
-            } else {
-              // Existing conversation, add only new messages
-              if (newMessages.length > 0) {
-                await addMessagesAPI(activeConversationId, newMessages)
-              }
-            }
-          } catch (error) {
-            console.error("[Assistant] Error saving conversation:", error)
-            // Reset on error so we can retry
-            lastSavedAssistantIdRef.current = null
-          } finally {
-            isSavingRef.current = false
-          }
-        }
-      },
-      onError: (error) => {
-        console.error("[AI Chat] Error:", error)
-        // Show user-friendly error messages
-        if (error?.message?.includes("quota") || error?.message?.includes("insufficient")) {
-          // Error will be shown in the UI via the error state
-        }
-      },
-    }
-  )
+    onError: (error) => {
+      console.error("[Assistant Chat] Error:", error)
+      // Show user-friendly error messages
+      if (error?.message?.includes("quota") || error?.message?.includes("insufficient")) {
+        // Error will be shown in the UI via the error state
+      }
+    },
+  })
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -218,6 +226,13 @@ export function AssistantPage() {
   React.useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Sync activeConversationId with hook's conversationId
+  React.useEffect(() => {
+    if (activeConversationId && activeConversationId !== hookConversationId && !activeConversationId.startsWith("temp-")) {
+      setHookConversationId(activeConversationId)
+    }
+  }, [activeConversationId, hookConversationId, setHookConversationId])
 
   // Sync messages with conversation (handled by onResponseReceived callback now)
 
@@ -235,11 +250,12 @@ export function AssistantPage() {
       // The real conversation will be created when we get the AI response
       const tempId = `temp-${Date.now()}`
       setActiveConversationId(tempId)
+      setHookConversationId(tempId)
     }
 
-    // Send message to AI
+    // Send message to AI Assistant
     // If OpenAI fails, the error will be shown in the UI
-    sendMessage({ text: messageText })
+    await sendMessage({ text: messageText })
   }
 
   const handleSuggestedQuestion = (question: string) => {
@@ -256,6 +272,7 @@ export function AssistantPage() {
   const handleNewChat = () => {
     setMessages([])
     setActiveConversationId(null)
+    setThreadId(null)
     setInput("")
     lastSavedAssistantIdRef.current = null
     isSavingRef.current = false
@@ -267,16 +284,28 @@ export function AssistantPage() {
       const fullConversation = await loadConversationAPI(conversation.id)
       if (fullConversation) {
         setActiveConversationId(fullConversation.id)
-        // Convert stored messages to AI SDK format using helper
-        const loadedMessages = convertToAIMessages(fullConversation.messages)
-        setMessages(loadedMessages)
+        setHookConversationId(fullConversation.id)
+        // Set thread ID - for workflows, we use conversationId as thread identifier
+        // But if there's an openaiThreadId stored, use that
+        if (fullConversation.openaiThreadId) {
+          setThreadId(fullConversation.openaiThreadId)
+        } else {
+          // Use conversation ID as thread identifier for workflows
+          setThreadId(fullConversation.id)
+        }
+        // Convert stored messages to ChatMessage format
+        setMessages(fullConversation.messages || [])
       }
     } catch (error) {
       console.error("[Assistant] Error loading conversation:", error)
       // Fallback to local data
       setActiveConversationId(conversation.id)
-      const loadedMessages = convertToAIMessages(conversation.messages)
-      setMessages(loadedMessages)
+      if (conversation.openaiThreadId) {
+        setThreadId(conversation.openaiThreadId)
+      } else {
+        setThreadId(conversation.id)
+      }
+      setMessages(conversation.messages || [])
     }
   }
 
@@ -317,8 +346,8 @@ export function AssistantPage() {
     }
   }
 
-  // Use helper function from library
-  const getMessageText = getAIMessageText
+  // Helper function to get message text
+  const getMessageText = (message: ChatMessage) => message.content
 
   const renderContent = (content: string) => {
     return content
@@ -643,15 +672,15 @@ export function AssistantPage() {
                     {conversations.find((c) => c.id === activeConversationId)?.title.slice(0, 20)}...
                   </Badge>
                 )}
-                {status === "streaming" && (
+                {isLoading && (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button variant="outline" size="icon" onClick={stop}>
-                          <Square className="h-4 w-4" />
+                        <Button variant="outline" size="icon" disabled>
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>Detener respuesta</TooltipContent>
+                      <TooltipContent>Procesando...</TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 )}
@@ -686,7 +715,7 @@ export function AssistantPage() {
                               ? "Cuota de OpenAI agotada"
                               : "Error al procesar tu consulta"}
                           </span>
-                          <Button variant="outline" size="sm" onClick={() => reload?.()}>
+                          <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
                             <RotateCcw className="h-3 w-3 mr-1" />
                             Reintentar
                           </Button>
