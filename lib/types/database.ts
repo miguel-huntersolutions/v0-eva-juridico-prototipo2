@@ -63,6 +63,7 @@ export interface Template {
   name: string
   process_type_id: string
   file_url: string
+  variables?: string[] | null
   created_at: string
   updated_at: string
   // Joined fields

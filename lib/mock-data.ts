@@ -53,6 +53,7 @@ export interface Template {
   name: string
   processTypeId: string
   fileUrl: string
+  variables?: string[]
   createdAt: string
 }
 

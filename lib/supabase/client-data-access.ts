@@ -5,7 +5,6 @@ import type {
   Entity,
   Secretary,
   ProcessType,
-  Template,
   Process,
   Document,
   Profile,
@@ -19,12 +18,21 @@ export type {
   Entity,
   Secretary,
   ProcessType,
-  Template,
   Process,
   Document,
   Profile,
   ProcessWithRelations,
   DocumentWithRelations,
+}
+
+// Client-side Template type (with camelCase fields matching the mapped return values)
+export interface Template {
+  id: string
+  name: string
+  processTypeId: string
+  fileUrl: string
+  variables?: string[]
+  createdAt: string
 }
 
 // Organizations
@@ -284,6 +292,7 @@ export async function getTemplates(processTypeId?: string) {
     name: t.name,
     processTypeId: t.process_type_id,
     fileUrl: t.file_url,
+    variables: t.variables || [],
     createdAt: t.created_at?.split("T")[0] || "",
   })) as Template[]
 }
@@ -292,6 +301,8 @@ export async function createTemplate(data: {
   name: string
   processTypeId: string
   fileUrl: string
+  description?: string
+  variables?: string[]
 }) {
   const supabase = createBrowserClient()
 
@@ -301,6 +312,7 @@ export async function createTemplate(data: {
       name: data.name,
       process_type_id: data.processTypeId,
       file_url: data.fileUrl,
+      variables: data.variables || [],
     })
     .select()
     .single()
@@ -312,6 +324,7 @@ export async function createTemplate(data: {
     name: newTemplate.name,
     processTypeId: newTemplate.process_type_id,
     fileUrl: newTemplate.file_url,
+    variables: newTemplate.variables || [],
     createdAt: newTemplate.created_at?.split("T")[0] || "",
   } as Template
 }
@@ -322,6 +335,7 @@ export async function updateTemplate(
     name: string
     processTypeId: string
     fileUrl: string
+    variables?: string[]
   }>,
 ) {
   const supabase = createBrowserClient()
@@ -330,6 +344,7 @@ export async function updateTemplate(
   if (data.name) updateData.name = data.name
   if (data.processTypeId) updateData.process_type_id = data.processTypeId
   if (data.fileUrl) updateData.file_url = data.fileUrl
+  if (data.variables !== undefined) updateData.variables = data.variables
 
   const { data: updatedTemplate, error } = await supabase
     .from("templates")
@@ -345,6 +360,7 @@ export async function updateTemplate(
     name: updatedTemplate.name,
     processTypeId: updatedTemplate.process_type_id,
     fileUrl: updatedTemplate.file_url,
+    variables: updatedTemplate.variables || [],
     createdAt: updatedTemplate.created_at?.split("T")[0] || "",
   } as Template
 }

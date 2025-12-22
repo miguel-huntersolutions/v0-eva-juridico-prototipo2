@@ -53,15 +53,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { Template } from "@/lib/mock-data"
 import type { ProcessType } from "@/lib/mock-data"
-import { getTemplates, createTemplate, deleteTemplate, getProcessTypes } from "@/lib/supabase/client-data-access"
+import { getTemplates, createTemplate, deleteTemplate, updateTemplate, getProcessTypes, type Template } from "@/lib/supabase/client-data-access"
+import { extractTagsFromDocx } from "@/lib/utils/template-helpers"
 
 interface UploadedFile {
   name: string
   size: number
   type: string
-  lastModified?: number // Keep for potential future use, though not strictly needed for the current updates
+  lastModified?: number
+  file?: File // Store the actual File object for processing
 }
 
 export function TemplatesPage() {
@@ -76,6 +77,16 @@ export function TemplatesPage() {
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
   const [selectedTemplate, setSelectedTemplate] = React.useState<Template | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
+  
+  // Edit dialog states
+  const [editTemplateName, setEditTemplateName] = React.useState("")
+  const [editProcessTypeId, setEditProcessTypeId] = React.useState("")
+  const [editReplacementFile, setEditReplacementFile] = React.useState<UploadedFile | null>(null)
+  const [editExtractedTags, setEditExtractedTags] = React.useState<string[]>([])
+  const [isExtractingEditTags, setIsExtractingEditTags] = React.useState(false)
+  const [isEditDragging, setIsEditDragging] = React.useState(false)
+  const [isSavingEdit, setIsSavingEdit] = React.useState(false)
+  const editFileInputRef = React.useRef<HTMLInputElement>(null)
   // Renamed filterProcessType to processTypeFilter for consistency
   const [filterProcessType, setFilterProcessType] = React.useState<string>("all")
   const [createStep, setCreateStep] = React.useState(1)
@@ -83,6 +94,8 @@ export function TemplatesPage() {
   const [templateDescription, setTemplateDescription] = React.useState("")
   const [selectedProcessTypeId, setSelectedProcessTypeId] = React.useState("")
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(null)
+  const [extractedTags, setExtractedTags] = React.useState<string[]>([])
+  const [isExtractingTags, setIsExtractingTags] = React.useState(false)
   // Renamed isDragging to isDragActive for consistency
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
@@ -120,6 +133,17 @@ export function TemplatesPage() {
 
     loadData()
   }, [])
+
+  // Sync edit form values when selectedTemplate changes and dialog opens
+  React.useEffect(() => {
+    if (isEditOpen && selectedTemplate) {
+      setEditTemplateName(selectedTemplate.name)
+      setEditProcessTypeId(selectedTemplate.processTypeId)
+      // Reset replacement file and tags when dialog opens
+      setEditReplacementFile(null)
+      setEditExtractedTags(selectedTemplate.variables || [])
+    }
+  }, [selectedTemplate?.id, isEditOpen]) // Only sync when template ID changes or dialog opens
 
   const getProcessType = (processTypeId: string): ProcessType | undefined => {
     return processTypes.find((pt) => pt.id === processTypeId)
@@ -162,7 +186,167 @@ export function TemplatesPage() {
   // Added handleEdit and handleView for the new dialogs
   const handleEdit = (template: Template) => {
     setSelectedTemplate(template)
+    setEditTemplateName(template.name)
+    setEditProcessTypeId(template.processTypeId)
+    setEditReplacementFile(null)
+    setEditExtractedTags(template.variables || [])
     setIsEditOpen(true)
+  }
+
+  const resetEditDialog = () => {
+    setEditTemplateName("")
+    setEditProcessTypeId("")
+    setEditReplacementFile(null)
+    setEditExtractedTags([])
+    setIsEditDragging(false)
+    setIsExtractingEditTags(false)
+  }
+
+  const handleCloseEdit = () => {
+    setIsEditOpen(false)
+    resetEditDialog()
+  }
+
+  const handleEditFileSelect = async (file: File) => {
+    if (
+      file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      file.name.endsWith(".docx")
+    ) {
+      setIsExtractingEditTags(true)
+      
+      try {
+        // Extract tags from the document
+        const tags = await extractTagsFromDocx(file)
+        
+        setEditReplacementFile({
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+          file: file,
+        })
+        setEditExtractedTags(tags)
+      } catch (error) {
+        console.error("Error processing file:", error)
+        alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
+        setEditReplacementFile(null)
+        setEditExtractedTags([])
+      } finally {
+        setIsExtractingEditTags(false)
+      }
+    } else {
+      alert("Solo se permiten archivos .docx")
+    }
+  }
+
+  const handleEditDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsEditDragging(true)
+  }
+
+  const handleEditDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsEditDragging(false)
+  }
+
+  const handleEditDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsEditDragging(false)
+    const files = e.dataTransfer.files
+    if (files.length > 0) {
+      const file = files[0]
+      await handleEditFileSelect(file)
+    }
+  }
+
+  const handleEditFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      const file = files[0]
+      await handleEditFileSelect(file)
+    }
+  }
+
+  const handleSaveEdit = async () => {
+    if (!selectedTemplate || !editTemplateName || !editProcessTypeId) return
+
+    try {
+      setIsSavingEdit(true)
+
+      const updateData: {
+        name: string
+        processTypeId: string
+        fileUrl?: string
+        variables?: string[]
+      } = {
+        name: editTemplateName,
+        processTypeId: editProcessTypeId,
+      }
+
+      // Get the process type name for folder organization
+      const processType = processTypes.find((pt) => pt.id === editProcessTypeId)
+      if (!processType) {
+        throw new Error("Tipo de proceso no encontrado")
+      }
+
+      // If a new file was uploaded, upload/update it in Google Drive
+      if (editReplacementFile && editReplacementFile.file) {
+        const formData = new FormData()
+        formData.append("file", editReplacementFile.file)
+        formData.append("processTypeName", processType.name)
+        
+        // Try to extract Google Drive file ID from existing URL
+        // The fileUrl might be a path like "plantillas/Proceso/archivo.docx" or a Drive URL
+        const existingFileUrl = selectedTemplate.fileUrl
+        let existingFileId: string | null = null
+        
+        // Check if it's a Drive URL (contains /d/ or ?id=)
+        if (existingFileUrl && (existingFileUrl.includes("/d/") || existingFileUrl.includes("?id="))) {
+          const driveFileIdMatch = existingFileUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || 
+                                   existingFileUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/)
+          if (driveFileIdMatch) {
+            existingFileId = driveFileIdMatch[1]
+          }
+        }
+
+        // If we have an existing Google Drive file ID, update it; otherwise create new
+        if (existingFileId) {
+          formData.append("fileId", existingFileId)
+        }
+
+        const uploadResponse = await fetch("/api/upload-template", {
+          method: "POST",
+          body: formData,
+        })
+
+        if (!uploadResponse.ok) {
+          const errorData = await uploadResponse.json()
+          throw new Error(errorData.message || "Error al subir el archivo a Google Drive")
+        }
+
+        const uploadData = await uploadResponse.json()
+        // Store the full Drive path (plantillas/{processTypeName}/{fileName})
+        updateData.fileUrl = uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
+        updateData.variables = editExtractedTags // Use tags from the new file
+      } else if (editProcessTypeId !== selectedTemplate.processTypeId) {
+        // If process type changed but no new file, we might want to move the file
+        // For now, we'll just update the metadata. The file will stay in the old folder.
+        // If you want to move files when process type changes, you'd need additional logic here.
+      }
+      // If no new file, variables remain unchanged (don't include in updateData)
+
+      const updatedTemplate = await updateTemplate(selectedTemplate.id, updateData)
+      
+      // Update the templates list
+      setTemplates(templates.map((t) => (t.id === selectedTemplate.id ? updatedTemplate : t)))
+      
+      handleCloseEdit()
+    } catch (err) {
+      console.error("Error updating template:", err)
+      alert(err instanceof Error ? err.message : "Error al actualizar la plantilla. Por favor, intente de nuevo.")
+    } finally {
+      setIsSavingEdit(false)
+    }
   }
 
   const handleView = (template: Template) => {
@@ -183,8 +367,10 @@ export function TemplatesPage() {
     setTemplateDescription("")
     setSelectedProcessTypeId("")
     setUploadedFile(null)
+    setExtractedTags([])
     setIsDragging(false)
     setIsUploading(false)
+    setIsExtractingTags(false)
   }
 
   const handleOpenCreate = () => {
@@ -197,22 +383,35 @@ export function TemplatesPage() {
     resetCreateDialog()
   }
 
-  const handleFileSelect = (file: File) => {
+  const handleFileSelect = async (file: File) => {
     if (
       file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
       file.name.endsWith(".docx")
     ) {
       setIsUploading(true)
-      // Simulate upload delay
-      setTimeout(() => {
+      setIsExtractingTags(true)
+      
+      try {
+        // Extract tags from the document
+        const tags = await extractTagsFromDocx(file)
+        
         setUploadedFile({
           name: file.name,
           size: file.size,
           type: file.type,
           lastModified: file.lastModified,
+          file: file, // Store the File object for later use
         })
+        setExtractedTags(tags)
+      } catch (error) {
+        console.error("Error processing file:", error)
+        alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
+        setUploadedFile(null)
+        setExtractedTags([])
+      } finally {
         setIsUploading(false)
-      }, 1500)
+        setIsExtractingTags(false)
+      }
     } else {
       alert("Solo se permiten archivos .docx")
     }
@@ -231,32 +430,22 @@ export function TemplatesPage() {
   }
 
   // Renamed and adjusted handleDrop logic
-  const handleDropNew = (e: React.DragEvent) => {
+  const handleDropNew = async (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
     const files = e.dataTransfer.files
     if (files.length > 0) {
       const file = files[0]
-      setUploadedFile({
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-      })
+      await handleFileSelect(file)
     }
   }
 
   // Renamed and adjusted handleFileChange logic
-  const handleFileChangeNew = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChangeNew = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (files && files.length > 0) {
       const file = files[0]
-      setUploadedFile({
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-      })
+      await handleFileSelect(file)
     }
   }
 
@@ -318,27 +507,51 @@ SECCIONES SUGERIDAS:
   const selectedProcessType = processTypes.find((pt) => pt.id === selectedProcessTypeId)
 
   const handleCreateTemplate = async () => {
-    if (!templateName || !selectedProcessTypeId || !uploadedFile) return
+    if (!templateName || !selectedProcessTypeId || !uploadedFile || !uploadedFile.file) return
 
     try {
       setIsSaving(true)
 
-      // In a real application, you would upload the file to storage here and get its URL.
-      // For this example, we'll simulate a file URL.
-      const fileUrl = `/templates/${uploadedFile.name}`
+      // Get the process type name for folder organization
+      const processType = processTypes.find((pt) => pt.id === selectedProcessTypeId)
+      if (!processType) {
+        throw new Error("Tipo de proceso no encontrado")
+      }
+
+      // Upload file to Google Drive
+      const formData = new FormData()
+      formData.append("file", uploadedFile.file)
+      formData.append("processTypeName", processType.name)
+
+      const uploadResponse = await fetch("/api/upload-template", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json()
+        throw new Error(errorData.message || "Error al subir el archivo a Google Drive")
+      }
+
+      const uploadData = await uploadResponse.json()
+
+      // Store the full Drive path (plantillas/{processTypeName}/{fileName})
+      // This is the path structure in Google Drive
+      const fileUrl = uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
 
       const newTemplate = await createTemplate({
         name: templateName,
         processTypeId: selectedProcessTypeId,
-        fileUrl: fileUrl, // This would be the actual URL from storage
+        fileUrl: fileUrl, // Store the Drive path
         description: templateDescription,
+        variables: extractedTags, // Save the extracted tags
       })
 
       setTemplates([...templates, newTemplate])
       handleCloseCreate()
     } catch (err) {
       console.error("Error creating template:", err)
-      alert("Error al crear la plantilla. Por favor, intente de nuevo.")
+      alert(err instanceof Error ? err.message : "Error al crear la plantilla. Por favor, intente de nuevo.")
     } finally {
       setIsSaving(false)
     }
@@ -349,6 +562,42 @@ SECCIONES SUGERIDAS:
 
     try {
       setIsDeleting(true)
+      
+      // Find the template to get the file URL
+      const templateToDelete = templates.find((t) => t.id === deleteId)
+      
+      // Try to delete the file from Google Drive if it exists
+      if (templateToDelete?.fileUrl) {
+        try {
+          let deleteUrl = ""
+          
+          // Check if fileUrl is a Drive path (plantillas/Proceso/archivo.docx) or a Drive URL
+          if (templateToDelete.fileUrl.includes("plantillas/")) {
+            // It's a path, use drivePath parameter
+            deleteUrl = `/api/upload-template?drivePath=${encodeURIComponent(templateToDelete.fileUrl)}`
+          } else {
+            // It's a Drive URL, extract file ID
+            const driveFileIdMatch = templateToDelete.fileUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || 
+                                     templateToDelete.fileUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/)
+            
+            if (driveFileIdMatch) {
+              const fileId = driveFileIdMatch[1]
+              deleteUrl = `/api/upload-template?fileId=${fileId}`
+            }
+          }
+          
+          if (deleteUrl) {
+            await fetch(deleteUrl, {
+              method: "DELETE",
+            })
+          }
+        } catch (driveError) {
+          // Log error but don't fail the deletion if Drive deletion fails
+          console.warn("Error deleting file from Google Drive:", driveError)
+        }
+      }
+      
+      // Delete the template from database
       await deleteTemplate(deleteId)
       setTemplates(templates.filter((t) => t.id !== deleteId))
       setDeleteId(null)
@@ -663,10 +912,12 @@ SECCIONES SUGERIDAS:
                   onDragLeave={handleDragLeave}
                   onDrop={handleDropNew} // Use the renamed drop handler
                 >
-                  {isUploading ? (
+                  {isUploading || isExtractingTags ? (
                     <div className="flex flex-col items-center gap-4">
                       <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                      <p className="text-sm text-muted-foreground">Subiendo archivo...</p>
+                      <p className="text-sm text-muted-foreground">
+                        {isExtractingTags ? "Analizando archivo y extrayendo variables..." : "Subiendo archivo..."}
+                      </p>
                     </div>
                   ) : uploadedFile ? (
                     <div className="flex flex-col items-center gap-4">
@@ -683,6 +934,7 @@ SECCIONES SUGERIDAS:
                         onClick={(e) => {
                           e.stopPropagation() // Prevent trigger from file input
                           setUploadedFile(null)
+                          setExtractedTags([])
                         }}
                       >
                         <X className="mr-2 h-4 w-4" />
@@ -713,6 +965,44 @@ SECCIONES SUGERIDAS:
                     onChange={handleFileChangeNew} // Use the renamed file change handler
                   />
                 </div>
+
+                {/* Show extracted tags */}
+                {uploadedFile && extractedTags.length > 0 && (
+                  <div className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                        <Info className="h-5 w-5 text-blue-500" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-medium">Variables Encontradas</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Se encontraron {extractedTags.length} variable{extractedTags.length !== 1 ? "s" : ""} en el documento:
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {extractedTags.map((tag) => (
+                            <Badge key={tag} variant="secondary" className="font-mono text-xs">
+                              {`{{${tag}}}`}
+                            </Badge>
+                          ))}
+                        </div>
+                        <p className="mt-3 text-xs text-muted-foreground">
+                          Estas variables se guardarán con la plantilla y podrás usarlas para generar documentos dinámicamente.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {uploadedFile && extractedTags.length === 0 && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertTitle>No se encontraron variables</AlertTitle>
+                    <AlertDescription className="text-sm">
+                      El documento no contiene variables en el formato {`{{VARIABLE_NAME}}`}. Puedes continuar, pero
+                      recuerda que las variables deben estar entre dobles llaves.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </div>
             )}
 
@@ -750,6 +1040,21 @@ SECCIONES SUGERIDAS:
                       <div>
                         <p className="text-sm text-muted-foreground">Descripción</p>
                         <p className="font-medium">{templateDescription}</p>
+                      </div>
+                    </>
+                  )}
+                  {extractedTags.length > 0 && (
+                    <>
+                      <Separator />
+                      <div>
+                        <p className="text-sm text-muted-foreground">Variables ({extractedTags.length})</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {extractedTags.map((tag) => (
+                            <Badge key={tag} variant="secondary" className="font-mono text-xs">
+                              {`{{${tag}}}`}
+                            </Badge>
+                          ))}
+                        </div>
                       </div>
                     </>
                   )}
@@ -847,60 +1152,190 @@ SECCIONES SUGERIDAS:
       </Dialog>
 
       {/* Edit Template Dialog */}
-      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
+      <Dialog open={isEditOpen} onOpenChange={(open) => !open && handleCloseEdit()}>
+        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-2xl">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Editar Plantilla</DialogTitle>
             <DialogDescription>Modifica los datos de la plantilla seleccionada.</DialogDescription>
           </DialogHeader>
-          {selectedTemplate && (
-            <div className="grid gap-6 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="edit-template-name">Nombre de la Plantilla *</Label>
-                <Input id="edit-template-name" defaultValue={selectedTemplate.name} />
-              </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor="edit-process-type">Tipo de Proceso *</Label>
-                <Select defaultValue={selectedTemplate.processTypeId}>
-                  <SelectTrigger id="edit-process-type">
-                    <SelectValue placeholder="Selecciona un tipo de proceso" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {processTypes.map((type) => (
-                      <SelectItem key={type.id} value={type.id}>
-                        {type.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid gap-2">
-                <Label>Archivo Actual</Label>
-                <div className="flex items-center gap-3 rounded-lg border p-4">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
-                    <FileText className="h-5 w-5 text-blue-500" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium">{selectedTemplate.fileUrl}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Creado: {new Date(selectedTemplate.createdAt).toLocaleDateString("es-CO")}
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm">
-                    <Upload className="mr-2 h-4 w-4" />
-                    Reemplazar
-                  </Button>
+          <div className="flex-1 overflow-y-auto py-4">
+            {selectedTemplate && (
+              <div className="space-y-6">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-template-name">Nombre de la Plantilla *</Label>
+                  <Input
+                    id="edit-template-name"
+                    value={editTemplateName}
+                    onChange={(e) => setEditTemplateName(e.target.value)}
+                  />
                 </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-process-type">Tipo de Proceso *</Label>
+                  <Select value={editProcessTypeId} onValueChange={setEditProcessTypeId}>
+                    <SelectTrigger id="edit-process-type">
+                      <SelectValue placeholder="Selecciona un tipo de proceso" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {processTypes.map((type) => (
+                        <SelectItem key={type.id} value={type.id}>
+                          {type.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Separator />
+
+                <div className="grid gap-2">
+                  <Label>Archivo</Label>
+                  {!editReplacementFile ? (
+                    <div className="rounded-lg border p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                          <FileText className="h-5 w-5 text-blue-500" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium">{selectedTemplate.fileUrl}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Creado: {new Date(selectedTemplate.createdAt).toLocaleDateString("es-CO")}
+                          </p>
+                          {selectedTemplate.variables && selectedTemplate.variables.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {selectedTemplate.variables.map((tag) => (
+                                <Badge key={tag} variant="secondary" className="font-mono text-xs">
+                                  {`{{${tag}}}`}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => editFileInputRef.current?.click()}
+                        >
+                          <Upload className="mr-2 h-4 w-4" />
+                          Reemplazar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className={`relative rounded-lg border-2 border-dashed p-6 text-center transition-colors ${
+                        isEditDragging
+                          ? "border-primary bg-primary/5"
+                          : "border-green-500 bg-green-50 dark:bg-green-950/20"
+                      }`}
+                      onDragOver={handleEditDragOver}
+                      onDragLeave={handleEditDragLeave}
+                      onDrop={handleEditDrop}
+                    >
+                      {isExtractingEditTags ? (
+                        <div className="flex flex-col items-center gap-4">
+                          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                          <p className="text-sm text-muted-foreground">Analizando archivo y extrayendo variables...</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-4">
+                          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
+                            <Check className="h-8 w-8 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{editReplacementFile.name}</p>
+                            <p className="text-sm text-muted-foreground">{formatFileSize(editReplacementFile.size)}</p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditReplacementFile(null)
+                              setEditExtractedTags(selectedTemplate.variables || [])
+                            }}
+                          >
+                            <X className="mr-2 h-4 w-4" />
+                            Cancelar reemplazo
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Input file siempre disponible, fuera del condicional */}
+                  <input
+                    ref={editFileInputRef}
+                    type="file"
+                    accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="hidden"
+                    onChange={handleEditFileChange}
+                  />
+                </div>
+
+                {/* Show extracted tags from new file or current tags */}
+                {(editReplacementFile ? editExtractedTags.length > 0 : selectedTemplate.variables && selectedTemplate.variables.length > 0) && (
+                  <div className="rounded-lg border bg-muted/30 p-4">
+                    <div className="flex items-start gap-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                        <Info className="h-5 w-5 text-blue-500" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-medium">
+                          {editReplacementFile ? "Variables del Nuevo Archivo" : "Variables Actuales"}
+                        </h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {editReplacementFile
+                            ? `Se encontraron ${editExtractedTags.length} variable${editExtractedTags.length !== 1 ? "s" : ""} en el nuevo documento:`
+                            : `Esta plantilla tiene ${selectedTemplate.variables?.length || 0} variable${(selectedTemplate.variables?.length || 0) !== 1 ? "s" : ""}:`}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {(editReplacementFile ? editExtractedTags : selectedTemplate.variables || []).map((tag) => (
+                            <Badge key={tag} variant="secondary" className="font-mono text-xs">
+                              {`{{${tag}}}`}
+                            </Badge>
+                          ))}
+                        </div>
+                        {editReplacementFile && (
+                          <p className="mt-3 text-xs text-muted-foreground">
+                            Las variables se actualizarán al guardar los cambios.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {editReplacementFile && editExtractedTags.length === 0 && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertTitle>No se encontraron variables</AlertTitle>
+                    <AlertDescription className="text-sm">
+                      El nuevo documento no contiene variables en el formato {`{{VARIABLE_NAME}}`}. Las variables
+                      existentes se eliminarán al guardar.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditOpen(false)}>
+            )}
+          </div>
+
+          <Separator />
+
+          <DialogFooter className="flex-shrink-0 pt-4">
+            <Button variant="outline" onClick={handleCloseEdit} disabled={isSavingEdit}>
               Cancelar
             </Button>
-            <Button onClick={() => setIsEditOpen(false)}>Guardar Cambios</Button>
+            <Button onClick={handleSaveEdit} disabled={isSavingEdit || !editTemplateName || !editProcessTypeId}>
+              {isSavingEdit ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar Cambios"
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
