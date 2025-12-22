@@ -25,6 +25,9 @@ export type {
   DocumentWithRelations,
 }
 
+// Export ProcessMapped type
+export type { ProcessMapped }
+
 // Client-side Template type (with camelCase fields matching the mapped return values)
 export interface Template {
   id: string
@@ -33,6 +36,27 @@ export interface Template {
   fileUrl: string
   variables?: string[]
   createdAt: string
+}
+
+// Client-side Process type (with camelCase fields matching the mapped return values from getProcessesMapped)
+export interface ProcessMapped {
+  id: string
+  code: string
+  object: string
+  description: string
+  status: "draft" | "in_progress" | "review" | "completed" | "archived"
+  entityId: string
+  entityName: string
+  secretaryId: string
+  secretaryName: string
+  processTypeId: string
+  processTypeName: string
+  createdAt: string
+  updatedAt: string
+  documentsCount: number
+  currentVersion: number
+  spreadsheetId?: string | null
+  spreadsheetUrl?: string | null
 }
 
 // Organizations
@@ -410,7 +434,7 @@ export async function getProcessesMapped(filters?: {
   entityId?: string
   status?: string
   processTypeId?: string
-}): Promise<Process[]> {
+}): Promise<ProcessMapped[]> {
   const supabase = createBrowserClient()
 
   let query = supabase
@@ -468,6 +492,8 @@ export async function getProcessesMapped(filters?: {
     updatedAt: p.updated_at?.split("T")[0] || "",
     documentsCount: documentCounts[p.id] || 0,
     currentVersion: p.current_version || 1,
+    spreadsheetId: (p as any).spreadsheet_id || null,
+    spreadsheetUrl: (p as any).spreadsheet_url || null,
   }))
 }
 

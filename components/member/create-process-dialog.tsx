@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Loader2, Scale, FileText, ChevronRight, Wand2, Sparkles } from "lucide-react"
+import { Loader2, Scale, FileText, ChevronRight } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -16,31 +16,40 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
 import {
   getProcessTypes,
   getSecretaries,
   getEntities,
   createProcess,
   generateProcessCode,
+  getProcessesMapped,
   type ProcessType,
   type Entity,
-  type Process,
+  type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+
+interface ProcessData {
+  code: string
+  object: string
+  description: string
+  entityId: string
+  secretaryId: string
+  processTypeId: string
+  status: "draft" | "in_progress" | "review" | "completed" | "archived"
+  createdBy: string
+}
 
 interface CreateProcessDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onProcessCreated?: (process: Process) => void
+  onProcessCreated?: (process: ProcessMapped) => void
+  onProcessCreatedAndReady?: (processData: ProcessData, entity: Entity | null, secretaryName: string, processTypeName: string) => void
 }
 
 interface FormData {
   secretaryId: string
   processTypeId: string
-  object: string
-  description: string
   entityId: string
 }
 
@@ -50,14 +59,11 @@ interface Secretary {
   entity_id: string
 }
 
-export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: CreateProcessDialogProps) {
+export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onProcessCreatedAndReady }: CreateProcessDialogProps) {
   const { profile } = useProfile()
-  const [step, setStep] = React.useState(1)
   const [formData, setFormData] = React.useState<FormData>({
     secretaryId: "",
     processTypeId: "",
-    object: "",
-    description: "",
     entityId: "",
   })
   const [selectedProcessType, setSelectedProcessType] = React.useState<ProcessType | null>(null)
@@ -68,10 +74,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(false)
   const [secretaries, setSecretaries] = React.useState<Secretary[]>([])
   const [isLoadingSecretaries, setIsLoadingSecretaries] = React.useState(false)
-  const [isSaving, setIsSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [improvingField, setImprovingField] = React.useState<string | null>(null)
-  const [improvedFields, setImprovedFields] = React.useState<Set<string>>(new Set())
 
   React.useEffect(() => {
     async function loadProcessTypes() {
@@ -130,96 +133,16 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
   }, [formData.entityId])
 
   const handleClose = () => {
-    setStep(1)
     setFormData({
       secretaryId: "",
       processTypeId: "",
-      object: "",
-      description: "",
       entityId: "",
     })
     setSelectedProcessType(null)
     setError(null)
-    setImprovedFields(new Set())
-    setImprovingField(null)
     onOpenChange(false)
   }
 
-  const handleAIImprove = async (fieldName: "object" | "description") => {
-    const currentValue = formData[fieldName] || ""
-    if (!currentValue.trim()) return
-
-    setImprovingField(fieldName)
-
-    try {
-      const selectedEntity = entities.find((e) => e.id === formData.entityId)
-      const selectedSecretary = secretaries.find((s) => s.id === formData.secretaryId)
-
-      // Build context message for better prompts
-      const contextInfo: string[] = []
-      if (selectedEntity?.name) {
-        contextInfo.push(`Entidad: ${selectedEntity.name}`)
-      }
-      if (selectedSecretary?.name) {
-        contextInfo.push(`Secretaría: ${selectedSecretary.name}`)
-      }
-      if (selectedProcessType?.name) {
-        contextInfo.push(`Tipo de proceso: ${selectedProcessType.name}`)
-      }
-
-      const response = await fetch("/api/improve-text", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: currentValue,
-          fieldName: fieldName,
-          fieldLabel: fieldName === "object" ? "Objeto del Proceso" : "Descripción Detallada",
-          fieldHelpText:
-            fieldName === "object"
-              ? "Describe brevemente el objeto del contrato o proceso. Debe identificar claramente el bien o servicio a contratar, su finalidad, y permitir determinar el alcance exacto de la prestación."
-              : "Proporciona detalles adicionales sobre el proceso, incluyendo alcance completo, especificaciones técnicas, actividades, entregables, condiciones de calidad, y cualquier otro elemento necesario para la correcta ejecución del contrato.",
-          entityName: selectedEntity?.name,
-          processTypeName: selectedProcessType?.name,
-          processTypeDescription: selectedProcessType?.description,
-          secretaryName: selectedSecretary?.name,
-        }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || "Failed to improve text")
-      }
-
-      const data = await response.json()
-      const improvedText = data.improvedText
-
-      setFormData((prev) => ({
-        ...prev,
-        [fieldName]: improvedText,
-      }))
-
-      setImprovedFields((prev) => new Set(prev).add(fieldName))
-    } catch (error) {
-      console.error("[Create Process Dialog] Error improving text:", error)
-      setError(error instanceof Error ? error.message : "Error al mejorar el texto. Por favor intenta de nuevo.")
-    } finally {
-      setImprovingField(null)
-    }
-  }
-
-  const handleFieldChange = (fieldName: "object" | "description", value: string) => {
-    setFormData((prev) => ({ ...prev, [fieldName]: value }))
-    // Remove from improved fields if user edits after improvement
-    if (improvedFields.has(fieldName)) {
-      setImprovedFields((prev) => {
-        const newSet = new Set(prev)
-        newSet.delete(fieldName)
-        return newSet
-      })
-    }
-  }
 
   const handleProcessTypeChange = (value: string) => {
     setFormData((prev) => ({ ...prev, processTypeId: value }))
@@ -227,47 +150,47 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
     setSelectedProcessType(processType || null)
   }
 
-  const handleContinue = () => {
-    if (step === 1 && canContinue) {
-      setStep(2)
-    }
-  }
-
-  const handleCreate = async () => {
+  const handleContinue = async () => {
     if (!profile) return
 
     try {
-      setIsSaving(true)
       setError(null)
 
+      // Generate process code (but don't create the process yet)
       const code = await generateProcessCode(formData.processTypeId)
 
-      const newProcess = await createProcess({
+      // Get entity and secretary info
+      const selectedEntity = entities.find((e) => e.id === formData.entityId) || null
+      const selectedSecretary = secretaries.find((s) => s.id === formData.secretaryId)
+      const secretaryName = selectedSecretary?.name || ""
+      const selectedProcessType = processTypes.find((pt) => pt.id === formData.processTypeId)
+
+      // Prepare process data (not created yet)
+      const processData = {
         code,
-        object: formData.object,
-        description: formData.description,
+        object: "", // Empty object as per requirements
+        description: "", // Empty description as per requirements
         entityId: formData.entityId,
         secretaryId: formData.secretaryId,
         processTypeId: formData.processTypeId,
-        status: "draft",
+        status: "draft" as const,
         createdBy: profile.id,
-      })
+      }
 
-      if (onProcessCreated) {
-        onProcessCreated(newProcess)
+      // Call the callback to open generate documents dialog with process data
+      if (onProcessCreatedAndReady) {
+        onProcessCreatedAndReady(processData, selectedEntity, secretaryName, selectedProcessType?.name || "")
       }
 
       handleClose()
     } catch (err) {
-      console.error("Error creating process:", err)
-      setError("Error al crear el proceso. Por favor intente de nuevo.")
-    } finally {
-      setIsSaving(false)
+      console.error("Error preparing process:", err)
+      setError("Error al preparar el proceso. Por favor intente de nuevo.")
     }
   }
 
   const canContinue = formData.entityId && formData.entityId !== "placeholder" && formData.secretaryId && formData.processTypeId && selectedProcessType
-  const canCreate = formData.object.trim().length > 0
+  const canCreate = true // No longer need object/description validation
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -278,31 +201,14 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
             Crear Nuevo Proceso
           </DialogTitle>
           <DialogDescription>
-            {step === 1
-              ? "Selecciona la secretaría y el tipo de proceso para comenzar"
-              : "Completa la información del proceso"}
+            Selecciona la entidad, secretaría y el tipo de proceso para crear el proceso
           </DialogDescription>
         </DialogHeader>
-
-        <div className="flex items-center gap-2 py-2">
-          <div
-            className={`flex h-8 w-8 items-center justify-center rounded-full ${step >= 1 ? "bg-primary text-primary-foreground" : "bg-muted"}`}
-          >
-            1
-          </div>
-          <div className={`h-1 flex-1 rounded ${step >= 2 ? "bg-primary" : "bg-muted"}`} />
-          <div
-            className={`flex h-8 w-8 items-center justify-center rounded-full ${step >= 2 ? "bg-primary text-primary-foreground" : "bg-muted"}`}
-          >
-            2
-          </div>
-        </div>
 
         {error && <div className="bg-destructive/10 text-destructive px-4 py-2 rounded-md text-sm">{error}</div>}
 
         <div className="flex-1 overflow-y-auto pr-4 -mr-4">
-          {step === 1 ? (
-            <div className="space-y-6 py-4">
+          <div className="space-y-6 py-4">
               <div className="space-y-2">
                 <Label htmlFor="entity">Entidad</Label>
                 <Select
@@ -398,182 +304,18 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated }: Cr
                   </CardContent>
                 </Card>
               )}
-            </div>
-          ) : (
-            <div className="space-y-6 py-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="object">Objeto del Proceso *</Label>
-                    {improvedFields.has("object") && (
-                      <Badge
-                        variant="secondary"
-                        className="h-5 gap-1 text-xs bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        Mejorado
-                      </Badge>
-                    )}
-                  </div>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className={cn(
-                            "h-7 gap-1.5 text-xs transition-all",
-                            formData.object.trim().length > 0 && !improvedFields.has("object")
-                              ? "text-primary hover:text-primary hover:bg-primary/10"
-                              : "text-muted-foreground",
-                          )}
-                          disabled={!formData.object.trim() || improvingField === "object"}
-                          onClick={() => handleAIImprove("object")}
-                        >
-                          {improvingField === "object" ? (
-                            <>
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Mejorando...
-                            </>
-                          ) : (
-                            <>
-                              <Wand2 className="h-3 w-3" />
-                              Mejorar con IA
-                            </>
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="left">
-                        <p className="text-xs">La IA mejorará la redacción jurídica de este campo</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-                <Textarea
-                  id="object"
-                  placeholder="Ej: Adquisición de equipos de cómputo para la Secretaría de Hacienda"
-                  value={formData.object}
-                  onChange={(e) => handleFieldChange("object", e.target.value)}
-                  className={cn(
-                    "min-h-[80px] transition-all",
-                    improvedFields.has("object") && "border-emerald-500/30 bg-emerald-500/5",
-                  )}
-                />
-                <p className="text-xs text-muted-foreground">Describe brevemente el objeto del contrato o proceso</p>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="description">Descripción Detallada</Label>
-                    {improvedFields.has("description") && (
-                      <Badge
-                        variant="secondary"
-                        className="h-5 gap-1 text-xs bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        Mejorado
-                      </Badge>
-                    )}
-                  </div>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className={cn(
-                            "h-7 gap-1.5 text-xs transition-all",
-                            formData.description.trim().length > 0 && !improvedFields.has("description")
-                              ? "text-primary hover:text-primary hover:bg-primary/10"
-                              : "text-muted-foreground",
-                          )}
-                          disabled={!formData.description.trim() || improvingField === "description"}
-                          onClick={() => handleAIImprove("description")}
-                        >
-                          {improvingField === "description" ? (
-                            <>
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Mejorando...
-                            </>
-                          ) : (
-                            <>
-                              <Wand2 className="h-3 w-3" />
-                              Mejorar con IA
-                            </>
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="left">
-                        <p className="text-xs">La IA mejorará la redacción jurídica de este campo</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-                <Textarea
-                  id="description"
-                  placeholder="Proporciona detalles adicionales sobre el proceso, alcance, especificaciones técnicas, etc."
-                  value={formData.description}
-                  onChange={(e) => handleFieldChange("description", e.target.value)}
-                  className={cn(
-                    "min-h-[120px] transition-all",
-                    improvedFields.has("description") && "border-emerald-500/30 bg-emerald-500/5",
-                  )}
-                />
-              </div>
-
-              <Card className="bg-muted/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Resumen del Proceso</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Tipo:</span>
-                    <span className="font-medium">{selectedProcessType?.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Estado inicial:</span>
-                    <Badge variant="secondary">Borrador</Badge>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+          </div>
         </div>
 
         <DialogFooter className="border-t pt-4">
-          {step === 1 ? (
-            <>
-              <Button variant="outline" onClick={handleClose}>
-                Cancelar
-              </Button>
-              <Button onClick={handleContinue} disabled={!canContinue} className="gap-2">
-                Continuar
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outline" onClick={() => setStep(1)} disabled={isSaving}>
-                Atrás
-              </Button>
-              <Button onClick={handleCreate} disabled={!canCreate || isSaving} className="gap-2">
-                {isSaving ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Creando...
-                  </>
-                ) : (
-                  <>
-                    <FileText className="h-4 w-4" />
-                    Crear Proceso
-                  </>
-                )}
-              </Button>
-            </>
-          )}
+          <Button variant="outline" onClick={handleClose}>
+            Cancelar
+          </Button>
+          <Button onClick={handleContinue} disabled={!canCreate} className="gap-2">
+            <FileText className="h-4 w-4" />
+            Continuar
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

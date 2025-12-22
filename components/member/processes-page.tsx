@@ -19,6 +19,7 @@ import {
   Search,
   X,
   Loader2,
+  ExternalLink,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -44,7 +45,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import type { Process } from "@/lib/mock-data"
 import {
   getProcessTypes,
   getEntities,
@@ -52,24 +52,27 @@ import {
   deleteProcess as deleteProcessDB,
   type ProcessType,
   type Entity,
+  type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "./create-process-dialog"
+import { GenerateDocumentsDialog } from "./generate-documents-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
 export function ProcessesPage() {
-  const [processes, setProcesses] = React.useState<Process[]>([])
+  const [processes, setProcesses] = React.useState<ProcessMapped[]>([])
   const [isLoadingProcesses, setIsLoadingProcesses] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<ProcessStatus>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
   const [processTypeFilter, setProcessTypeFilter] = React.useState<string>("all")
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
-  const [selectedProcess, setSelectedProcess] = React.useState<Process | null>(null)
+  const [selectedProcess, setSelectedProcess] = React.useState<ProcessMapped | null>(null)
   const [isViewDialogOpen, setIsViewDialogOpen] = React.useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
+  const [isGenerateDocumentsDialogOpen, setIsGenerateDocumentsDialogOpen] = React.useState(false)
 
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
@@ -126,8 +129,39 @@ export function ProcessesPage() {
     loadEntities()
   }, [profile?.organization_id])
 
-  const handleProcessCreated = (newProcess: Process) => {
+  const handleProcessCreated = (newProcess: ProcessMapped) => {
     setProcesses((prev) => [newProcess, ...prev])
+  }
+
+  const [processDataToCreate, setProcessDataToCreate] = React.useState<{
+    processData: any
+    entity: Entity | null
+    secretaryName: string
+    processTypeName: string
+  } | null>(null)
+
+  const handleProcessCreatedAndReady = (processData: any, entity: Entity | null, secretaryName: string, processTypeName: string) => {
+    // Store the process data to create later
+    setProcessDataToCreate({
+      processData,
+      entity,
+      secretaryName,
+      processTypeName,
+    })
+    
+    // Ensure the entity is in the entities list if it's not already there
+    if (entity && !entities.find((e) => e.id === entity.id)) {
+      setEntities((prev) => [...prev, entity])
+    }
+    
+    // Open the generate documents dialog (process will be created at the end)
+    setIsGenerateDocumentsDialogOpen(true)
+  }
+
+  const handleProcessCreatedFromDialog = (newProcess: ProcessMapped) => {
+    // Add the new process to the list
+    setProcesses((prev) => [newProcess, ...prev])
+    setProcessDataToCreate(null)
   }
 
   const handleDeleteProcess = async () => {
@@ -150,8 +184,8 @@ export function ProcessesPage() {
     const matchesSearch =
       searchQuery === "" ||
       process.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      process.object.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      process.entityName.toLowerCase().includes(searchQuery.toLowerCase())
+      process.entityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      process.secretaryName?.toLowerCase().includes(searchQuery.toLowerCase())
 
     const matchesStatus = statusFilter === "all" || process.status === statusFilter
     const matchesEntity = entityFilter === "all" || process.entityId === entityFilter
@@ -183,8 +217,7 @@ export function ProcessesPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Mis Procesos"
-        description="Gestiona y monitorea todos tus procesos de contratación"
-        badge={{ text: `${processes.length} procesos`, variant: "secondary" }}
+        description={`Gestiona y monitorea todos tus procesos de contratación (${processes.length} procesos)`}
       >
         <Button className="gap-2" onClick={() => setIsCreateDialogOpen(true)}>
           <Plus className="h-4 w-4" />
@@ -222,7 +255,7 @@ export function ProcessesPage() {
             <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Buscar por código, objeto o entidad..."
+                placeholder="Buscar por código, entidad o secretaría..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
@@ -303,8 +336,8 @@ export function ProcessesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[120px]">Código</TableHead>
-                  <TableHead>Objeto</TableHead>
                   <TableHead>Entidad</TableHead>
+                  <TableHead>Secretaría</TableHead>
                   <TableHead>Tipo</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-center">Docs</TableHead>
@@ -315,7 +348,7 @@ export function ProcessesPage() {
               <TableBody>
                 {filteredProcesses.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="h-24 text-center">
+                    <TableCell colSpan={7} className="h-24 text-center">
                       <div className="flex flex-col items-center gap-2">
                         <FolderKanban className="h-8 w-8 text-muted-foreground" />
                         <p className="text-muted-foreground">No se encontraron procesos</p>
@@ -332,15 +365,12 @@ export function ProcessesPage() {
                     <TableRow key={process.id}>
                       <TableCell className="font-mono text-sm font-medium">{process.code}</TableCell>
                       <TableCell>
-                        <div className="max-w-[300px]">
-                          <p className="truncate font-medium">{process.object}</p>
-                          <p className="truncate text-xs text-muted-foreground">{process.secretaryName}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
                         <Badge variant="outline" className="font-normal">
                           {process.entityName}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm">{process.secretaryName}</span>
                       </TableCell>
                       <TableCell>
                         <span className="text-sm">{process.processTypeName}</span>
@@ -369,10 +399,27 @@ export function ProcessesPage() {
                               <Eye className="mr-2 h-4 w-4" />
                               Ver detalles
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setSelectedProcess(process)
+                                setIsGenerateDocumentsDialogOpen(true)
+                              }}
+                            >
+                              <FileText className="mr-2 h-4 w-4" />
+                              Generar Documentos
+                            </DropdownMenuItem>
                             <DropdownMenuItem>
                               <Pencil className="mr-2 h-4 w-4" />
                               Editar
                             </DropdownMenuItem>
+                            {process.spreadsheetUrl && (
+                              <DropdownMenuItem
+                                onClick={() => window.open(process.spreadsheetUrl!, "_blank")}
+                              >
+                                <ExternalLink className="mr-2 h-4 w-4" />
+                                Ver en Google Sheets
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem>
                               <Download className="mr-2 h-4 w-4" />
                               Exportar
@@ -409,7 +456,34 @@ export function ProcessesPage() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onProcessCreated={handleProcessCreated}
+        onProcessCreatedAndReady={handleProcessCreatedAndReady}
       />
+
+      {/* Generate Documents Dialog */}
+      {(selectedProcess || processDataToCreate) && (
+        <GenerateDocumentsDialog
+          open={isGenerateDocumentsDialogOpen}
+          onOpenChange={(open) => {
+            setIsGenerateDocumentsDialogOpen(open)
+            if (!open) {
+              // Clear process data when closing
+              setProcessDataToCreate(null)
+              if (!isCreateDialogOpen) {
+                setSelectedProcess(null)
+              }
+            }
+          }}
+          process={selectedProcess}
+          processData={processDataToCreate?.processData || null}
+          entity={selectedProcess 
+            ? entities.find((e) => e.id === selectedProcess.entityId) || null
+            : processDataToCreate?.entity || null}
+          secretaryName={selectedProcess?.secretaryName || processDataToCreate?.secretaryName || ""}
+          processTypeName={processDataToCreate?.processTypeName}
+          onProcessCreated={handleProcessCreatedFromDialog}
+          onDocumentsGenerated={loadProcesses}
+        />
+      )}
 
       {/* View Process Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>

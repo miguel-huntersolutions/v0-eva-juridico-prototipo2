@@ -252,6 +252,138 @@ export async function findFileByPath(drivePath: string): Promise<string | null> 
 }
 
 /**
+ * Download a file from Google Drive by file ID
+ * @param fileId - The Google Drive file ID
+ * @returns Promise resolving to the file buffer
+ */
+export async function downloadFileFromDrive(fileId: string): Promise<Buffer> {
+  const drive = getDriveClient()
+  const driveId = process.env.GOOGLE_DRIVE_ID
+  const supportsAllDrives = !!driveId
+
+  try {
+    const getOptions: {
+      fileId: string
+      alt: string
+      supportsAllDrives?: boolean
+    } = {
+      fileId,
+      alt: "media",
+    }
+
+    if (supportsAllDrives) {
+      getOptions.supportsAllDrives = true
+    }
+
+    const response = await drive.files.get(getOptions, {
+      responseType: "arraybuffer",
+    })
+
+    return Buffer.from(response.data as ArrayBuffer)
+  } catch (error) {
+    console.error("Error downloading file from Drive:", error)
+    throw new Error(`Failed to download file from Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
+  }
+}
+
+/**
+ * Upload a generated document to Google Drive in the process folder structure
+ * @param fileBuffer - The file buffer to upload
+ * @param fileName - The name of the file
+ * @param mimeType - The MIME type of the file
+ * @param processCode - The process code (used for folder organization)
+ * @returns The file ID, web view link, direct link, and full path
+ */
+export async function uploadDocumentToDrive(
+  fileBuffer: Buffer,
+  fileName: string,
+  mimeType: string,
+  processCode: string,
+): Promise<{ 
+  fileId: string
+  webViewLink: string
+  directLink: string
+  drivePath: string
+}> {
+  const drive = getDriveClient()
+
+  try {
+    // Get or create the folder structure: plantillas/{processCode}
+    const plantillasFolderId = await getOrCreateFolder("plantillas")
+    const processFolderId = await getOrCreateFolder(processCode, plantillasFolderId)
+
+    // Convert Buffer to Stream for Google Drive API
+    const bufferStream = Readable.from(fileBuffer)
+
+    // Upload the file
+    const fileMetadata = {
+      name: fileName,
+      parents: [processFolderId],
+    }
+
+    const media = {
+      mimeType,
+      body: bufferStream,
+    }
+
+    // Check if using Shared Drive
+    const driveId = process.env.GOOGLE_DRIVE_ID
+    const supportsAllDrives = !!driveId
+
+    const createOptions: {
+      requestBody: typeof fileMetadata
+      media: typeof media
+      fields: string
+      supportsAllDrives?: boolean
+      driveId?: string
+    } = {
+      requestBody: fileMetadata,
+      media,
+      fields: "id, name, webViewLink, webContentLink",
+    }
+
+    if (supportsAllDrives && driveId) {
+      createOptions.supportsAllDrives = true
+      createOptions.driveId = driveId
+      ;(fileMetadata as any).driveId = driveId
+    }
+
+    const response = await drive.files.create(createOptions)
+
+    if (!response.data.id) {
+      throw new Error("Failed to upload file: No file ID returned")
+    }
+
+    // Make the file publicly viewable (only if not using Shared Drive)
+    if (!driveId) {
+      await drive.permissions.create({
+        fileId: response.data.id,
+        requestBody: {
+          role: "reader",
+          type: "anyone",
+        },
+      })
+    }
+
+    // Get the direct download link
+    const directLink = `https://drive.google.com/uc?export=download&id=${response.data.id}`
+    
+    // Build the full path in Drive
+    const drivePath = `plantillas/${processCode}/${fileName}`
+
+    return {
+      fileId: response.data.id,
+      webViewLink: response.data.webViewLink || `https://drive.google.com/file/d/${response.data.id}/view`,
+      directLink,
+      drivePath,
+    }
+  } catch (error) {
+    console.error("Error uploading document to Google Drive:", error)
+    throw new Error(`Failed to upload document to Google Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
+  }
+}
+
+/**
  * Delete a file from Google Drive
  * @param fileId - The Google Drive file ID
  */
