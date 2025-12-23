@@ -2,7 +2,6 @@
  * Workflow runner for OpenAI Agents SDK
  * This file contains the workflow logic for EVA Jurídico Assistant
  * Generated from OpenAI Agent Builder and adapted for conversation history
- * 
  */
 
 import { tool, fileSearchTool, Agent, AgentInputItem, Runner, withTrace } from "@openai/agents"
