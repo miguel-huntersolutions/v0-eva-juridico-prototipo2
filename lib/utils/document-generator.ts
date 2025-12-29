@@ -73,12 +73,9 @@ export async function replaceTagsInDocx(
       },
     })
     
-    // Set the data to replace
+    // Render the document with replacements (new API - pass data directly to render)
     // The keys should match the tag names without {{}}
-    doc.setData(replacements)
-    
-    // Render the document (replace all occurrences)
-    doc.render()
+    doc.render(replacements)
     
     // Get the document as a buffer
     const buf = doc.getZip().generate({

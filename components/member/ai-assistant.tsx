@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
-import { mockChatMessages, type ChatMessage } from "@/lib/mock-data"
+import { mockChatConversations, type ChatMessage } from "@/lib/mock-data"
 
 interface AIAssistantProps {
   open: boolean
@@ -15,7 +15,9 @@ interface AIAssistantProps {
 }
 
 export function AIAssistant({ open, onOpenChange }: AIAssistantProps) {
-  const [messages, setMessages] = React.useState<ChatMessage[]>(mockChatMessages)
+  // Initialize with empty messages or messages from first conversation
+  const initialMessages: ChatMessage[] = mockChatConversations[0]?.messages || []
+  const [messages, setMessages] = React.useState<ChatMessage[]>(initialMessages)
   const [input, setInput] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(false)
   const scrollRef = React.useRef<HTMLDivElement>(null)

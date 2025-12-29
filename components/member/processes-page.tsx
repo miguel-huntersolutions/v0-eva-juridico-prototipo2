@@ -408,10 +408,6 @@ export function ProcessesPage() {
                               <FileText className="mr-2 h-4 w-4" />
                               Generar Documentos
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Editar
-                            </DropdownMenuItem>
                             {process.spreadsheetUrl && (
                               <DropdownMenuItem
                                 onClick={() => window.open(process.spreadsheetUrl!, "_blank")}
@@ -420,10 +416,14 @@ export function ProcessesPage() {
                                 Ver en Google Sheets
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem>
-                              <Download className="mr-2 h-4 w-4" />
-                              Exportar
-                            </DropdownMenuItem>
+                            {process.driveFolderUrl && (
+                              <DropdownMenuItem
+                                onClick={() => window.open(process.driveFolderUrl!, "_blank")}
+                              >
+                                <FolderKanban className="mr-2 h-4 w-4" />
+                                Ver Carpeta en Drive
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem>
                               <Archive className="mr-2 h-4 w-4" />

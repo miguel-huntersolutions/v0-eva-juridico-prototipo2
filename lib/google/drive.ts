@@ -1,24 +1,15 @@
 /**
  * Google Drive integration for file storage
+ * Uses OAuth2 authentication instead of Service Account
  */
 
 import { google } from "googleapis"
 import { Readable } from "stream"
+import { getAuthenticatedOAuth2Client } from "./oauth"
 
-// Initialize Google Drive API
-export function getDriveClient() {
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-      project_id: process.env.GOOGLE_PROJECT_ID,
-    },
-    scopes: [
-      "https://www.googleapis.com/auth/drive.file",
-      "https://www.googleapis.com/auth/drive",
-    ],
-  })
-
+// Initialize Google Drive API with OAuth2
+export async function getDriveClient(userId: string) {
+  const auth = await getAuthenticatedOAuth2Client(userId)
   return google.drive({ version: "v3", auth })
 }
 
@@ -30,35 +21,95 @@ export function getDriveClient() {
  * @returns The folder ID
  */
 export async function getOrCreateFolder(
+  userId: string,
   folderName: string,
   parentFolderId?: string,
   supportsAllDrives: boolean = true,
 ): Promise<string> {
-  const drive = getDriveClient()
-  const targetParentId = parentFolderId || process.env.GOOGLE_DRIVE_FOLDER_ID
-
-  if (!targetParentId) {
-    throw new Error("GOOGLE_DRIVE_FOLDER_ID environment variable is not set")
+  // Check cache first to avoid duplicate creation during parallel requests
+  const cacheKey = `folder:${userId}:${folderName}:${parentFolderId || "root"}`
+  const { getCached, setCached, getLock, setLock } = await import("./cache")
+  const cached = getCached(cacheKey)
+  if (cached) {
+    console.log(`[getOrCreateFolder] Using cached folder ID: ${cached}`)
+    return cached
   }
 
-  try {
+  // Check if there's a lock (another request is creating this folder)
+  const existingLock = getLock(cacheKey)
+  if (existingLock) {
+    console.log(`[getOrCreateFolder] Waiting for existing creation: ${cacheKey}`)
+    return existingLock
+  }
+
+  // Create a promise for this creation and lock it
+  const creationPromise = (async () => {
+    const drive = await getDriveClient(userId)
+    
+    // With OAuth2, each user has their own Drive
+    // Use "root" as default parent (user's Drive root)
+    // Only use GOOGLE_DRIVE_FOLDER_ID if explicitly passed as parentFolderId
+    // This avoids issues when GOOGLE_DRIVE_FOLDER_ID is not accessible
+    let targetParentId = parentFolderId || "root"
+    const originalTargetParentId = targetParentId
+    
+    // Determine if we're using a Shared Drive
+    const driveId = process.env.GOOGLE_DRIVE_ID
+    const isSharedDrive = !!(driveId && supportsAllDrives)
+
+    try {
     // Escape single quotes in folder name for query
     const escapedFolderName = folderName.replace(/'/g, "\\'")
     
-    // Search for existing folder
-    const query = `name='${escapedFolderName}' and mimeType='application/vnd.google-apps.folder' and '${targetParentId}' in parents and trashed=false`
+    // Search for existing folder - be more specific to avoid duplicates
+    // Always include parent filter to ensure we find the correct folder
+    let query: string
+    if (targetParentId === "root") {
+      query = `name='${escapedFolderName}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`
+    } else {
+      query = `name='${escapedFolderName}' and mimeType='application/vnd.google-apps.folder' and '${targetParentId}' in parents and trashed=false`
+    }
     
-    const searchResponse = await drive.files.list({
+    // Add additional filter to ensure we only get folders (not files with same name)
+    query += ` and mimeType='application/vnd.google-apps.folder'`
+    
+    const searchOptions: {
+      q: string
+      fields: string
+      spaces: string
+      supportsAllDrives?: boolean
+      includeItemsFromAllDrives?: boolean
+      driveId?: string
+      corpora?: string
+      pageSize: number
+    } = {
       q: query,
       fields: "files(id, name)",
       spaces: "drive",
-      supportsAllDrives,
-      includeItemsFromAllDrives: supportsAllDrives,
-    })
+      pageSize: 10, // Limit results to avoid duplicates
+    }
+    
+    if (isSharedDrive) {
+      searchOptions.supportsAllDrives = true
+      searchOptions.includeItemsFromAllDrives = true
+      if (driveId) {
+        searchOptions.driveId = driveId
+        searchOptions.corpora = "drive"
+      }
+    }
+    
+    const searchResponse = await drive.files.list(searchOptions)
 
-    // If folder exists, return its ID
+    // If folder exists, return its ID (take the first one if multiple exist)
     if (searchResponse.data.files && searchResponse.data.files.length > 0) {
-      return searchResponse.data.files[0].id!
+      const folderId = searchResponse.data.files[0].id!
+      // If multiple folders found, log a warning but use the first one
+      if (searchResponse.data.files.length > 1) {
+        console.warn(`[getOrCreateFolder] Multiple folders found with name "${folderName}", using first one: ${folderId}`)
+      }
+      // Cache the result
+      setCached(cacheKey, folderId)
+      return folderId
     }
 
     // Create folder if it doesn't exist
@@ -70,30 +121,69 @@ export async function getOrCreateFolder(
     } = {
       name: folderName,
       mimeType: "application/vnd.google-apps.folder",
-      parents: [targetParentId],
+      parents: targetParentId === "root" ? [] : [targetParentId], // Empty array for root
     }
 
-    // If using Shared Drive, add driveId
-    const driveId = process.env.GOOGLE_DRIVE_ID
-    if (driveId && supportsAllDrives) {
+    // Only add driveId if we're actually using a Shared Drive
+    // Don't add it for regular user Drive (root)
+    if (isSharedDrive && targetParentId !== "root") {
       folderMetadata.driveId = driveId
     }
 
     const createResponse = await drive.files.create({
       requestBody: folderMetadata,
       fields: "id, name",
-      supportsAllDrives,
+      supportsAllDrives: isSharedDrive, // Only use supportsAllDrives if we have a Shared Drive
     })
 
     if (!createResponse.data.id) {
       throw new Error("Failed to create folder: No folder ID returned")
     }
 
-    return createResponse.data.id
+    const folderId = createResponse.data.id
+    // Cache the result
+    setCached(cacheKey, folderId)
+    return folderId
   } catch (error) {
     console.error("Error getting/creating folder:", error)
+    
+    // If error is about folder not found and we're using GOOGLE_DRIVE_FOLDER_ID, try with root instead
+    // But we need to use a different cacheKey for the root attempt
+    if (originalTargetParentId !== "root" && originalTargetParentId === process.env.GOOGLE_DRIVE_FOLDER_ID) {
+      console.log(`[getOrCreateFolder] Folder ${originalTargetParentId} not accessible, trying with root instead`)
+      // Clear the current lock and try with root using a different cache key
+      const rootCacheKey = `folder:${userId}:${folderName}:root`
+      const rootCached = getCached(rootCacheKey)
+      if (rootCached) {
+        console.log(`[getOrCreateFolder] Using cached root folder ID: ${rootCached}`)
+        // Also cache it with the original key for consistency
+        setCached(cacheKey, rootCached)
+        return rootCached
+      }
+      // Try to get the root lock
+      const rootLock = getLock(rootCacheKey)
+      if (rootLock) {
+        console.log(`[getOrCreateFolder] Waiting for root folder creation: ${rootCacheKey}`)
+        const result = await rootLock
+        // Cache it with the original key too
+        setCached(cacheKey, result)
+        return result
+      }
+      // Recursively call with root, which will create a new lock
+      const result = await getOrCreateFolder(userId, folderName, "root", supportsAllDrives)
+      // Cache it with the original key too
+      setCached(cacheKey, result)
+      return result
+    }
+    
     throw new Error(`Failed to get or create folder: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
+  })()
+
+  // Set the lock
+  setLock(cacheKey, creationPromise)
+  
+  return creationPromise
 }
 
 /**
@@ -101,12 +191,12 @@ export async function getOrCreateFolder(
  * @param processTypeName - Name of the process type
  * @returns The process type folder ID
  */
-export async function getOrCreateProcessTypeFolder(processTypeName: string): Promise<string> {
+export async function getOrCreateProcessTypeFolder(userId: string, processTypeName: string): Promise<string> {
   // First, get or create the "plantillas" folder
-  const plantillasFolderId = await getOrCreateFolder("plantillas")
+  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
   
   // Then, get or create the process type folder inside "plantillas"
-  const processTypeFolderId = await getOrCreateFolder(processTypeName, plantillasFolderId)
+  const processTypeFolderId = await getOrCreateFolder(userId, processTypeName, plantillasFolderId)
   
   return processTypeFolderId
 }
@@ -120,6 +210,7 @@ export async function getOrCreateProcessTypeFolder(processTypeName: string): Pro
  * @returns The file ID, web view link, direct link, and full path
  */
 export async function uploadFileToDrive(
+  userId: string,
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
@@ -130,11 +221,11 @@ export async function uploadFileToDrive(
   directLink: string
   drivePath: string
 }> {
-  const drive = getDriveClient()
+  const drive = await getDriveClient(userId)
 
   try {
     // Get or create the folder structure: plantillas/{processTypeName}
-    const processTypeFolderId = await getOrCreateProcessTypeFolder(processTypeName)
+    const processTypeFolderId = await getOrCreateProcessTypeFolder(userId, processTypeName)
 
     // Upload the file
     const fileMetadata = {
@@ -179,17 +270,28 @@ export async function uploadFileToDrive(
       throw new Error("Failed to upload file: No file ID returned")
     }
 
-    // Make the file publicly viewable (optional, adjust based on your needs)
+    // Make the file accessible to anyone with the link
+    // This allows any authenticated user to access the file using the fileId
     // Note: For Shared Drives, permissions work differently
     if (!driveId) {
       // Only set public permissions if not using Shared Drive
-      await drive.permissions.create({
-        fileId: response.data.id,
-        requestBody: {
-          role: "reader",
-          type: "anyone",
-        },
-      })
+      try {
+        await drive.permissions.create({
+          fileId: response.data.id,
+          requestBody: {
+            role: "reader",
+            type: "anyone",
+          },
+        })
+        console.log(`[uploadFileToDrive] File ${response.data.id} made publicly accessible`)
+      } catch (permError) {
+        console.warn(`[uploadFileToDrive] Failed to set public permissions, but file was uploaded:`, permError)
+        // Don't fail the upload if permissions fail
+      }
+    } else {
+      // For Shared Drives, ensure the file is accessible to organization members
+      // The file should already be accessible if the user has proper permissions in the Shared Drive
+      console.log(`[uploadFileToDrive] File ${response.data.id} uploaded to Shared Drive`)
     }
 
     // Get the direct download link
@@ -215,8 +317,8 @@ export async function uploadFileToDrive(
  * @param drivePath - The path to the file in Drive
  * @returns The file ID if found, null otherwise
  */
-export async function findFileByPath(drivePath: string): Promise<string | null> {
-  const drive = getDriveClient()
+export async function findFileByPath(userId: string, drivePath: string): Promise<string | null> {
+  const drive = await getDriveClient(userId)
   
   try {
     // Parse the path: plantillas/{processTypeName}/{fileName}
@@ -229,7 +331,7 @@ export async function findFileByPath(drivePath: string): Promise<string | null> 
     const fileName = pathParts[2]
 
     // Get the process type folder
-    const processTypeFolderId = await getOrCreateProcessTypeFolder(processTypeName)
+    const processTypeFolderId = await getOrCreateProcessTypeFolder(userId, processTypeName)
 
     // Search for the file in that folder
     const query = `name='${fileName}' and '${processTypeFolderId}' in parents and trashed=false`
@@ -256,8 +358,8 @@ export async function findFileByPath(drivePath: string): Promise<string | null> 
  * @param fileId - The Google Drive file ID
  * @returns Promise resolving to the file buffer
  */
-export async function downloadFileFromDrive(fileId: string): Promise<Buffer> {
-  const drive = getDriveClient()
+export async function downloadFileFromDrive(userId: string, fileId: string): Promise<Buffer> {
+  const drive = await getDriveClient(userId)
   const driveId = process.env.GOOGLE_DRIVE_ID
   const supportsAllDrives = !!driveId
 
@@ -295,6 +397,7 @@ export async function downloadFileFromDrive(fileId: string): Promise<Buffer> {
  * @returns The file ID, web view link, direct link, and full path
  */
 export async function uploadDocumentToDrive(
+  userId: string,
   fileBuffer: Buffer,
   fileName: string,
   mimeType: string,
@@ -304,13 +407,15 @@ export async function uploadDocumentToDrive(
   webViewLink: string
   directLink: string
   drivePath: string
+  processFolderId: string
+  processFolderUrl: string
 }> {
-  const drive = getDriveClient()
+  const drive = await getDriveClient(userId)
 
   try {
     // Get or create the folder structure: plantillas/{processCode}
-    const plantillasFolderId = await getOrCreateFolder("plantillas")
-    const processFolderId = await getOrCreateFolder(processCode, plantillasFolderId)
+    const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
+    const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId)
 
     // Convert Buffer to Stream for Google Drive API
     const bufferStream = Readable.from(fileBuffer)
@@ -370,12 +475,17 @@ export async function uploadDocumentToDrive(
     
     // Build the full path in Drive
     const drivePath = `plantillas/${processCode}/${fileName}`
+    
+    // Build the folder URL
+    const processFolderUrl = `https://drive.google.com/drive/folders/${processFolderId}`
 
     return {
       fileId: response.data.id,
       webViewLink: response.data.webViewLink || `https://drive.google.com/file/d/${response.data.id}/view`,
       directLink,
       drivePath,
+      processFolderId,
+      processFolderUrl,
     }
   } catch (error) {
     console.error("Error uploading document to Google Drive:", error)
@@ -387,8 +497,8 @@ export async function uploadDocumentToDrive(
  * Delete a file from Google Drive
  * @param fileId - The Google Drive file ID
  */
-export async function deleteFileFromDrive(fileId: string): Promise<void> {
-  const drive = getDriveClient()
+export async function deleteFileFromDrive(userId: string, fileId: string): Promise<void> {
+  const drive = await getDriveClient(userId)
   const driveId = process.env.GOOGLE_DRIVE_ID
   const supportsAllDrives = !!driveId
 
@@ -421,6 +531,7 @@ export async function deleteFileFromDrive(fileId: string): Promise<void> {
  * @param processTypeName - Name of the process type (for folder organization)
  */
 export async function updateFileInDrive(
+  userId: string,
   fileId: string,
   fileBuffer: Buffer,
   mimeType: string,
@@ -432,13 +543,13 @@ export async function updateFileInDrive(
   directLink: string
   drivePath: string
 }> {
-  const drive = getDriveClient()
+  const drive = await getDriveClient(userId)
   const driveId = process.env.GOOGLE_DRIVE_ID
   const supportsAllDrives = !!driveId
 
   try {
     // Get or create the folder structure: plantillas/{processTypeName}
-    const processTypeFolderId = await getOrCreateProcessTypeFolder(processTypeName)
+    const processTypeFolderId = await getOrCreateProcessTypeFolder(userId, processTypeName)
 
     // Get current file to check if we need to move it
     const getOptions: {

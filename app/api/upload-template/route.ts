@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { uploadFileToDrive, updateFileInDrive, deleteFileFromDrive, findFileByPath } from "@/lib/google/drive"
+import { createServerClient } from "@/lib/supabase/server"
+import { hasValidTokens } from "@/lib/google/oauth"
 
 /**
  * POST /api/upload-template
@@ -7,6 +9,25 @@ import { uploadFileToDrive, updateFileInDrive, deleteFileFromDrive, findFileByPa
  */
 export async function POST(request: NextRequest) {
   try {
+    // Get authenticated user
+    const supabase = await createServerClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Check if user has valid Google OAuth tokens
+    const hasTokens = await hasValidTokens(user.id)
+    if (!hasTokens) {
+      return NextResponse.json(
+        { error: "Google authentication required", needsAuth: true },
+        { status: 401 },
+      )
+    }
+
     const formData = await request.formData()
     const file = formData.get("file") as File
     const fileId = formData.get("fileId") as string | null // For updates
@@ -31,10 +52,10 @@ export async function POST(request: NextRequest) {
 
     if (fileId) {
       // Update existing file
-      result = await updateFileInDrive(fileId, buffer, mimeType, fileName, processTypeName)
+      result = await updateFileInDrive(user.id, fileId, buffer, mimeType, fileName, processTypeName)
     } else {
       // Upload new file
-      result = await uploadFileToDrive(buffer, fileName, mimeType, processTypeName)
+      result = await uploadFileToDrive(user.id, buffer, fileName, mimeType, processTypeName)
     }
 
     return NextResponse.json({
@@ -64,6 +85,25 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
+    // Get authenticated user
+    const supabase = await createServerClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Check if user has valid Google OAuth tokens
+    const hasTokens = await hasValidTokens(user.id)
+    if (!hasTokens) {
+      return NextResponse.json(
+        { error: "Google authentication required", needsAuth: true },
+        { status: 401 },
+      )
+    }
+
     const { searchParams } = new URL(request.url)
     const fileId = searchParams.get("fileId")
     const drivePath = searchParams.get("drivePath")
@@ -74,7 +114,7 @@ export async function DELETE(request: NextRequest) {
       actualFileId = fileId
     } else if (drivePath) {
       // Try to find the file by path
-      actualFileId = await findFileByPath(drivePath)
+      actualFileId = await findFileByPath(user.id, drivePath)
       if (!actualFileId) {
         return NextResponse.json({ error: "File not found in Google Drive" }, { status: 404 })
       }
@@ -82,7 +122,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "No fileId or drivePath provided" }, { status: 400 })
     }
 
-    await deleteFileFromDrive(actualFileId)
+    await deleteFileFromDrive(user.id, actualFileId)
 
     return NextResponse.json({ success: true })
   } catch (error) {

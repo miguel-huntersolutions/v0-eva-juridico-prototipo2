@@ -325,8 +325,10 @@ export function TemplatesPage() {
         }
 
         const uploadData = await uploadResponse.json()
-        // Store the full Drive path (plantillas/{processTypeName}/{fileName})
-        updateData.fileUrl = uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
+        // Store the fileId and drivePath (same format as creation)
+        updateData.fileUrl = uploadData.fileId 
+          ? `fileId:${uploadData.fileId}|path:${uploadData.drivePath || uploadData.directLink || uploadData.webViewLink}`
+          : uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
         updateData.variables = editExtractedTags // Use tags from the new file
       } else if (editProcessTypeId !== selectedTemplate.processTypeId) {
         // If process type changed but no new file, we might want to move the file
@@ -535,14 +537,17 @@ SECCIONES SUGERIDAS:
 
       const uploadData = await uploadResponse.json()
 
-      // Store the full Drive path (plantillas/{processTypeName}/{fileName})
-      // This is the path structure in Google Drive
-      const fileUrl = uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
+      // Store the fileId and drivePath
+      // fileId is needed to access the file directly without searching by path
+      // drivePath is kept for backward compatibility and display purposes
+      const fileUrl = uploadData.fileId 
+        ? `fileId:${uploadData.fileId}|path:${uploadData.drivePath || uploadData.directLink || uploadData.webViewLink}`
+        : uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
 
       const newTemplate = await createTemplate({
         name: templateName,
         processTypeId: selectedProcessTypeId,
-        fileUrl: fileUrl, // Store the Drive path
+        fileUrl: fileUrl, // Store fileId and path for easy access
         description: templateDescription,
         variables: extractedTags, // Save the extracted tags
       })

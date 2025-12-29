@@ -1,10 +1,10 @@
-# Google Drive Integration
+# Google Drive y Sheets Integration (OAuth2)
 
-Esta integración permite almacenar los documentos de plantillas en Google Drive.
+Esta integración permite almacenar los documentos de plantillas en Google Drive y crear hojas de cálculo en Google Sheets usando autenticación OAuth2.
 
 ## Configuración
 
-### 1. Crear un Service Account en Google Cloud
+### 1. Crear credenciales OAuth2 en Google Cloud
 
 #### Paso 1: Crear o seleccionar un proyecto
 
@@ -16,166 +16,126 @@ Esta integración permite almacenar los documentos de plantillas en Google Drive
    - Haz clic en "Create"
 3. Selecciona el proyecto que acabas de crear
 
-#### Paso 2: Habilitar Google Drive API
+#### Paso 2: Habilitar APIs necesarias ⚠️ IMPORTANTE
+
+**Este paso es CRÍTICO. Sin habilitar estas APIs, la integración no funcionará.**
 
 1. En el menú lateral, ve a **"APIs & Services"** > **"Library"** (o "Biblioteca")
-2. En el buscador, escribe **"Google Drive API"**
-3. Haz clic en el resultado **"Google Drive API"**
-4. Haz clic en el botón **"Enable"** (o "Habilitar")
-5. Espera a que se habilite (puede tomar unos segundos)
+2. Busca y habilita las siguientes APIs (debes habilitar AMBAS):
+   - **Google Drive API** 
+     - Busca "Google Drive API" en el buscador
+     - Haz clic en el resultado
+     - Haz clic en el botón **"Enable"** (o "Habilitar")
+     - Espera a que se habilite (puede tomar unos segundos)
+   - **Google Sheets API**
+     - Busca "Google Sheets API" en el buscador
+     - Haz clic en el resultado
+     - Haz clic en el botón **"Enable"** (o "Habilitar")
+     - Espera a que se habilite (puede tomar unos segundos)
 
-#### Paso 3: Crear un Service Account
+**Nota:** Si recibes un error que dice "Google Drive API has not been used in project X before or it is disabled", significa que no has habilitado la API. Ve a la URL que aparece en el error o sigue los pasos anteriores para habilitarla.
+
+**Verificación:** Después de habilitar, puedes verificar que están habilitadas yendo a **"APIs & Services"** > **"Enabled APIs"** (o "APIs habilitadas"). Deberías ver ambas APIs en la lista.
+
+#### Paso 3: Crear credenciales OAuth2
 
 1. En el menú lateral, ve a **"APIs & Services"** > **"Credentials"** (o "Credenciales")
 2. Haz clic en el botón **"+ CREATE CREDENTIALS"** (o "+ CREAR CREDENCIALES")
-3. Selecciona **"Service Account"** (o "Cuenta de servicio")
-4. Completa el formulario:
-   - **Service account name**: Un nombre descriptivo (ej: "eva-juridico-drive-service")
-   - **Service account ID**: Se genera automáticamente (puedes dejarlo así)
-   - Haz clic en **"Create and Continue"** (o "Crear y continuar")
-5. En "Grant this service account access to project" (opcional):
-   - Puedes saltar este paso haciendo clic en **"Continue"**
-6. En "Grant users access to this service account" (opcional):
-   - Puedes saltar este paso haciendo clic en **"Done"** (o "Listo")
+3. Selecciona **"OAuth client ID"** (o "ID de cliente OAuth")
+4. Si es la primera vez, configura la pantalla de consentimiento:
+   - Selecciona **"External"** (o "Externo") para usuarios externos
+   - Completa la información requerida:
+     - **App name**: EVA Jurídico
+     - **User support email**: Tu email
+     - **Developer contact information**: Tu email
+   - Haz clic en **"Save and Continue"**
+   - En "Scopes", haz clic en **"Add or Remove Scopes"** y selecciona:
+     - `https://www.googleapis.com/auth/drive`
+     - `https://www.googleapis.com/auth/spreadsheets`
+   - Haz clic en **"Save and Continue"**
+   - En "Test users", agrega tu email de prueba (opcional para desarrollo)
+   - Haz clic en **"Save and Continue"**
+5. Crea el OAuth client ID:
+   - **Application type**: Selecciona **"Web application"**
+   - **Name**: Un nombre descriptivo (ej: "EVA Jurídico Web Client")
+   - **Authorized JavaScript origins**: 
+     - `http://localhost:3000` (para desarrollo)
+     - `https://tu-dominio.com` (para producción)
+   - **Authorized redirect URIs**:
+     - `http://localhost:3000/api/google/callback` (para desarrollo)
+     - `https://tu-dominio.com/api/google/callback` (para producción)
+   - Haz clic en **"Create"**
+6. **Copia los valores** que se muestran:
+   - **Client ID** (lo necesitarás como `GOOGLE_CLIENT_ID`)
+   - **Client Secret** (lo necesitarás como `GOOGLE_CLIENT_SECRET`)
 
-#### Paso 4: Crear y descargar la Key (JSON) - ⚠️ IMPORTANTE
-
-1. En la página de "Credentials", encontrarás tu Service Account recién creado en la lista
-2. Haz clic en el **email del Service Account** (algo como `eva-juridico-drive-service@tu-proyecto.iam.gserviceaccount.com`)
-   - Esto te llevará a la página de detalles del Service Account
-3. En la parte superior, verás varias pestañas. Haz clic en **"KEYS"** (o "CLAVES")
-4. Haz clic en el botón **"+ ADD KEY"** (o "+ AGREGAR CLAVE")
-5. Selecciona **"Create new key"** (o "Crear nueva clave")
-6. Se abrirá un diálogo. Selecciona el formato **"JSON"**
-7. Haz clic en **"Create"** (o "Crear")
-8. **El archivo JSON se descargará automáticamente** a tu carpeta de descargas
-   - El archivo tendrá un nombre como `tu-proyecto-xxxxx-xxxxx.json`
-   - **¡Guarda este archivo en un lugar seguro!** Contiene credenciales sensibles
-
-**Nota:** Si no ves la opción de descargar o crear una key, asegúrate de haber hecho clic en el email del Service Account (no solo en la lista).
-
-#### Paso 5: Obtener información del JSON
-
-Abre el archivo JSON descargado. Debería verse así:
-
-```json
-{
-  "type": "service_account",
-  "project_id": "tu-proyecto-123456",
-  "private_key_id": "abc123...",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n",
-  "client_email": "eva-juridico-drive-service@tu-proyecto-123456.iam.gserviceaccount.com",
-  "client_id": "123456789",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/..."
-}
-```
-
-**Necesitarás estos valores:**
-- `client_email`: El email del Service Account
-- `private_key`: La clave privada (completa, con los `\n`)
-- `project_id`: El ID del proyecto
-
-#### Paso 6: Crear un Shared Drive (Unidad Compartida) - ⚠️ REQUERIDO
-
-**IMPORTANTE:** Los Service Accounts no tienen cuota de almacenamiento propia. Debes usar un **Shared Drive** (Unidad Compartida).
-
-1. Ve a [Google Drive](https://drive.google.com/)
-2. En el menú lateral izquierdo, haz clic en **"Shared drives"** (o "Unidades compartidas")
-3. Haz clic en el botón **"+ New"** (o "+ Nueva") para crear una nueva unidad compartida
-4. Ingresa un nombre (ej: "EVA Jurídico - Plantillas")
-5. Haz clic en **"Create"** (o "Crear")
-6. **Agrega el Service Account a la unidad compartida:**
-   - Haz clic derecho en la unidad compartida recién creada
-   - Selecciona **"Manage members"** (o "Administrar miembros")
-   - Haz clic en **"Add members"** (o "Agregar miembros")
-   - Pega el **`client_email`** del JSON (ej: `eva-juridico-drive-service@tu-proyecto-123456.iam.gserviceaccount.com`)
-   - Cambia el rol a **"Content manager"** (o "Administrador de contenido")
-   - **Desmarca** "Notify people"
-   - Haz clic en **"Send"** (o "Enviar")
-7. **Obtén el ID de la unidad compartida:**
-   - Abre la unidad compartida en Google Drive
-   - Mira la URL en el navegador: `https://drive.google.com/drive/folders/FOLDER_ID`
-   - Copia el `FOLDER_ID` (es una cadena larga de letras y números)
-8. **Obtén el ID de la unidad compartida (Drive ID):**
-   - Abre la unidad compartida
-   - La URL puede ser: `https://drive.google.com/drive/folders/DRIVE_ID`
-   - O puedes obtenerlo desde la API o desde la configuración de la unidad compartida
-   - Este es el **`GOOGLE_DRIVE_ID`** que necesitarás
-
-### 2. Obtener los IDs necesarios
-
-Necesitas dos IDs:
-
-1. **GOOGLE_DRIVE_FOLDER_ID**: El ID de la carpeta raíz dentro del Shared Drive
-   - Puede ser el mismo ID del Shared Drive si quieres usar la raíz
-   - O puedes crear una carpeta dentro del Shared Drive y usar su ID
-   - URL: `https://drive.google.com/drive/folders/FOLDER_ID`
-
-2. **GOOGLE_DRIVE_ID**: El ID del Shared Drive (unidad compartida)
-   - Este es el ID de la unidad compartida misma
-   - Generalmente es el mismo que el FOLDER_ID si usas la raíz del Shared Drive
-   - O puedes obtenerlo desde la configuración de la unidad compartida
-
-### 3. Configurar variables de entorno
+### 2. Configurar variables de entorno
 
 Agrega las siguientes variables a tu archivo `.env.local`:
 
 ```env
-# Google Drive Configuration
-GOOGLE_SERVICE_ACCOUNT_EMAIL=tu-service-account@tu-proyecto.iam.gserviceaccount.com
-GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-GOOGLE_PROJECT_ID=tu-proyecto-id
-GOOGLE_DRIVE_FOLDER_ID=tu-folder-id  # ID de la carpeta raíz dentro del Shared Drive
-GOOGLE_DRIVE_ID=tu-drive-id          # ID del Shared Drive (unidad compartida)
+# Google OAuth2 Configuration
+GOOGLE_CLIENT_ID=tu-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=tu-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback
+
+# Google Drive Configuration (opcional, para Shared Drives)
+GOOGLE_DRIVE_FOLDER_ID=tu-folder-id  # ID de la carpeta raíz (opcional)
+GOOGLE_DRIVE_ID=tu-drive-id          # ID del Shared Drive (opcional)
 ```
 
-**Nota:** Si usas la raíz del Shared Drive, `GOOGLE_DRIVE_FOLDER_ID` y `GOOGLE_DRIVE_ID` pueden ser el mismo valor.
+**Nota:** `GOOGLE_DRIVE_FOLDER_ID` y `GOOGLE_DRIVE_ID` son opcionales. Si no los configuras, los archivos se crearán en el Drive personal del usuario autenticado.
 
-**Nota importante sobre GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY:**
-- El valor debe incluir los saltos de línea `\n`
-- Si copias el valor del JSON, asegúrate de mantener el formato completo
-- En algunos casos, necesitarás escapar las comillas dobles
+### 3. Ejecutar el script SQL
 
-### 4. Ejemplo de configuración
+Ejecuta el script SQL para crear la tabla de tokens OAuth2:
 
-Si tu archivo JSON de credenciales se ve así:
-
-```json
-{
-  "type": "service_account",
-  "project_id": "mi-proyecto-123",
-  "private_key_id": "abc123...",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n",
-  "client_email": "mi-service@mi-proyecto-123.iam.gserviceaccount.com",
-  ...
-}
+```bash
+# Ejecuta en tu base de datos Supabase
+psql -h tu-host -U tu-usuario -d tu-database -f scripts/016-create-google-oauth-tokens.sql
 ```
 
-Tu `.env.local` debería tener:
+O ejecuta el contenido del script directamente en el SQL Editor de Supabase.
 
-```env
-GOOGLE_SERVICE_ACCOUNT_EMAIL=mi-service@mi-proyecto-123.iam.gserviceaccount.com
-GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n"
-GOOGLE_PROJECT_ID=mi-proyecto-123
-GOOGLE_DRIVE_FOLDER_ID=1a2b3c4d5e6f7g8h9i0j
+## Flujo de Autenticación
+
+### 1. Iniciar el flujo OAuth2
+
+Cuando un usuario necesita autenticarse con Google, debe llamar al endpoint:
+
 ```
+GET /api/google/auth
+```
+
+Este endpoint retorna una URL de autorización que el usuario debe visitar.
+
+### 2. Autorización del usuario
+
+El usuario será redirigido a Google para autorizar la aplicación. Una vez autorizado, Google redirigirá al callback:
+
+```
+GET /api/google/callback?code=xxx
+```
+
+El callback guarda automáticamente los tokens (access_token y refresh_token) en la base de datos asociados al usuario.
+
+### 3. Uso de las APIs
+
+Una vez autenticado, todas las operaciones de Drive y Sheets usan automáticamente los tokens del usuario. Los tokens se refrescan automáticamente cuando expiran.
 
 ## Estructura de Carpetas
 
 Los archivos se organizan automáticamente en Google Drive con la siguiente estructura:
 
 ```
-📁 GOOGLE_DRIVE_FOLDER_ID (carpeta raíz configurada)
-  └── 📁 plantillas
-      ├── 📁 Contratación Directa
-      │   └── 📄 archivo1.docx
-      ├── 📁 Licitación Pública
-      │   └── 📄 archivo2.docx
-      └── 📁 Selección Abreviada
-          └── 📄 archivo3.docx
+📁 plantillas
+  ├── 📁 Contratación Directa
+  │   └── 📄 archivo1.docx
+  ├── 📁 Licitación Pública
+  │   └── 📄 archivo2.docx
+  └── 📁 CD-2025-001 (código de proceso)
+      ├── 📄 documento-generado.docx
+      └── 📊 CD-2025-001 (spreadsheet)
 ```
 
 La ruta completa se almacena en la base de datos en el formato: `plantillas/{nombreProceso}/{nombreArchivo}`
@@ -185,6 +145,7 @@ La ruta completa se almacena en la base de datos en el formato: `plantillas/{nom
 Una vez configurado, los archivos se subirán automáticamente a Google Drive cuando:
 
 1. **Crear una nueva plantilla**: 
+   - El usuario debe estar autenticado con Google (primera vez)
    - El archivo se sube a Google Drive en la carpeta correspondiente al tipo de proceso
    - Se crea automáticamente la estructura de carpetas si no existe
    - Se guarda la ruta completa (`plantillas/{proceso}/{archivo}`) en la base de datos
@@ -197,17 +158,104 @@ Una vez configurado, los archivos se subirán automáticamente a Google Drive cu
 3. **Eliminar una plantilla**:
    - El archivo se elimina automáticamente de Google Drive
 
-## Funciones disponibles
-
-- `uploadFileToDrive()`: Sube un nuevo archivo a Google Drive
-- `updateFileInDrive()`: Actualiza un archivo existente en Google Drive
-- `deleteFileFromDrive()`: Elimina un archivo de Google Drive
+4. **Generar documentos**:
+   - Los documentos generados se guardan en `plantillas/{processCode}/`
+   - Se crea automáticamente una hoja de cálculo para cada proceso
+   - Se registran los detalles de generación en la hoja de cálculo
 
 ## API Endpoints
 
+### Autenticación
+
+- `GET /api/google/auth`: Inicia el flujo OAuth2
+  - Returns: `{ authUrl: string }`
+  - El usuario debe visitar la `authUrl` para autorizar
+
+- `GET /api/google/callback`: Maneja el callback de Google
+  - Parámetros: `code` (código de autorización)
+  - Redirige a `/member/processes?google_auth=success` o `?error=xxx`
+
+### Plantillas
+
 - `POST /api/upload-template`: Sube o actualiza un archivo de plantilla
-  - Body: FormData con campo `file` (File) y opcionalmente `fileId` (string) para actualizar
-  - Returns: `{ fileId, webViewLink, directLink, fileName }`
+  - Body: FormData con:
+    - `file` (File): El archivo a subir
+    - `processTypeName` (string): Nombre del tipo de proceso
+    - `fileId` (string, opcional): Para actualizar un archivo existente
+  - Returns: `{ fileId, webViewLink, directLink, drivePath, fileName }`
+  - Requiere: Usuario autenticado con Google
 
 - `DELETE /api/upload-template?fileId=xxx`: Elimina un archivo de Google Drive
+  - Parámetros: `fileId` o `drivePath`
+  - Returns: `{ success: true }`
+  - Requiere: Usuario autenticado con Google
 
+### Generación de Documentos
+
+- `POST /api/generate-document`: Genera un documento desde una plantilla
+  - Body: JSON con:
+    - `templatePath` (string): Ruta de la plantilla en Drive
+    - `replacements` (object): Valores para reemplazar tags
+    - `processCode` (string): Código del proceso
+    - `documentName` (string): Nombre del documento generado
+    - `entityName` (string, opcional): Nombre de la entidad
+    - `secretaryName` (string, opcional): Nombre de la secretaría
+  - Returns: `{ fileId, webViewLink, directLink, drivePath, documentName, spreadsheetId, spreadsheetUrl }`
+  - Requiere: Usuario autenticado con Google
+
+## Funciones disponibles
+
+### Drive (`lib/google/drive.ts`)
+
+- `getDriveClient(userId)`: Obtiene un cliente de Drive autenticado
+- `getOrCreateFolder(userId, folderName, parentFolderId?)`: Obtiene o crea una carpeta
+- `uploadFileToDrive(userId, fileBuffer, fileName, mimeType, processTypeName)`: Sube un archivo
+- `updateFileInDrive(userId, fileId, fileBuffer, mimeType, fileName, processTypeName)`: Actualiza un archivo
+- `deleteFileFromDrive(userId, fileId)`: Elimina un archivo
+- `findFileByPath(userId, drivePath)`: Busca un archivo por ruta
+- `downloadFileFromDrive(userId, fileId)`: Descarga un archivo
+- `uploadDocumentToDrive(userId, fileBuffer, fileName, mimeType, processCode)`: Sube un documento generado
+
+### Sheets (`lib/google/sheets.ts`)
+
+- `getSheetsClient(userId)`: Obtiene un cliente de Sheets autenticado
+- `getOrCreateProcessSpreadsheet(userId, processCode)`: Obtiene o crea una hoja de cálculo
+- `updateSheetData(userId, spreadsheetId, sheetName, headers, data)`: Actualiza datos en una hoja
+- `appendToSheet(userId, spreadsheetId, range, values)`: Agrega datos a una hoja
+
+### OAuth (`lib/google/oauth.ts`)
+
+- `getAuthUrl()`: Genera la URL de autorización
+- `getTokensFromCode(code)`: Intercambia código por tokens
+- `saveTokens(userId, tokens)`: Guarda tokens en la base de datos
+- `getStoredTokens(userId)`: Obtiene tokens guardados
+- `refreshAccessToken(userId)`: Refresca un token expirado
+- `getAuthenticatedOAuth2Client(userId)`: Obtiene un cliente OAuth2 autenticado
+- `hasValidTokens(userId)`: Verifica si el usuario tiene tokens válidos
+
+## Manejo de Errores
+
+Si un usuario intenta usar las funciones de Google sin estar autenticado, recibirá un error con `needsAuth: true`. En este caso, debe:
+
+1. Llamar a `GET /api/google/auth` para obtener la URL de autorización
+2. Redirigir al usuario a esa URL
+3. El usuario autoriza la aplicación
+4. Google redirige al callback que guarda los tokens
+5. El usuario puede continuar con la operación
+
+## Seguridad
+
+- Los tokens se almacenan encriptados en la base de datos
+- Solo el usuario propietario puede acceder a sus tokens
+- Los tokens se refrescan automáticamente cuando expiran
+- Los refresh tokens no expiran (a menos que el usuario revoque el acceso)
+
+## Notas Importantes
+
+1. **Primera autenticación**: Cada usuario debe autenticarse con Google al menos una vez antes de usar las funciones de Drive/Sheets.
+
+2. **Tokens por usuario**: Cada usuario tiene sus propios tokens. Los archivos se crean en el Drive del usuario autenticado.
+
+3. **Shared Drives**: Si necesitas usar Shared Drives, configura `GOOGLE_DRIVE_ID` y `GOOGLE_DRIVE_FOLDER_ID`. El usuario debe tener acceso al Shared Drive.
+
+4. **Permisos**: Los archivos creados pertenecen al usuario autenticado. Si necesitas compartirlos, puedes usar las funciones de permisos de Google Drive API.

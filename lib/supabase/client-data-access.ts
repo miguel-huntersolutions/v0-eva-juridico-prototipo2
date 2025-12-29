@@ -25,9 +25,6 @@ export type {
   DocumentWithRelations,
 }
 
-// Export ProcessMapped type
-export type { ProcessMapped }
-
 // Client-side Template type (with camelCase fields matching the mapped return values)
 export interface Template {
   id: string
@@ -57,6 +54,8 @@ export interface ProcessMapped {
   currentVersion: number
   spreadsheetId?: string | null
   spreadsheetUrl?: string | null
+  driveFolderId?: string | null
+  driveFolderUrl?: string | null
 }
 
 // Organizations
@@ -494,6 +493,8 @@ export async function getProcessesMapped(filters?: {
     currentVersion: p.current_version || 1,
     spreadsheetId: (p as any).spreadsheet_id || null,
     spreadsheetUrl: (p as any).spreadsheet_url || null,
+    driveFolderId: (p as any).drive_folder_id || null,
+    driveFolderUrl: (p as any).drive_folder_url || null,
   }))
 }
 

@@ -63,6 +63,10 @@ export interface Process {
   process_type_id: string
   current_version: number
   created_by: string | null
+  spreadsheet_id?: string | null
+  spreadsheet_url?: string | null
+  drive_folder_id?: string | null
+  drive_folder_url?: string | null
   created_at: string
   updated_at: string
 }
@@ -328,6 +332,7 @@ export async function createProcess(process: Omit<Process, "id" | "created_at" |
 
 export async function updateProcess(id: string, updates: Partial<Process>) {
   const supabase = await createServerClient()
+  console.log("[updateProcess] Updating process:", { id, updates })
   const { data, error } = await supabase
     .from("processes")
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -335,7 +340,11 @@ export async function updateProcess(id: string, updates: Partial<Process>) {
     .select()
     .single()
 
-  if (error) throw error
+  if (error) {
+    console.error("[updateProcess] Error updating process:", error)
+    throw error
+  }
+  console.log("[updateProcess] Process updated successfully:", data)
   return data as Process
 }
 

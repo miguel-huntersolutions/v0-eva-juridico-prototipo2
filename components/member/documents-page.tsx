@@ -83,6 +83,7 @@ interface MappedDocument {
   createdBy: string
   createdAt: string
   updatedAt: string
+  driveFolderUrl?: string | null
 }
 
 export function DocumentsPage() {
@@ -120,6 +121,7 @@ export function DocumentsPage() {
           createdBy: "",
           createdAt: d.created_at?.split("T")[0] || "",
           updatedAt: d.updated_at?.split("T")[0] || "",
+          driveFolderUrl: (d.process as any)?.drive_folder_url || null,
         }))
         setAllDocuments(mapped)
       } catch (err) {
@@ -351,7 +353,27 @@ export function DocumentsPage() {
                                   <FileText className="h-4 w-4 text-primary" />
                                 </div>
                                 <div>
-                                  <p className="font-medium">{document.name}</p>
+                                  {(() => {
+                                    // Check if fileUrl is a valid Google Drive URL (starts with http)
+                                    const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
+                                    const linkUrl = isValidDriveUrl 
+                                      ? document.fileUrl 
+                                      : (document.driveFolderUrl || null)
+                                    
+                                    return linkUrl ? (
+                                      <a
+                                        href={linkUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="font-medium text-primary hover:underline"
+                                      >
+                                        {document.name}
+                                      </a>
+                                    ) : (
+                                      <p className="font-medium">{document.name}</p>
+                                    )
+                                  })()}
                                   <p className="text-xs text-muted-foreground">{getDocumentTypeName(document.type)}</p>
                                 </div>
                               </div>
@@ -391,32 +413,43 @@ export function DocumentsPage() {
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => handleViewDocument(document)}>
-                                    <Eye className="mr-2 h-4 w-4" />
-                                    Ver Detalles
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem>
-                                    <Download className="mr-2 h-4 w-4" />
-                                    Descargar Word
-                                  </DropdownMenuItem>
+                                  {(() => {
+                                    // Check if fileUrl is a valid Google Drive URL (starts with http)
+                                    const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
+                                    const linkUrl = isValidDriveUrl 
+                                      ? document.fileUrl 
+                                      : (document.driveFolderUrl || null)
+                                    
+                                    if (isValidDriveUrl) {
+                                      return (
+                                        <DropdownMenuItem
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            window.open(document.fileUrl, "_blank")
+                                          }}
+                                        >
+                                          <ExternalLink className="mr-2 h-4 w-4" />
+                                          Ver en Drive
+                                        </DropdownMenuItem>
+                                      )
+                                    } else if (document.driveFolderUrl) {
+                                      return (
+                                        <DropdownMenuItem
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            window.open(document.driveFolderUrl!, "_blank")
+                                          }}
+                                        >
+                                          <FolderOpen className="mr-2 h-4 w-4" />
+                                          Ver Carpeta en Drive
+                                        </DropdownMenuItem>
+                                      )
+                                    }
+                                    return null
+                                  })()}
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem>
-                                    <History className="mr-2 h-4 w-4" />
-                                    Ver Historial
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem>
-                                    <Copy className="mr-2 h-4 w-4" />
-                                    Duplicar
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem>
-                                    <ExternalLink className="mr-2 h-4 w-4" />
-                                    Ir al Proceso
-                                  </DropdownMenuItem>
+              
                                   <DropdownMenuSeparator />
-                                  <DropdownMenuItem className="text-destructive">
-                                    <Trash2 className="mr-2 h-4 w-4" />
-                                    Eliminar
-                                  </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </TableCell>

@@ -69,7 +69,8 @@ export function GenerateDocumentsDialog({
   
   // Determine if this is a new process (not yet created) or existing
   const isNewProcess = !!processData && !process
-  const currentProcess = process || (processData ? {
+  const [currentProcessState, setCurrentProcessState] = React.useState<ProcessMapped | null>(process)
+  const currentProcess = currentProcessState || process || (processData ? {
     id: "", // Will be set after creation
     code: processData.code,
     processTypeId: processData.processTypeId,
@@ -79,6 +80,14 @@ export function GenerateDocumentsDialog({
     secretaryId: processData.secretaryId,
     secretaryName: secretaryName,
   } as Partial<ProcessMapped> : null)
+  
+  // Update currentProcessState when process prop changes
+  React.useEffect(() => {
+    if (process) {
+      setCurrentProcessState(process)
+    }
+  }, [process])
+  
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [isLoadingTemplates, setIsLoadingTemplates] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState(0) // Step index (0-based)
@@ -209,7 +218,127 @@ export function GenerateDocumentsDialog({
     }
   }
 
-  const handleGenerateDocument = async (template: Template) => {
+  // Helper function to handle Google OAuth2 authentication
+  const handleGoogleAuth = async (): Promise<boolean> => {
+    try {
+      // Get the authorization URL
+      const authResponse = await fetch("/api/google/auth")
+      if (!authResponse.ok) {
+        throw new Error("Error al obtener la URL de autorización")
+      }
+
+      const { authUrl } = await authResponse.json()
+
+      // Open popup window for OAuth2
+      const width = 500
+      const height = 600
+      const left = window.screen.width / 2 - width / 2
+      const top = window.screen.height / 2 - height / 2
+
+      const popup = window.open(
+        authUrl,
+        "Google Auth",
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no`,
+      )
+
+      if (!popup) {
+        throw new Error("No se pudo abrir la ventana de autenticación. Por favor, permite ventanas emergentes.")
+      }
+
+      // Wait for the popup to complete authentication
+      return new Promise((resolve, reject) => {
+        // Use localStorage to communicate auth success
+        const storageKey = `google_auth_${Date.now()}`
+        const originalValue = localStorage.getItem(storageKey)
+
+        const checkInterval = setInterval(() => {
+          try {
+            // Check if popup was closed manually
+            if (popup.closed) {
+              clearInterval(checkInterval)
+              clearInterval(directCheckInterval)
+              clearTimeout(timeout)
+              window.removeEventListener("storage", storageHandler)
+              // Check if auth was successful before closing
+              const authSuccess = localStorage.getItem("google_auth_success")
+              const authError = localStorage.getItem("google_auth_error")
+              if (authSuccess === "true") {
+                localStorage.removeItem("google_auth_success")
+                resolve(true)
+              } else if (authError) {
+                localStorage.removeItem("google_auth_error")
+                reject(new Error(authError))
+              } else {
+                reject(new Error("Autenticación cancelada"))
+              }
+              return
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        }, 500)
+
+        // Listen for storage events (when callback sets success flag)
+        const storageHandler = (e: StorageEvent) => {
+          if (e.key === "google_auth_success" && e.newValue === "true") {
+            clearInterval(checkInterval)
+            clearTimeout(timeout)
+            window.removeEventListener("storage", storageHandler)
+            localStorage.removeItem("google_auth_success")
+            if (popup && !popup.closed) {
+              popup.close()
+            }
+            resolve(true)
+          }
+        }
+
+        window.addEventListener("storage", storageHandler)
+
+        // Also check localStorage directly (for same-window scenarios)
+        const directCheckInterval = setInterval(() => {
+          const authSuccess = localStorage.getItem("google_auth_success")
+          const authError = localStorage.getItem("google_auth_error")
+          if (authSuccess === "true") {
+            clearInterval(checkInterval)
+            clearInterval(directCheckInterval)
+            clearTimeout(timeout)
+            window.removeEventListener("storage", storageHandler)
+            localStorage.removeItem("google_auth_success")
+            if (popup && !popup.closed) {
+              popup.close()
+            }
+            resolve(true)
+          } else if (authError) {
+            clearInterval(checkInterval)
+            clearInterval(directCheckInterval)
+            clearTimeout(timeout)
+            window.removeEventListener("storage", storageHandler)
+            localStorage.removeItem("google_auth_error")
+            if (popup && !popup.closed) {
+              popup.close()
+            }
+            reject(new Error(authError))
+          }
+        }, 500)
+
+        // Timeout after 5 minutes
+        const timeout = setTimeout(() => {
+          clearInterval(checkInterval)
+          clearInterval(directCheckInterval)
+          window.removeEventListener("storage", storageHandler)
+          if (popup && !popup.closed) {
+            popup.close()
+          }
+          reject(new Error("Tiempo de autenticación agotado"))
+        }, 5 * 60 * 1000)
+      })
+    } catch (error) {
+      console.error("Error in Google authentication:", error)
+      throw error
+    }
+  }
+
+  const handleGenerateDocument = async (template: Template, retryCount = 0, overrideProcessId?: string): Promise<any> => {
     const processCode = process?.code || processData?.code
     if (!processCode) return
 
@@ -227,6 +356,17 @@ export function GenerateDocumentsDialog({
       // Generate document name
       const documentName = `${template.name}_${processCode}_${new Date().toISOString().split("T")[0]}.docx`
 
+      // Use overrideProcessId if provided, otherwise use currentProcessState or process
+      const processIdToUse = overrideProcessId !== undefined 
+        ? overrideProcessId 
+        : (currentProcessState?.id || process?.id || "")
+      
+      console.log("[handleGenerateDocument] Using processId:", processIdToUse, {
+        overrideProcessId,
+        currentProcessStateId: currentProcessState?.id,
+        processId: process?.id,
+      })
+
       const response = await fetch("/api/generate-document", {
         method: "POST",
         headers: {
@@ -236,16 +376,42 @@ export function GenerateDocumentsDialog({
           templatePath: template.fileUrl, // This should be the Drive path
           replacements,
           processCode: processCode,
-          processId: process?.id || "", // Empty for new processes
+          processId: processIdToUse,
           documentName,
           entityName: entity?.name,
           secretaryName: secretaryName,
+          createdBy: profile?.id,
         }),
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.message || "Error al generar el documento")
+        let errorData
+        try {
+          errorData = await response.json()
+        } catch {
+          // If response is not JSON, it might be a 404 or other error
+          throw new Error(`Error ${response.status}: ${response.statusText}`)
+        }
+        
+        // Check if authentication is required
+        if (errorData.needsAuth && retryCount === 0) {
+          // Try to authenticate
+          try {
+            await handleGoogleAuth()
+            // Wait a bit to ensure tokens are saved
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            // Retry the request after authentication
+            return handleGenerateDocument(template, retryCount + 1)
+          } catch (authError) {
+            throw new Error(
+              authError instanceof Error 
+                ? authError.message 
+                : "Error al autenticar con Google. Por favor, intenta de nuevo."
+            )
+          }
+        }
+        
+        throw new Error(errorData.message || errorData.error || "Error al generar el documento")
       }
 
       const result = await response.json()
@@ -263,9 +429,12 @@ export function GenerateDocumentsDialog({
       return result
     } catch (error) {
       console.error("Error generating document:", error)
+      // Only set error state on first attempt, not on retry
+      if (retryCount === 0) {
+        setError(error instanceof Error ? error.message : "Error al generar el documento")
+        setIsGenerating(false)
+      }
       throw error
-    } finally {
-      setIsGenerating(false)
     }
   }
 
@@ -279,6 +448,8 @@ export function GenerateDocumentsDialog({
 
       // If this is a new process, create it first
       let createdProcess: ProcessMapped | null = null
+      let currentProcessId = process?.id || ""
+      
       if (isNewProcess && processData) {
         try {
           await createProcess(processData)
@@ -287,8 +458,13 @@ export function GenerateDocumentsDialog({
           const processes = await getProcessesMapped()
           createdProcess = processes.find((p) => p.code === processData.code) || null
           
-          if (createdProcess && onProcessCreated) {
-            onProcessCreated(createdProcess)
+          if (createdProcess) {
+            currentProcessId = createdProcess.id
+            // Update local process state so handleGenerateDocument uses the correct ID
+            setCurrentProcessState(createdProcess)
+            if (onProcessCreated) {
+              onProcessCreated(createdProcess)
+            }
           }
         } catch (createError) {
           console.error("Error creating process:", createError)
@@ -297,9 +473,16 @@ export function GenerateDocumentsDialog({
         }
       }
 
-      // Generate all documents
+      // Generate all documents with the correct processId
+      // Use currentProcessId which was set above, or fallback to process?.id
+      const processIdToUse = currentProcessId || process?.id || ""
+      console.log("[handleGenerateAll] Using processId:", processIdToUse)
+      
       const results = await Promise.all(
-        templates.map((template) => handleGenerateDocument(template)),
+        templates.map((template) => {
+          // Pass the processId directly to ensure it's used
+          return handleGenerateDocument(template, 0, processIdToUse)
+        }),
       )
 
       // All documents generated successfully
