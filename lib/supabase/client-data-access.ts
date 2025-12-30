@@ -631,16 +631,35 @@ export async function generateProcessCode(processTypeId: string): Promise<string
   // Get current year
   const year = new Date().getFullYear()
 
-  // Count existing processes of this type this year
-  const { count } = await supabase
-    .from("processes")
-    .select("*", { count: "exact", head: true })
-    .eq("process_type_id", processTypeId)
-    .gte("created_at", `${year}-01-01`)
-
-  const sequence = String((count || 0) + 1).padStart(3, "0")
-
-  return `${abbrev}-${year}-${sequence}`
+  // Find a unique code by checking if it exists
+  let sequence = 1
+  let code = ""
+  let maxAttempts = 1000 // Prevent infinite loop
+  
+  while (maxAttempts > 0) {
+    const sequenceStr = String(sequence).padStart(3, "0")
+    code = `${abbrev}-${year}-${sequenceStr}`
+    
+    // Check if this code already exists
+    const { data: existing } = await supabase
+      .from("processes")
+      .select("id")
+      .eq("code", code)
+      .single()
+    
+    // If code doesn't exist, we can use it
+    if (!existing) {
+      return code
+    }
+    
+    // Otherwise, try next sequence number
+    sequence++
+    maxAttempts--
+  }
+  
+  // Fallback: use timestamp if we can't find a unique code
+  const timestamp = Date.now().toString().slice(-6)
+  return `${abbrev}-${year}-${timestamp}`
 }
 
 export async function getProcess(id: string) {
