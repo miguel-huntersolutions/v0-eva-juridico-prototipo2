@@ -1,6 +1,6 @@
-import { createChatRoute, getMaxDuration } from "@/lib/ai-chat/create-chat-api-route"
+import { createChatRoute } from "@/lib/ai-chat/create-chat-api-route"
 
-export const maxDuration = getMaxDuration(60)
+export const maxDuration = 60
 
 const SYSTEM_PROMPT = `Eres EVA, un asistente jurídico especializado en contratación pública colombiana. Tu rol es proporcionar información precisa y actualizada sobre:
 
