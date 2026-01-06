@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
       processId, // Process ID for database
       documentName, // Name for the generated document
       entityName, // Entity name for auto-replacement
+      entityId, // Entity ID to get logo
       secretaryName, // Secretary name for auto-replacement
       createdBy, // User ID who created the document
     } = body
@@ -115,6 +116,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Get entity logo if entityId is provided
+    let entityLogoUrl: string | null = null
+    if (entityId) {
+      try {
+        const { getEntity } = await import("@/lib/supabase/data-access")
+        const entity = await getEntity(entityId)
+        if (entity && entity.logo_url) {
+          entityLogoUrl = entity.logo_url
+        }
+      } catch (err) {
+        console.warn("[generate-document] Could not fetch entity logo:", err)
+        // Continue without logo if fetch fails
+      }
+    }
+
     // Add auto-replacements for ENTIDAD and SECRETARIA if provided
     const allReplacements = { ...replacements }
     if (entityName) {
@@ -124,8 +140,8 @@ export async function POST(request: NextRequest) {
       allReplacements.SECRETARIA = secretaryName
     }
 
-    // Replace tags in the document
-    const generatedBuffer = await replaceTagsInDocx(templateBuffer, allReplacements)
+    // Replace tags in the document (including logo if present)
+    const generatedBuffer = await replaceTagsInDocx(templateBuffer, allReplacements, entityLogoUrl)
 
     // Upload the generated document to Google Drive
     const uploadResult = await uploadDocumentToDrive(

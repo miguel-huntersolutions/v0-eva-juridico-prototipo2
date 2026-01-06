@@ -9,6 +9,9 @@ export interface Organization {
   status: "active" | "inactive"
   created_at: string
   updated_at: string
+  // Computed fields
+  members_count?: number
+  entities_count?: number
 }
 
 export interface Entity {

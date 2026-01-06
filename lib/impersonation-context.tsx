@@ -2,12 +2,12 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import type { Organization } from "@/lib/mock-data"
+import type { OrganizationMapped } from "@/lib/supabase/client-data-access"
 
 interface ImpersonationContextType {
   isImpersonating: boolean
-  impersonatedOrg: Organization | null
-  startImpersonation: (org: Organization) => void
+  impersonatedOrg: OrganizationMapped | null
+  startImpersonation: (org: OrganizationMapped) => void
   stopImpersonation: () => void
 }
 
@@ -15,7 +15,7 @@ const ImpersonationContext = React.createContext<ImpersonationContextType | unde
 
 export function ImpersonationProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const [impersonatedOrg, setImpersonatedOrg] = React.useState<Organization | null>(null)
+  const [impersonatedOrg, setImpersonatedOrg] = React.useState<OrganizationMapped | null>(null)
 
   // Check localStorage on mount
   React.useEffect(() => {
@@ -31,10 +31,10 @@ export function ImpersonationProvider({ children }: { children: React.ReactNode 
   }, [])
 
   const startImpersonation = React.useCallback(
-    (org: Organization) => {
+    (org: OrganizationMapped) => {
       setImpersonatedOrg(org)
       localStorage.setItem("eva_impersonation", JSON.stringify(org))
-      router.push("/admin")
+      router.push("/member")
     },
     [router],
   )

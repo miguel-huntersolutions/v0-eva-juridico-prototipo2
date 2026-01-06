@@ -37,6 +37,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ImageIcon, X } from "lucide-react"
 import {
   getOrganizations,
   getOrganizationMembers,
@@ -45,19 +46,23 @@ import {
   updateMember,
   deleteMember,
   createEntity,
+  updateEntity,
   deleteEntity,
   getUsersWithoutOrganization,
   createMember,
-  type Organization,
+  type OrganizationMapped,
   type Profile,
   type Entity,
 } from "@/lib/supabase/client-data-access"
+
+// Alias for backward compatibility
+type Organization = OrganizationMapped
 import { logger } from "@/lib/logger"
 import { useState } from "react"
 
-export default function OrganizationDetailPage({ params }: { params: { id: string } }) {
+export default function OrganizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter()
-  const organizationId = params.id
+  const { id: organizationId } = React.use(params)
   const pageLoadTime = React.useRef(Date.now())
 
   const [organization, setOrganization] = React.useState<Organization | null>(null)
@@ -83,11 +88,18 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
 
   // Entity dialog state
   const [isAddEntityOpen, setIsAddEntityOpen] = React.useState(false)
+  const [isEditEntityOpen, setIsEditEntityOpen] = React.useState(false)
+  const [selectedEntity, setSelectedEntity] = React.useState<Entity | null>(null)
   const [entityForm, setEntityForm] = React.useState({
     name: "",
     nit: "",
     representativeName: "",
+    status: "active" as "active" | "inactive",
+    logoUrl: "",
   })
+  const [entityLogoFile, setEntityLogoFile] = React.useState<File | null>(null)
+  const [entityLogoPreview, setEntityLogoPreview] = React.useState<string | null>(null)
+  const [uploadingLogo, setUploadingLogo] = React.useState(false)
   const [savingEntity, setSavingEntity] = React.useState(false)
   const [entityError, setEntityError] = React.useState<string | null>(null)
 
@@ -127,7 +139,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
       logger.fetch("/superadmin/organizations/[id]", "Organization data", true, Date.now() - startTime)
       logger.pageLoaded("/superadmin/organizations/[id]", Date.now() - pageLoadTime.current)
     } catch (err) {
-      logger.error("/superadmin/organizations/[id]", "Error loading organization data", err)
+      logger.error("/superadmin/organizations/[id]", "Error loading organization data", err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
@@ -141,10 +153,10 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
     try {
       const users = await getUsersWithoutOrganization()
       setAvailableUsers(users)
-      logger.action("/superadmin/organizations/[id]", "Load Available Users", { count: users.length })
+      logger.action("/superadmin/organizations/[id]", "Load Available Users", undefined, undefined, { count: users.length })
     } catch (err) {
       console.error("[v0] Error loading available users:", err)
-      logger.error("/superadmin/organizations/[id]", err as Error, { action: "loadAvailableUsers" })
+      logger.error("/superadmin/organizations/[id]", err instanceof Error ? err.message : String(err), err)
     }
   }, [])
 
@@ -170,7 +182,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
       setMemberForm({ name: "", email: "", role: "member" })
       setSelectedUserId(null)
       setSearchQuery("")
-      logger.action("/superadmin/organizations/[id]", "Add Member", { organizationId, userId: selectedUserId })
+      logger.action("/superadmin/organizations/[id]", "Add Member", undefined, undefined, { organizationId, userId: selectedUserId })
     } catch (err) {
       console.error("[v0] Error adding member:", err)
       setMemberError("Error al agregar el miembro. Puede que ya pertenezca a esta organización.")
@@ -193,7 +205,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
       await loadData()
       setIsEditMemberOpen(false)
       setSelectedMember(null)
-      logger.action("/superadmin/organizations/[id]", "Edit Member", { organizationId, member: memberForm })
+      logger.action("/superadmin/organizations/[id]", "Edit Member", undefined, undefined, { organizationId, member: memberForm })
     } catch (err) {
       console.error("[v0] Error updating member:", err)
       setMemberError("Error al actualizar el miembro")
@@ -212,12 +224,42 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
       await loadData()
       setIsDeleteMemberOpen(false)
       setMemberToDelete(null)
-      logger.action("/superadmin/organizations/[id]", "Delete Member", { organizationId, member: memberToDelete })
+      logger.action("/superadmin/organizations/[id]", "Delete Member", undefined, undefined, { organizationId, member: memberToDelete })
     } catch (err) {
       console.error("[v0] Error deleting member:", err)
       logger.error("/superadmin/organizations/[id]", "Error deleting member", err)
     } finally {
       setIsDeleting(false)
+    }
+  }
+
+  const handleLogoUpload = async (file: File, entityId?: string): Promise<string | null> => {
+    try {
+      setUploadingLogo(true)
+      const formData = new FormData()
+      formData.append("file", file)
+      if (entityId) {
+        formData.append("entityId", entityId)
+      }
+
+      const response = await fetch("/api/upload-logo", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.message || "Error al subir el logo")
+      }
+
+      const data = await response.json()
+      return data.url
+    } catch (err) {
+      console.error("[v0] Error uploading logo:", err)
+      setEntityError(err instanceof Error ? err.message : "Error al subir el logo")
+      return null
+    } finally {
+      setUploadingLogo(false)
     }
   }
 
@@ -230,16 +272,34 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
     try {
       setSavingEntity(true)
       setEntityError(null)
+
+      // Upload logo if provided
+      let logoUrl = entityForm.logoUrl
+      if (entityLogoFile) {
+        const uploadedUrl = await handleLogoUpload(entityLogoFile)
+        if (uploadedUrl) {
+          logoUrl = uploadedUrl
+        } else {
+          // If logo upload fails, continue without logo
+          console.warn("Logo upload failed, continuing without logo")
+        }
+      }
+
       await createEntity({
         name: entityForm.name,
         nit: entityForm.nit,
         representativeName: entityForm.representativeName,
         organizationId,
+        status: entityForm.status,
+        logoUrl: logoUrl || undefined,
       })
       await loadData()
       setIsAddEntityOpen(false)
-      setEntityForm({ name: "", nit: "", representativeName: "" })
-      logger.action("/superadmin/organizations/[id]", "Add Entity", { organizationId, entity: entityForm })
+      setEntityForm({ name: "", nit: "", representativeName: "", status: "active", logoUrl: "" })
+      setEntityLogoFile(null)
+      setEntityLogoPreview(null)
+      setEntityError(null)
+      logger.action("/superadmin/organizations/[id]", "Add Entity", undefined, undefined, { organizationId, entity: entityForm })
     } catch (err) {
       console.error("[v0] Error adding entity:", err)
       setEntityError("Error al crear la entidad")
@@ -247,6 +307,103 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
     } finally {
       setSavingEntity(false)
     }
+  }
+
+  const handleEditEntity = async () => {
+    if (!selectedEntity || !entityForm.name || !entityForm.nit) {
+      setEntityError("Nombre y NIT son requeridos")
+      return
+    }
+
+    try {
+      setSavingEntity(true)
+      setEntityError(null)
+
+      // Upload logo if a new one was selected
+      let logoUrl = entityForm.logoUrl
+      if (entityLogoFile) {
+        const uploadedUrl = await handleLogoUpload(entityLogoFile, selectedEntity.id)
+        if (uploadedUrl) {
+          logoUrl = uploadedUrl
+        } else {
+          // If logo upload fails, keep existing logo
+          console.warn("Logo upload failed, keeping existing logo")
+          // Entity type from client-data-access maps logo_url to logoUrl
+          logoUrl = (selectedEntity as any).logoUrl || (selectedEntity as any).logo_url || entityForm.logoUrl
+        }
+      }
+
+      await updateEntity(selectedEntity.id, {
+        name: entityForm.name,
+        nit: entityForm.nit,
+        representativeName: entityForm.representativeName,
+        status: entityForm.status,
+        logoUrl: logoUrl || undefined,
+      })
+      await loadData()
+      setIsEditEntityOpen(false)
+      setSelectedEntity(null)
+      setEntityForm({ name: "", nit: "", representativeName: "", status: "active", logoUrl: "" })
+      setEntityLogoFile(null)
+      setEntityLogoPreview(null)
+      logger.action("/superadmin/organizations/[id]", "Edit Entity", undefined, undefined, { organizationId, entity: entityForm })
+    } catch (err) {
+      console.error("[v0] Error updating entity:", err)
+      setEntityError("Error al actualizar la entidad")
+      logger.error("/superadmin/organizations/[id]", "Error editing entity", err)
+    } finally {
+      setSavingEntity(false)
+    }
+  }
+
+  const openEditEntity = (entity: Entity) => {
+    setSelectedEntity(entity)
+    setEntityForm({
+      name: entity.name,
+      nit: entity.nit,
+      representativeName: entity.representative_name,
+      status: entity.status as "active" | "inactive",
+      logoUrl: (entity as any).logoUrl || (entity as any).logo_url || "",
+    })
+    setEntityLogoPreview((entity as any).logoUrl || (entity as any).logo_url || null)
+    setEntityLogoFile(null)
+    setIsEditEntityOpen(true)
+    setEntityError(null)
+  }
+
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Validate file type
+      const allowedTypes = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]
+      if (!allowedTypes.includes(file.type)) {
+        setEntityError("Solo se permiten archivos de imagen (PNG, JPG, GIF, WEBP)")
+        return
+      }
+
+      // Validate file size (max 5MB)
+      const maxSize = 5 * 1024 * 1024
+      if (file.size > maxSize) {
+        setEntityError("El archivo no puede exceder 5MB")
+        return
+      }
+
+      setEntityLogoFile(file)
+      setEntityError(null)
+
+      // Create preview
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setEntityLogoPreview(reader.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const handleRemoveLogo = () => {
+    setEntityLogoFile(null)
+    setEntityLogoPreview(null)
+    setEntityForm({ ...entityForm, logoUrl: "" })
   }
 
   const handleDeleteEntity = async () => {
@@ -258,7 +415,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
       await loadData()
       setIsDeleteEntityOpen(false)
       setEntityToDelete(null)
-      logger.action("/superadmin/organizations/[id]", "Delete Entity", { organizationId, entity: entityToDelete })
+      logger.action("/superadmin/organizations/[id]", "Delete Entity", undefined, undefined, { organizationId, entity: entityToDelete })
     } catch (err) {
       console.error("[v0] Error deleting entity:", err)
       logger.error("/superadmin/organizations/[id]", "Error deleting entity", err)
@@ -318,14 +475,14 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
       setIsAddMemberOpen(false)
       setNewUserForm({ name: "", email: "", role: "member" })
       setMemberMode("existing")
-      logger.action("/superadmin/organizations/[id]", "Create New Member", {
+      logger.action("/superadmin/organizations/[id]", "Create New Member", undefined, undefined, {
         organizationId,
         email: newUserForm.email,
       })
     } catch (err) {
       console.error("[v0] Error creating member:", err)
       setMemberError("Error al crear el usuario. Es posible que el correo ya esté registrado.")
-      logger.error("/superadmin/organizations/[id]", err as Error, { action: "handleCreateNewMember" })
+      logger.error("/superadmin/organizations/[id]", err instanceof Error ? err.message : String(err), { action: "handleCreateNewMember" })
     } finally {
       setSavingMember(false)
     }
@@ -539,7 +696,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEditEntity(entity)}>
                               <Pencil className="mr-2 h-4 w-4" />
                               Editar
                             </DropdownMenuItem>
@@ -646,7 +803,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
                         {availableUsers
                           .filter(
                             (user) =>
-                              user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              user.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                               user.email?.toLowerCase().includes(searchQuery.toLowerCase()),
                           )
                           .map((user) => (
@@ -660,7 +817,7 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex-1">
-                                  <p className="font-medium text-sm">{user.full_name || "Sin nombre"}</p>
+                                  <p className="font-medium text-sm">{user.name || "Sin nombre"}</p>
                                   <p className="text-xs text-muted-foreground">{user.email}</p>
                                 </div>
                                 {selectedUserId === user.id && (
@@ -873,14 +1030,177 @@ export default function OrganizationDetailPage({ params }: { params: { id: strin
                 onChange={(e) => setEntityForm({ ...entityForm, representativeName: e.target.value })}
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="entity-logo">Logo de la Entidad (Opcional)</Label>
+              <div className="space-y-2">
+                {entityLogoPreview ? (
+                  <div className="relative inline-block">
+                    <img
+                      src={entityLogoPreview}
+                      alt="Logo preview"
+                      className="h-20 w-auto rounded border object-contain"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute -right-2 -top-2 h-6 w-6 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={handleRemoveLogo}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="entity-logo-input"
+                    className="flex h-20 w-full cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 hover:border-muted-foreground/50"
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Haz clic para subir logo</span>
+                      <span className="text-xs text-muted-foreground">PNG, JPG, GIF, WEBP (máx. 5MB)</span>
+                    </div>
+                    <input
+                      id="entity-logo-input"
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                      className="hidden"
+                      onChange={handleLogoFileChange}
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="entity-status">Estado</Label>
+              <Select
+                value={entityForm.status}
+                onValueChange={(value: "active" | "inactive") => setEntityForm({ ...entityForm, status: value })}
+              >
+                <SelectTrigger id="entity-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Activa</SelectItem>
+                  <SelectItem value="inactive">Inactiva</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddEntityOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleAddEntity} disabled={savingEntity}>
-              {savingEntity && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Button onClick={handleAddEntity} disabled={savingEntity || uploadingLogo}>
+              {(savingEntity || uploadingLogo) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Crear Entidad
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Entity Dialog */}
+      <Dialog open={isEditEntityOpen} onOpenChange={setIsEditEntityOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Entidad</DialogTitle>
+            <DialogDescription>Modifica la información de la entidad</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {entityError && (
+              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{entityError}</div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="edit-entity-name">Nombre de la entidad</Label>
+              <Input
+                id="edit-entity-name"
+                placeholder="Municipio de..."
+                value={entityForm.name}
+                onChange={(e) => setEntityForm({ ...entityForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-entity-nit">NIT</Label>
+              <Input
+                id="edit-entity-nit"
+                placeholder="900.123.456-7"
+                value={entityForm.nit}
+                onChange={(e) => setEntityForm({ ...entityForm, nit: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-entity-rep">Representante Legal</Label>
+              <Input
+                id="edit-entity-rep"
+                placeholder="Nombre del representante"
+                value={entityForm.representativeName}
+                onChange={(e) => setEntityForm({ ...entityForm, representativeName: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-entity-logo">Logo de la Entidad (Opcional)</Label>
+              <div className="space-y-2">
+                {entityLogoPreview ? (
+                  <div className="relative inline-block">
+                    <img
+                      src={entityLogoPreview}
+                      alt="Logo preview"
+                      className="h-20 w-auto rounded border object-contain"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute -right-2 -top-2 h-6 w-6 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={handleRemoveLogo}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="edit-entity-logo-input"
+                    className="flex h-20 w-full cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/25 hover:border-muted-foreground/50"
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Haz clic para subir logo</span>
+                      <span className="text-xs text-muted-foreground">PNG, JPG, GIF, WEBP (máx. 5MB)</span>
+                    </div>
+                    <input
+                      id="edit-entity-logo-input"
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                      className="hidden"
+                      onChange={handleLogoFileChange}
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-entity-status">Estado</Label>
+              <Select
+                value={entityForm.status}
+                onValueChange={(value: "active" | "inactive") => setEntityForm({ ...entityForm, status: value })}
+              >
+                <SelectTrigger id="edit-entity-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Activa</SelectItem>
+                  <SelectItem value="inactive">Inactiva</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditEntityOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleEditEntity} disabled={savingEntity || uploadingLogo || !entityForm.name.trim() || !entityForm.nit.trim()}>
+              {(savingEntity || uploadingLogo) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Guardar Cambios
             </Button>
           </DialogFooter>
         </DialogContent>

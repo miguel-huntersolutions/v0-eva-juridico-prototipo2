@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import {
   FolderKanban,
   Plus,
@@ -16,11 +17,12 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
-  Download,
+  ExternalLink,
   Calendar,
   File,
   Loader2,
   AlertCircle,
+  Check,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -63,10 +65,12 @@ import {
   createProcessType,
   updateProcessType,
   deleteProcessType,
+  updateTemplate,
 } from "@/lib/supabase/client-data-access"
 import type { ProcessType, Template } from "@/lib/supabase/client-data-access"
 
 export function ProcessTypesPage() {
+  const router = useRouter()
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
@@ -81,6 +85,9 @@ export function ProcessTypesPage() {
   const [expandedTypes, setExpandedTypes] = React.useState<Set<string>>(new Set())
   const [isTemplateDetailOpen, setIsTemplateDetailOpen] = React.useState(false)
   const [selectedTemplate, setSelectedTemplate] = React.useState<Template | null>(null)
+  const [isAssociateTemplatesOpen, setIsAssociateTemplatesOpen] = React.useState(false)
+  const [selectedTemplatesToAssociate, setSelectedTemplatesToAssociate] = React.useState<Set<string>>(new Set())
+  const [isAssociating, setIsAssociating] = React.useState(false)
 
   const [formData, setFormData] = React.useState({ name: "", description: "" })
   const [isSaving, setIsSaving] = React.useState(false)
@@ -105,8 +112,156 @@ export function ProcessTypesPage() {
     }
   }
 
+  // State to track template-process type relationships
+  const [templateProcessTypeMap, setTemplateProcessTypeMap] = React.useState<Map<string, Set<string>>>(new Map())
+
+  // Load template-process type relationships
+  React.useEffect(() => {
+    const loadTemplateRelations = async () => {
+      try {
+        const { createBrowserClient } = await import("@/lib/supabase/client")
+        const supabase = createBrowserClient()
+        const { data, error } = await supabase.from("template_process_types").select("template_id, process_type_id")
+
+        if (error) {
+          console.error("Error loading template relations:", error)
+          return
+        }
+
+        // Build a map: templateId -> Set of processTypeIds
+        const map = new Map<string, Set<string>>()
+        data?.forEach((row) => {
+          if (!map.has(row.template_id)) {
+            map.set(row.template_id, new Set())
+          }
+          map.get(row.template_id)?.add(row.process_type_id)
+        })
+
+        setTemplateProcessTypeMap(map)
+      } catch (err) {
+        console.error("Error loading template relations:", err)
+      }
+    }
+
+    loadTemplateRelations()
+  }, [templates]) // Reload when templates change
+
   const getTemplatesForType = (processTypeId: string): Template[] => {
-    return templates.filter((t) => t.process_type_id === processTypeId)
+    // Get templates associated with this process type using the many-to-many relationship
+    return templates.filter((t) => {
+      // Check if template is associated via the relation table
+      const associatedTypes = templateProcessTypeMap.get(t.id)
+      if (associatedTypes && associatedTypes.has(processTypeId)) {
+        return true
+      }
+      // Fallback to primary process_type_id for backward compatibility
+      return t.processTypeId === processTypeId
+    })
+  }
+
+  const getTemplatesFromOtherTypes = (processTypeId: string): Template[] => {
+    // Get all templates that are NOT associated with this process type
+    return templates.filter((t) => {
+      const associatedTypes = templateProcessTypeMap.get(t.id)
+      // If template has relations, check if it's associated with this process type
+      if (associatedTypes) {
+        return !associatedTypes.has(processTypeId)
+      }
+      // Fallback to primary process_type_id
+      return t.processTypeId !== processTypeId
+    })
+  }
+
+  const handleToggleTemplateSelection = (templateId: string) => {
+    setSelectedTemplatesToAssociate((prev) => {
+      const next = new Set(prev)
+      if (next.has(templateId)) {
+        next.delete(templateId)
+      } else {
+        next.add(templateId)
+      }
+      return next
+    })
+  }
+
+  const handleAssociateTemplates = async () => {
+    if (!selectedType || selectedTemplatesToAssociate.size === 0) return
+
+    try {
+      setIsAssociating(true)
+      // Associate each selected template with the current process type
+      // This uses the many-to-many relationship, so templates can be associated with multiple process types
+      const { associateTemplateWithProcessType } = await import("@/lib/supabase/client-data-access")
+      const associatePromises = Array.from(selectedTemplatesToAssociate).map((templateId) =>
+        associateTemplateWithProcessType(templateId, selectedType.id)
+      )
+
+      await Promise.all(associatePromises)
+
+      // Reload templates to reflect the changes
+      const updatedTemplates = await getTemplates()
+      setTemplates(updatedTemplates)
+
+      // Clear selection and close dialogs
+      setSelectedTemplatesToAssociate(new Set())
+      setIsAssociateTemplatesOpen(false)
+      setIsViewTemplatesOpen(false)
+    } catch (err) {
+      console.error("Error associating templates:", err)
+      setError("Error al asociar las plantillas. Por favor, intente de nuevo.")
+    } finally {
+      setIsAssociating(false)
+    }
+  }
+
+  /**
+   * Gets the Google Drive URL for a template file
+   * Handles different formats: fileId:xxx|path:yyy, direct URL, or path
+   */
+  const getTemplateDriveUrl = (fileUrl: string): string | null => {
+    if (!fileUrl) return null
+
+    // If it's already a full Google Drive URL, return it
+    if (fileUrl.startsWith("https://drive.google.com")) {
+      return fileUrl
+    }
+
+    // If it's in format "fileId:xxx|path:yyy", extract the fileId
+    if (fileUrl.startsWith("fileId:")) {
+      const fileIdMatch = fileUrl.match(/fileId:([^|]+)/)
+      if (fileIdMatch && fileIdMatch[1]) {
+        return `https://drive.google.com/file/d/${fileIdMatch[1]}/view`
+      }
+    }
+
+    // If it's just a path, we can't construct a direct link without the fileId
+    // Return null to indicate we can't open it
+    return null
+  }
+
+  /**
+   * Extracts the filename from a fileUrl (path or full URL)
+   * Returns only the part after the last /
+   */
+  const getFileNameFromUrl = (fileUrl: string): string => {
+    if (!fileUrl) return ""
+
+    // If it's in format "fileId:xxx|path:yyy", extract the path part
+    if (fileUrl.includes("|path:")) {
+      const pathMatch = fileUrl.match(/\|path:(.+)/)
+      if (pathMatch && pathMatch[1]) {
+        const path = pathMatch[1]
+        const fileName = path.split("/").pop() || path
+        return fileName
+      }
+    }
+
+    // If it's a regular path or URL, get the part after the last /
+    const fileName = fileUrl.split("/").pop() || fileUrl
+    
+    // If it's a Google Drive URL, try to get a meaningful name
+    // Otherwise, return the extracted filename
+    return fileName
   }
 
   const handleEdit = (type: ProcessType) => {
@@ -336,7 +491,7 @@ export function ProcessTypesPage() {
                           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
                             <FolderKanban className="h-5 w-5 text-primary" />
                           </div>
-                          <div className="space-y-1 flex-1">
+                          <div className="space-y-2 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <h3 className="font-semibold">{type.name}</h3>
                               {typeTemplates.length > 0 ? (
@@ -351,6 +506,25 @@ export function ProcessTypesPage() {
                               )}
                             </div>
                             <p className="text-sm text-muted-foreground max-w-xl">{type.description}</p>
+                            {/* Plantillas asociadas - siempre visible */}
+                            {typeTemplates.length > 0 && (
+                              <div className="flex items-center gap-2 flex-wrap mt-2">
+                                <span className="text-xs font-medium text-muted-foreground">Plantillas asociadas:</span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {typeTemplates.slice(0, 3).map((template) => (
+                                    <Badge key={template.id} variant="outline" className="text-xs font-normal">
+                                      <FileText className="mr-1 h-3 w-3" />
+                                      {template.name}
+                                    </Badge>
+                                  ))}
+                                  {typeTemplates.length > 3 && (
+                                    <Badge variant="outline" className="text-xs font-normal">
+                                      +{typeTemplates.length - 3} más
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -366,7 +540,7 @@ export function ProcessTypesPage() {
                                 ) : (
                                   <>
                                     <ChevronDown className="h-4 w-4" />
-                                    Ver plantillas
+                                    Ver todas
                                   </>
                                 )}
                               </Button>
@@ -416,7 +590,7 @@ export function ProcessTypesPage() {
                                   <div>
                                     <p className="text-sm font-medium">{template.name}</p>
                                     <p className="text-xs text-muted-foreground">
-                                      Creada: {new Date(template.created_at).toLocaleDateString("es-CO")}
+                                      Creada: {new Date(template.createdAt).toLocaleDateString("es-CO")}
                                     </p>
                                   </div>
                                 </div>
@@ -590,10 +764,14 @@ export function ProcessTypesPage() {
                     Este tipo de proceso no tiene plantillas configuradas
                   </p>
                   <Button
-                    variant="outline"
-                    className="mt-4 bg-transparent"
-                    onClick={() => setIsViewTemplatesOpen(false)}
+                    variant="default"
+                    className="mt-4"
+                    onClick={() => {
+                      setIsViewTemplatesOpen(false)
+                      router.push(`/superadmin/templates?processTypeId=${selectedType.id}`)
+                    }}
                   >
+                    <FileStack className="mr-2 h-4 w-4" />
                     Ir a Plantillas Maestras
                   </Button>
                 </div>
@@ -611,10 +789,10 @@ export function ProcessTypesPage() {
                         <div>
                           <p className="font-medium">{template.name}</p>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-muted-foreground">{template.file_url}</span>
+                            <span className="text-xs text-muted-foreground">{getFileNameFromUrl(template.fileUrl)}</span>
                             <span className="text-xs text-muted-foreground">•</span>
                             <span className="text-xs text-muted-foreground">
-                              {new Date(template.created_at).toLocaleDateString("es-CO")}
+                              {new Date(template.createdAt).toLocaleDateString("es-CO")}
                             </span>
                           </div>
                         </div>
@@ -631,7 +809,31 @@ export function ProcessTypesPage() {
               )}
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSelectedTemplatesToAssociate(new Set())
+                  setIsAssociateTemplatesOpen(true)
+                }}
+              >
+                <FileStack className="mr-2 h-4 w-4" />
+                Asociar Plantillas Existentes
+              </Button>
+              <Button
+                variant="default"
+                onClick={() => {
+                  setIsViewTemplatesOpen(false)
+                  if (selectedType) {
+                    router.push(`/superadmin/templates?processTypeId=${selectedType.id}`)
+                  }
+                }}
+              >
+                <FileStack className="mr-2 h-4 w-4" />
+                Crear Nueva Plantilla
+              </Button>
+            </div>
             <Button variant="outline" onClick={() => setIsViewTemplatesOpen(false)}>
               Cerrar
             </Button>
@@ -662,7 +864,7 @@ export function ProcessTypesPage() {
                     <span className="text-xs font-medium">Fecha de Creación</span>
                   </div>
                   <p className="text-sm font-medium">
-                    {new Date(selectedTemplate.created_at).toLocaleDateString("es-CO", {
+                    {new Date(selectedTemplate.createdAt).toLocaleDateString("es-CO", {
                       year: "numeric",
                       month: "long",
                       day: "numeric",
@@ -674,24 +876,123 @@ export function ProcessTypesPage() {
                     <File className="h-4 w-4" />
                     <span className="text-xs font-medium">Archivo</span>
                   </div>
-                  <p className="text-sm font-medium">{selectedTemplate.file_url}</p>
+                  <p className="text-sm font-medium">{getFileNameFromUrl(selectedTemplate.fileUrl)}</p>
                 </div>
               </div>
               <div className="flex justify-center gap-4 pt-4">
-                <Button variant="outline">
-                  <Eye className="mr-2 h-4 w-4" />
-                  Vista Previa
-                </Button>
-                <Button>
-                  <Download className="mr-2 h-4 w-4" />
-                  Descargar
-                </Button>
+                {(() => {
+                  const driveUrl = getTemplateDriveUrl(selectedTemplate.fileUrl)
+                  if (driveUrl) {
+                    return (
+                      <Button
+                        onClick={() => window.open(driveUrl, "_blank", "noopener,noreferrer")}
+                        className="gap-2"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Abrir en Google Drive
+                      </Button>
+                    )
+                  }
+                  return (
+                    <div className="text-center">
+                      <p className="text-sm text-muted-foreground">
+                        No se puede abrir el archivo. El enlace no está disponible.
+                      </p>
+                    </div>
+                  )
+                })()}
               </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsTemplateDetailOpen(false)}>
               Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Associate Templates Dialog */}
+      <Dialog open={isAssociateTemplatesOpen} onOpenChange={setIsAssociateTemplatesOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileStack className="h-5 w-5 text-primary" />
+              Asociar Plantillas Existentes a {selectedType?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Selecciona plantillas de otros tipos de proceso para asociarlas a este tipo. Las plantillas seleccionadas se moverán a este tipo de proceso.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedType && (
+            <div className="py-4">
+              {(() => {
+                const otherTemplates = getTemplatesFromOtherTypes(selectedType.id)
+                if (otherTemplates.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <FileStack className="mb-4 h-12 w-12 text-muted-foreground/50" />
+                      <h3 className="text-lg font-medium">No hay plantillas disponibles</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Todas las plantillas ya están asociadas a este tipo de proceso o no hay plantillas en el sistema
+                      </p>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                    {otherTemplates.map((template) => {
+                      const isSelected = selectedTemplatesToAssociate.has(template.id)
+                      const templateProcessType = processTypes.find((pt) => pt.id === template.processTypeId)
+
+                      return (
+                        <div
+                          key={template.id}
+                          className={`flex items-center justify-between rounded-lg border p-4 transition-colors cursor-pointer ${
+                            isSelected ? "border-primary bg-primary/5" : "hover:bg-accent/50"
+                          }`}
+                          onClick={() => handleToggleTemplateSelection(template.id)}
+                        >
+                          <div className="flex items-center gap-3 flex-1">
+                            <div
+                              className={`flex h-8 w-8 items-center justify-center rounded-md border-2 transition-colors ${
+                                isSelected
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-muted-foreground/30"
+                              }`}
+                            >
+                              {isSelected ? <Check className="h-4 w-4" /> : null}
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-medium">{template.name}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <Badge variant="outline" className="text-xs">
+                                  {templateProcessType?.name || "Tipo desconocido"}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">•</span>
+                                <span className="text-xs text-muted-foreground">{getFileNameFromUrl(template.fileUrl)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssociateTemplatesOpen(false)} disabled={isAssociating}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleAssociateTemplates}
+              disabled={isAssociating || selectedTemplatesToAssociate.size === 0}
+            >
+              {isAssociating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Asociar {selectedTemplatesToAssociate.size > 0 ? `(${selectedTemplatesToAssociate.size})` : ""}
             </Button>
           </DialogFooter>
         </DialogContent>

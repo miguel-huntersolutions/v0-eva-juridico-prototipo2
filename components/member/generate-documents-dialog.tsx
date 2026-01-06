@@ -379,6 +379,7 @@ export function GenerateDocumentsDialog({
           processId: processIdToUse,
           documentName,
           entityName: entity?.name,
+          entityId: entity?.id || processData?.entityId || process?.entityId,
           secretaryName: secretaryName,
           createdBy: profile?.id,
         }),

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 import {
   FileText,
   Plus,
@@ -13,6 +14,7 @@ import {
   Pencil,
   Trash2,
   Download,
+  ExternalLink,
   X,
   Loader2,
   type File,
@@ -66,6 +68,7 @@ interface UploadedFile {
 }
 
 export function TemplatesPage() {
+  const searchParams = useSearchParams()
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
@@ -104,6 +107,14 @@ export function TemplatesPage() {
   const [isDeleting, setIsDeleting] = React.useState(false)
   const [deleteId, setDeleteId] = React.useState<string | null>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  // Initialize filter from URL query parameter
+  React.useEffect(() => {
+    const processTypeIdFromUrl = searchParams.get("processTypeId")
+    if (processTypeIdFromUrl) {
+      setFilterProcessType(processTypeIdFromUrl)
+    }
+  }, [searchParams])
 
   React.useEffect(() => {
     async function loadData() {
@@ -153,6 +164,31 @@ export function TemplatesPage() {
   const getProcessTypeName = (processTypeId: string): string => {
     const pt = processTypes.find((p) => p.id === processTypeId)
     return pt?.name || "Sin tipo"
+  }
+
+  /**
+   * Gets the Google Drive URL for a template file
+   * Handles different formats: fileId:xxx|path:yyy, direct URL, or path
+   */
+  const getTemplateDriveUrl = (fileUrl: string): string | null => {
+    if (!fileUrl) return null
+
+    // If it's already a full Google Drive URL, return it
+    if (fileUrl.startsWith("https://drive.google.com")) {
+      return fileUrl
+    }
+
+    // If it's in format "fileId:xxx|path:yyy", extract the fileId
+    if (fileUrl.startsWith("fileId:")) {
+      const fileIdMatch = fileUrl.match(/fileId:([^|]+)/)
+      if (fileIdMatch && fileIdMatch[1]) {
+        return `https://drive.google.com/file/d/${fileIdMatch[1]}/view`
+      }
+    }
+
+    // If it's just a path, we can't construct a direct link without the fileId
+    // Return null to indicate we can't open it
+    return null
   }
 
   // Modified filteredTemplates logic slightly
@@ -709,10 +745,20 @@ SECCIONES SUGERIDAS:
                       <Eye className="mr-2 h-4 w-4" />
                       Ver Detalles
                     </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <Download className="mr-2 h-4 w-4" />
-                      Descargar
-                    </DropdownMenuItem>
+                    {(() => {
+                      const driveUrl = getTemplateDriveUrl(template.fileUrl)
+                      if (driveUrl) {
+                        return (
+                          <DropdownMenuItem
+                            onClick={() => window.open(driveUrl, "_blank", "noopener,noreferrer")}
+                          >
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            Abrir en Google Drive
+                          </DropdownMenuItem>
+                        )
+                      }
+                      return null
+                    })()}
                     <DropdownMenuItem
                       onClick={() => {
                         setSelectedTemplate(template)
@@ -1148,10 +1194,18 @@ SECCIONES SUGERIDAS:
             <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
               Cerrar
             </Button>
-            <Button>
-              <Download className="mr-2 h-4 w-4" />
-              Descargar
-            </Button>
+            {(() => {
+              const driveUrl = selectedTemplate ? getTemplateDriveUrl(selectedTemplate.fileUrl) : null
+              if (driveUrl) {
+                return (
+                  <Button onClick={() => window.open(driveUrl, "_blank", "noopener,noreferrer")}>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Abrir en Google Drive
+                  </Button>
+                )
+              }
+              return null
+            })()}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1190,6 +1244,9 @@ SECCIONES SUGERIDAS:
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Una plantilla solo puede estar asociada a un tipo de proceso. Si necesitas usar esta plantilla para múltiples tipos, puedes duplicarla y asociarla a cada tipo.
+                  </p>
                 </div>
 
                 <Separator />

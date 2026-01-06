@@ -3,6 +3,7 @@
 import * as React from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
+import { useImpersonation } from "@/lib/impersonation-context"
 
 export interface Profile {
   id: string
@@ -20,6 +21,7 @@ export function useProfile(redirectOnUnauthenticated = true) {
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const router = useRouter()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
 
   React.useEffect(() => {
     async function loadProfile() {
@@ -67,7 +69,16 @@ export function useProfile(redirectOnUnauthenticated = true) {
           }
           setProfile(defaultProfile)
         } else {
-          setProfile(profileData as Profile)
+          // If impersonating, override organization_id with the impersonated org
+          if (isImpersonating && impersonatedOrg) {
+            setProfile({
+              ...profileData,
+              organization_id: impersonatedOrg.id,
+              role: "member", // Force role to member when impersonating
+            } as Profile)
+          } else {
+            setProfile(profileData as Profile)
+          }
         }
       } catch (err) {
         console.error("[v0] useProfile error:", err)
@@ -78,7 +89,7 @@ export function useProfile(redirectOnUnauthenticated = true) {
     }
 
     loadProfile()
-  }, [router, redirectOnUnauthenticated])
+  }, [router, redirectOnUnauthenticated, isImpersonating, impersonatedOrg])
 
   return { profile, isLoading, error }
 }

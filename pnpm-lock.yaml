@@ -134,6 +134,9 @@ importers:
       docxtemplater:
         specifier: ^3.45.0
         version: 3.67.6
+      docxtemplater-image-module-free:
+        specifier: ^1.1.1
+        version: 1.1.1
       embla-carousel-react:
         specifier: 8.5.1
         version: 8.5.1(react@19.2.0)
@@ -1934,6 +1937,9 @@ packages:
   dingbat-to-unicode@1.0.1:
     resolution: {integrity: sha512-98l0sW87ZT58pU4i61wa2OHwxbiYSbuxsCBozaVnYX2iCnr3bLM3fIes1/ej7h1YdOKuKt/MLs706TVnALA65w==}
 
+  docxtemplater-image-module-free@1.1.1:
+    resolution: {integrity: sha512-aWOzVQN7ggDYjfoy3pTTNrcrZ7/CJrQcI9cT+hmyHE6nRLR67nt5yPFPe9hm9VWbfYIED2fi+3itOnF0TE/RWQ==}
+
   docxtemplater@3.67.6:
     resolution: {integrity: sha512-IvdTz9druTlQrsB0zlqvAqrImEydFgtvHp0uUnx+hQ9W4hmBsorrJIBJKCfkhK6QRz/jpJnA6BaTd6rEK6/Usw==}
     engines: {node: '>=0.10'}
@@ -2853,6 +2859,11 @@ packages:
   xmlbuilder@10.1.1:
     resolution: {integrity: sha512-OyzrcFLL/nb6fMGHbiRDuPup9ljBycsdCypwuyg5AAHvyWzGfChJpCXMG88AGTIMFhGZ9RccFN1e6lhg3hkwKg==}
     engines: {node: '>=4.0'}
+
+  xmldom@0.1.31:
+    resolution: {integrity: sha512-yS2uJflVQs6n+CyjHoaBmVSqIDevTAWrzMmjG1Gc7h1qQ7uVozNhEPJAwZXWyGQ/Gafo3fCwrcaokezLPupVyQ==}
+    engines: {node: '>=0.1'}
+    deprecated: Deprecated due to CVE-2021-21366 resolved in 0.5.0
 
   yallist@5.0.0:
     resolution: {integrity: sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==}
@@ -4559,6 +4570,10 @@ snapshots:
 
   dingbat-to-unicode@1.0.1: {}
 
+  docxtemplater-image-module-free@1.1.1:
+    dependencies:
+      xmldom: 0.1.31
+
   docxtemplater@3.67.6:
     dependencies:
       '@xmldom/xmldom': 0.9.8
@@ -5550,6 +5565,8 @@ snapshots:
   ws@8.18.3: {}
 
   xmlbuilder@10.1.1: {}
+
+  xmldom@0.1.31: {}
 
   yallist@5.0.0: {}
 

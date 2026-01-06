@@ -44,6 +44,7 @@ import { createClient } from "@/lib/supabase/client"
 import type { Profile, UserRole } from "@/lib/types/database"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import { useImpersonation } from "@/lib/impersonation-context"
 
 interface NavItem {
   title: string
@@ -110,6 +111,7 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
     ("avatar_url" in userData ? userData.avatar_url : null) || ("avatar" in userData ? (userData as any).avatar : null)
 
   const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(actualRole)
+  const { isImpersonating, impersonatedOrg, stopImpersonation } = useImpersonation()
 
   const { selectedOrganization, canChangeOrganization, clearSelection } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
@@ -181,6 +183,24 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
           <span className="text-xs text-sidebar-foreground/60">Gestión Legal</span>
         </div>
       </div>
+
+      {isImpersonating && impersonatedOrg && (
+        <div className="mx-3 mt-3 rounded-lg bg-primary/10 border border-primary/30 p-2">
+          <div className="flex items-center gap-2 text-xs text-primary">
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span className="font-medium">Suplantando: {impersonatedOrg.name}</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-1.5 h-6 w-full text-xs text-primary hover:text-primary hover:bg-primary/20"
+            onClick={stopImpersonation}
+          >
+            <RefreshCw className="mr-1.5 h-3 w-3" />
+            Salir de Suplantación
+          </Button>
+        </div>
+      )}
 
       {isSimulating && (
         <div className="mx-3 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/30 p-2">
@@ -273,6 +293,14 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
                   <Badge variant="outline" className={cn("text-[10px] h-4", getRoleBadgeColor(effectiveRole))}>
                     {getRoleLabel(effectiveRole)}
                   </Badge>
+                  {isImpersonating && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] h-4 bg-primary/20 text-primary border-primary/30"
+                    >
+                      Suplantando
+                    </Badge>
+                  )}
                   {isSimulating && (
                     <Badge
                       variant="outline"
@@ -282,6 +310,11 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
                     </Badge>
                   )}
                 </div>
+                {isImpersonating && impersonatedOrg && (
+                  <span className="text-xs text-sidebar-foreground/60 mt-0.5 truncate w-full">
+                    {impersonatedOrg.name}
+                  </span>
+                )}
               </div>
               <ChevronDown className="ml-auto h-4 w-4 text-sidebar-foreground/50" />
             </Button>
@@ -297,6 +330,19 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
               <Settings className="mr-2 h-4 w-4" />
               Configuración
             </DropdownMenuItem>
+            {isImpersonating && impersonatedOrg && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={stopImpersonation}
+                  className="bg-primary/10 text-primary hover:bg-primary/20"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Salir de Suplantación
+                  <span className="ml-auto text-xs text-muted-foreground">{impersonatedOrg.name}</span>
+                </DropdownMenuItem>
+              </>
+            )}
             {canChangeOrganization && (
               <>
                 <DropdownMenuSeparator />

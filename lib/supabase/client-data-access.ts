@@ -58,13 +58,59 @@ export interface ProcessMapped {
   driveFolderUrl?: string | null
 }
 
-// Organizations
-export async function getOrganizations() {
-  const supabase = createBrowserClient()
-  const { data, error } = await supabase.from("organizations").select("*").order("name")
+// Client-side Organization type with camelCase fields
+export interface OrganizationMapped {
+  id: string
+  name: string
+  nit: string
+  status: "active" | "inactive"
+  createdAt: string
+  updatedAt: string
+  membersCount?: number
+  entitiesCount?: number
+}
 
-  if (error) throw error
-  return data as Organization[]
+// Organizations
+export async function getOrganizations(): Promise<OrganizationMapped[]> {
+  const supabase = createBrowserClient()
+  
+  // Get organizations with member and entity counts
+  const { data: orgsData, error: orgsError } = await supabase
+    .from("organizations")
+    .select("*")
+    .order("name")
+
+  if (orgsError) throw orgsError
+
+  // Get counts for all organizations
+  const organizations = await Promise.all(
+    (orgsData || []).map(async (org) => {
+      // Get members count
+      const { count: membersCount } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+
+      // Get entities count
+      const { count: entitiesCount } = await supabase
+        .from("entities")
+        .select("*", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+
+      return {
+        id: org.id,
+        name: org.name,
+        nit: org.nit,
+        status: org.status,
+        createdAt: org.created_at,
+        updatedAt: org.updated_at,
+        membersCount: membersCount || 0,
+        entitiesCount: entitiesCount || 0,
+      } as OrganizationMapped
+    })
+  )
+
+  return organizations
 }
 
 export async function createOrganization(data: {
@@ -301,13 +347,44 @@ export async function deleteProcessType(id: string) {
 // Templates
 export async function getTemplates(processTypeId?: string) {
   const supabase = createBrowserClient()
-  let query = supabase.from("templates").select("*").order("name")
 
   if (processTypeId) {
-    query = query.eq("process_type_id", processTypeId)
+    // Use the many-to-many relationship table to get templates
+    // This allows templates to be associated with multiple process types
+    const { data: relationData, error: relationError } = await supabase
+      .from("template_process_types")
+      .select("template_id")
+      .eq("process_type_id", processTypeId)
+
+    if (relationError) throw relationError
+
+    const templateIds = (relationData || []).map((row) => row.template_id)
+
+    if (templateIds.length === 0) {
+      return [] as Template[]
+    }
+
+    // Get templates by IDs
+    const { data, error } = await supabase
+      .from("templates")
+      .select("*")
+      .in("id", templateIds)
+      .order("name")
+
+    if (error) throw error
+
+    return (data || []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      processTypeId: t.process_type_id,
+      fileUrl: t.file_url,
+      variables: t.variables || [],
+      createdAt: t.created_at?.split("T")[0] || "",
+    })) as Template[]
   }
 
-  const { data, error } = await query
+  // If no processTypeId, get all templates
+  const { data, error } = await supabase.from("templates").select("*").order("name")
   if (error) throw error
 
   return (data || []).map((t) => ({
@@ -386,6 +463,66 @@ export async function updateTemplate(
     variables: updatedTemplate.variables || [],
     createdAt: updatedTemplate.created_at?.split("T")[0] || "",
   } as Template
+}
+
+/**
+ * Associate a template with a process type (many-to-many relationship)
+ * This allows a template to be associated with multiple process types
+ */
+export async function associateTemplateWithProcessType(templateId: string, processTypeId: string) {
+  const supabase = createBrowserClient()
+
+  // Check if association already exists
+  const { data: existing } = await supabase
+    .from("template_process_types")
+    .select("id")
+    .eq("template_id", templateId)
+    .eq("process_type_id", processTypeId)
+    .single()
+
+  if (existing) {
+    // Association already exists, no need to create
+    return
+  }
+
+  // Create the association
+  const { error } = await supabase.from("template_process_types").insert({
+    template_id: templateId,
+    process_type_id: processTypeId,
+  })
+
+  if (error) throw error
+}
+
+/**
+ * Remove association between a template and a process type
+ */
+export async function removeTemplateProcessTypeAssociation(templateId: string, processTypeId: string) {
+  const supabase = createBrowserClient()
+
+  const { error } = await supabase
+    .from("template_process_types")
+    .delete()
+    .eq("template_id", templateId)
+    .eq("process_type_id", processTypeId)
+
+  if (error) throw error
+}
+
+/**
+ * Get all process type IDs associated with a template
+ */
+export async function getTemplateProcessTypes(templateId: string): Promise<string[]> {
+  const supabase = createBrowserClient()
+
+  const { data, error } = await supabase
+    .from("template_process_types")
+    .select("process_type_id")
+    .eq("template_id", templateId)
+
+  if (error) throw error
+
+  return (data || []).map((row) => row.process_type_id)
 }
 
 export async function deleteTemplate(id: string) {

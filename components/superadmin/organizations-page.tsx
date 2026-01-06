@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/router"
+import { useRouter } from "next/navigation"
 import {
   Building2,
   Users,
@@ -51,8 +51,11 @@ import {
   createOrganization,
   deleteOrganization,
   impersonateOrganization,
-  type Organization,
+  type OrganizationMapped,
 } from "@/lib/supabase/client-data-access"
+
+// Alias for backward compatibility
+type Organization = OrganizationMapped
 import { cn } from "@/lib/utils"
 import { useImpersonation } from "@/lib/impersonation-context"
 
@@ -201,7 +204,7 @@ export function OrganizationsPage() {
 
     try {
       await impersonateOrganization(orgToImpersonate.id)
-      startImpersonation(orgToImpersonate.id)
+      startImpersonation(orgToImpersonate)
     } catch (err) {
       console.error("[v0] Error impersonating organization:", err)
       setFormError("Error al suplantar la organización.")
@@ -220,7 +223,7 @@ export function OrganizationsPage() {
     total: organizations.length,
     active: organizations.filter((o) => o.status === "active").length,
     inactive: organizations.filter((o) => o.status === "inactive").length,
-    totalMembers: organizations.reduce((acc, o) => acc + (o.members_count || 0), 0),
+    totalMembers: organizations.reduce((acc, o) => acc + (o.membersCount || 0), 0),
   }
 
   const filteredOrganizations = React.useMemo(() => {
@@ -236,8 +239,8 @@ export function OrganizationsPage() {
     }
 
     result.sort((a, b) => {
-      const dateA = new Date(a.created_at).getTime()
-      const dateB = new Date(b.created_at).getTime()
+      const dateA = new Date(a.createdAt).getTime()
+      const dateB = new Date(b.createdAt).getTime()
       return sortOrder === "desc" ? dateB - dateA : dateA - dateB
     })
 
@@ -453,11 +456,11 @@ export function OrganizationsPage() {
                     <div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1.5">
                         <Users className="h-4 w-4" />
-                        <span>{org.members_count || 0} miembros</span>
+                        <span>{org.membersCount || 0} miembros</span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <Building className="h-4 w-4" />
-                        <span>{org.entities_count || 0} entidades</span>
+                        <span>{org.entitiesCount || 0} entidades</span>
                       </div>
                     </div>
 
@@ -465,7 +468,7 @@ export function OrganizationsPage() {
                       <StatusBadge status={org.status} />
                       <span className="text-xs text-muted-foreground">
                         <Calendar className="mr-1 inline-block h-3 w-3" />
-                        {new Date(org.created_at).toLocaleDateString("es-CO")}
+                        {new Date(org.createdAt).toLocaleDateString("es-CO")}
                       </span>
                     </div>
                   </CardContent>
@@ -648,8 +651,8 @@ export function OrganizationsPage() {
                 <div>
                   <p className="font-medium">{orgToImpersonate.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    NIT: {orgToImpersonate.nit} • {orgToImpersonate.members_count} miembros •{" "}
-                    {orgToImpersonate.entities_count} entidades
+                    NIT: {orgToImpersonate.nit} • {orgToImpersonate.membersCount || 0} miembros •{" "}
+                    {orgToImpersonate.entitiesCount || 0} entidades
                   </p>
                 </div>
               </div>
@@ -731,7 +734,7 @@ export function OrganizationsPage() {
                 <StatusBadge status={selectedOrg.status} />
                 <span className="text-sm text-muted-foreground">
                   Creada el{" "}
-                  {new Date(selectedOrg.created_at).toLocaleDateString("es-CO", {
+                  {new Date(selectedOrg.createdAt).toLocaleDateString("es-CO", {
                     year: "numeric",
                     month: "long",
                     day: "numeric",
@@ -745,7 +748,7 @@ export function OrganizationsPage() {
                     <Users className="h-4 w-4" />
                     Miembros
                   </div>
-                  <p className="mt-1 text-2xl font-bold">{selectedOrg.members_count || 0}</p>
+                  <p className="mt-1 text-2xl font-bold">{selectedOrg.membersCount || 0}</p>
                   <p className="text-xs text-muted-foreground">usuarios activos</p>
                 </div>
                 <div className="rounded-lg border p-4">
@@ -753,7 +756,7 @@ export function OrganizationsPage() {
                     <Building className="h-4 w-4" />
                     Entidades
                   </div>
-                  <p className="mt-1 text-2xl font-bold">{selectedOrg.entities_count || 0}</p>
+                  <p className="mt-1 text-2xl font-bold">{selectedOrg.entitiesCount || 0}</p>
                   <p className="text-xs text-muted-foreground">clientes gestionados</p>
                 </div>
               </div>
