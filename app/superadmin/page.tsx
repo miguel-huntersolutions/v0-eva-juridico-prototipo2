@@ -5,10 +5,12 @@ import { logger } from "@/lib/logger"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SuperadminDashboard } from "@/components/superadmin/dashboard"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { Loader2 } from "lucide-react"
 
 export default function SuperadminPage() {
   const { profile, isLoading } = useProfile(true)
+  const { isImpersonating } = useImpersonation()
 
   useEffect(() => {
     if (profile) {
@@ -18,7 +20,7 @@ export default function SuperadminPage() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           <p className="text-sm text-muted-foreground">Cargando...</p>
@@ -32,9 +34,9 @@ export default function SuperadminPage() {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <AppSidebar profile={profile} />
-      <main className="flex-1 overflow-auto">
+      <main className={`flex-1 overflow-y-auto ${isImpersonating ? "pt-[48px]" : ""}`}>
         <SuperadminDashboard />
       </main>
     </div>

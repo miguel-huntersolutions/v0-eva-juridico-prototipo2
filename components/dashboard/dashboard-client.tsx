@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { SuperadminDashboard } from "@/components/superadmin/dashboard"
 import { AdminDashboard } from "@/components/admin/dashboard"
 import { MemberEntitySelector } from "@/components/member/entity-selector"
+import { useImpersonation } from "@/lib/impersonation-context"
 import type { Profile } from "@/lib/types/database"
 
 interface DashboardClientProps {
@@ -11,6 +12,8 @@ interface DashboardClientProps {
 }
 
 export function DashboardClient({ profile }: DashboardClientProps) {
+  const { isImpersonating } = useImpersonation()
+
   const renderContent = () => {
     switch (profile.role) {
       case "superadmin":
@@ -25,9 +28,9 @@ export function DashboardClient({ profile }: DashboardClientProps) {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       <AppSidebar profile={profile} />
-      <main className="flex-1 overflow-auto">{renderContent()}</main>
+      <main className={`flex-1 overflow-y-auto ${isImpersonating ? "pt-[48px]" : ""}`}>{renderContent()}</main>
     </div>
   )
 }

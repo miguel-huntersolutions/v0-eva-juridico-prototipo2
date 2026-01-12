@@ -5,6 +5,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { useProfile } from "@/hooks/use-profile"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { OrganizationSelector } from "@/components/admin/organization-selector"
 import { Loader2 } from "lucide-react"
 
@@ -21,12 +22,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     isSuperadmin: actualRole === "superadmin",
     isSimulatingAdmin: isSimulating && actualRole === "superadmin",
   })
+  const { isImpersonating } = useImpersonation()
 
   const isLoading = profileLoading || !roleLoaded || !orgLoaded
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     )
@@ -47,9 +49,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen overflow-hidden">
       <AppSidebar profile={profile} selectedOrganizationId={effectiveOrganizationId || undefined} />
-      <main className="flex-1 overflow-auto bg-background">{children}</main>
+      <main className={`flex-1 overflow-y-auto bg-background ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</main>
     </div>
   )
 }
