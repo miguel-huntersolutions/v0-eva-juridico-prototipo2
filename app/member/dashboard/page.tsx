@@ -111,6 +111,13 @@ function MemberDashboardContent() {
     setProcesses((prev) => [newProcess, ...prev])
   }
 
+  // Redirect if no entity or entityId - use useEffect to avoid calling router.push during render
+  React.useEffect(() => {
+    if (!loading && !profileLoading && (!entity || !entityId)) {
+      router.push("/member")
+    }
+  }, [loading, profileLoading, entity, entityId, router])
+
   if (loading || profileLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -120,8 +127,11 @@ function MemberDashboardContent() {
   }
 
   if (!entity || !entityId) {
-    router.push("/member")
-    return null
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
   const stats = {

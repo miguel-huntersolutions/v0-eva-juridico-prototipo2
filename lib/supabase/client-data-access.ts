@@ -905,7 +905,16 @@ export async function getOrganizationMembers(organizationId: string) {
     .eq("organization_id", organizationId)
     .order("name")
 
-  if (error) throw error
+  if (error) {
+    console.error("[getOrganizationMembers] Error fetching members:", error)
+    throw error
+  }
+
+  console.log(`[getOrganizationMembers] Found ${data?.length || 0} members for organization ${organizationId}`)
+  console.log(`[getOrganizationMembers] Raw data:`, data)
+  console.log(`[getOrganizationMembers] Admin count:`, data?.filter((m: any) => m.role === "admin").length)
+  console.log(`[getOrganizationMembers] Member roles:`, data?.map((m: any) => ({ name: m.name, role: m.role, email: m.email })))
+  
   return data as Profile[]
 }
 
@@ -916,41 +925,22 @@ export async function createMember(data: {
   organizationId: string
   avatarUrl?: string
 }) {
-  const supabase = createBrowserClient()
-
-  // First, create the auth user by sending an invite
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-    email: data.email,
-    email_confirm: true,
-    user_metadata: {
-      name: data.name,
-      role: data.role,
+  // Use API route to create member (bypasses RLS using service role)
+  const response = await fetch("/api/create-member", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify(data),
   })
 
-  // If admin API is not available, we'll create profile directly
-  // The user will need to sign up separately
-  if (authError) {
-    console.log("[v0] Admin API not available, creating profile only")
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || "Failed to create member")
   }
 
-  const userId = authData?.user?.id || crypto.randomUUID()
-
-  const { data: newProfile, error } = await supabase
-    .from("profiles")
-    .insert({
-      id: userId,
-      email: data.email,
-      name: data.name,
-      role: data.role,
-      organization_id: data.organizationId,
-      avatar_url: data.avatarUrl,
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-  return newProfile as Profile
+  const result = await response.json()
+  return result.profile as Profile
 }
 
 export async function updateMember(
@@ -980,11 +970,18 @@ export async function updateMember(
 }
 
 export async function deleteMember(id: string) {
-  const supabase = createBrowserClient()
+  // Use API route to delete member (bypasses RLS using service role)
+  const response = await fetch(`/api/delete-member?memberId=${id}`, {
+    method: "DELETE",
+  })
 
-  const { error } = await supabase.from("profiles").delete().eq("id", id)
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || "Failed to delete member")
+  }
 
-  if (error) throw error
+  const result = await response.json()
+  return result
 }
 
 export async function assignExistingMember(data: {

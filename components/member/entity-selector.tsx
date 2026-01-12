@@ -2,12 +2,12 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { Building, ArrowRight, FolderKanban, FileText, Users, MapPin } from "lucide-react"
+import { Building, ArrowRight, FolderKanban, FileText, Users, MapPin, Clock, CheckCircle2, TrendingUp } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
-import { getEntities, getCurrentProfile } from "@/lib/supabase/client-data-access"
+import { getEntities, getCurrentProfile, getProcessesMapped, getDocuments } from "@/lib/supabase/client-data-access"
 import type { Entity } from "@/lib/supabase/client-data-access"
 
 export function MemberEntitySelector() {
@@ -16,6 +16,8 @@ export function MemberEntitySelector() {
   const [entities, setEntities] = React.useState<Entity[]>([])
   const [organizationName, setOrganizationName] = React.useState<string>("")
   const [isLoading, setIsLoading] = React.useState(true)
+  const [allProcesses, setAllProcesses] = React.useState<any[]>([])
+  const [allDocuments, setAllDocuments] = React.useState<any[]>([])
 
   React.useEffect(() => {
     async function loadData() {
@@ -29,6 +31,21 @@ export function MemberEntitySelector() {
           // Obtener nombre de la organización del primer resultado si existe
           if (profile.full_name) {
             setOrganizationName(profile.full_name)
+          }
+
+          // Cargar procesos y documentos para estadísticas
+          try {
+            const processes = await getProcessesMapped()
+            setAllProcesses(processes || [])
+          } catch (err) {
+            console.error("[v0] Error loading processes:", err)
+          }
+
+          try {
+            const documents = await getDocuments()
+            setAllDocuments(documents || [])
+          } catch (err) {
+            console.error("[v0] Error loading documents:", err)
           }
         }
       } catch (err) {
@@ -55,34 +72,110 @@ export function MemberEntitySelector() {
     )
   }
 
+  const totalProcesses = allProcesses.length
+  const inProgressProcesses = allProcesses.filter((p) => p.status === "in_progress").length
+  const completedProcesses = allProcesses.filter((p) => p.status === "completed").length
+  const completionRate = totalProcesses > 0 ? Math.round((completedProcesses / totalProcesses) * 100) : 0
+  const totalDocuments = allDocuments.length
+
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center p-8 bg-gradient-to-b from-background to-muted/20">
-      <div className="w-full max-w-5xl space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-4">
-          {organizationName && (
-            <div className="inline-flex items-center justify-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 text-sm text-primary">
-              <Users className="h-4 w-4" />
-              <span>{organizationName}</span>
-            </div>
-          )}
-          <h1 className="text-4xl font-bold tracking-tight">Selecciona una Entidad</h1>
-          <p className="text-lg text-muted-foreground max-w-md mx-auto">
-            Elige la entidad con la que deseas trabajar. Podrás gestionar sus procesos y documentos.
+    <div className="min-h-screen bg-background">
+      <div className="flex flex-col gap-8 p-8">
+        {/* Header Section */}
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-bold tracking-tight">Panel del Asesor</h1>
+          <p className="text-muted-foreground max-w-2xl">
+            Bienvenido, <span className="font-medium text-foreground">{organizationName || "Asesor"}</span>. Accede a
+            tus herramientas de gestión jurídica y selecciona una entidad para comenzar.
           </p>
         </div>
 
-        {/* Entity Grid */}
-        {entities.length === 0 ? (
-          <div className="text-center py-12">
-            <Building className="mx-auto h-12 w-12 text-muted-foreground/50" />
-            <h3 className="mt-4 text-lg font-medium">No hay entidades disponibles</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Contacta a tu administrador para obtener acceso a entidades.
-            </p>
+        {/* Quick Stats */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="border-border/50 bg-card/50">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Entidades Asignadas</p>
+                  <p className="text-3xl font-bold">{entities.length}</p>
+                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+                  <Building className="h-6 w-6 text-primary" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/50 bg-card/50">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Procesos Totales</p>
+                  <p className="text-3xl font-bold">{totalProcesses}</p>
+                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10">
+                  <FolderKanban className="h-6 w-6 text-blue-500" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/50 bg-card/50">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Documentos</p>
+                  <p className="text-3xl font-bold">{totalDocuments}</p>
+                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/10">
+                  <FileText className="h-6 w-6 text-emerald-500" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/50 bg-card/50">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Tasa Completado</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-3xl font-bold">{completionRate}%</p>
+                    <TrendingUp className="h-4 w-4 text-emerald-500" />
+                  </div>
+                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-500/10">
+                  <CheckCircle2 className="h-6 w-6 text-amber-500" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Entity Selection Section */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">Seleccionar Entidad</h2>
+            <Badge variant="outline" className="text-muted-foreground">
+              {entities.length} entidades
+            </Badge>
           </div>
-        ) : (
-          <div className="grid gap-6 md:grid-cols-2">
+
+          {/* Entity Grid */}
+          {entities.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted/50 mb-4">
+                  <Building className="h-8 w-8 text-muted-foreground" />
+                </div>
+                <h3 className="font-medium text-lg mb-1">No hay entidades disponibles</h3>
+                <p className="text-sm text-muted-foreground text-center max-w-sm">
+                  Contacta a tu administrador para obtener acceso a entidades.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {entities.map((entity) => (
               <Card
                 key={entity.id}
@@ -122,18 +215,25 @@ export function MemberEntitySelector() {
                   {/* Representative */}
                   <div className="flex items-center gap-2 text-sm">
                     <span className="text-muted-foreground">Rep. Legal:</span>
-                    <span className="font-medium">{entity.representative_name}</span>
+                    <span className="font-medium">{entity.representativeName || "N/A"}</span>
                   </div>
 
                   {/* Stats */}
                   <div className="flex items-center gap-4">
                     <Badge variant="secondary" className="gap-1.5 px-3 py-1">
                       <FolderKanban className="h-3.5 w-3.5" />
-                      {entity.processes_count || 0} procesos
+                      {allProcesses.filter((p) => p.entityId === entity.id).length} procesos
                     </Badge>
                     <Badge variant="secondary" className="gap-1.5 px-3 py-1">
                       <FileText className="h-3.5 w-3.5" />
-                      {entity.documents_count || 0} documentos
+                      {allDocuments.filter((d: any) => {
+                        // Document can have process_id directly or through process relation
+                        const processId = d.process_id || (d.process?.id)
+                        const process = allProcesses.find((p) => p.id === processId)
+                        // Also check if document has process.entity relation
+                        const entityIdFromProcess = process?.entityId || (d.process?.entity?.id || d.process?.entity_id)
+                        return entityIdFromProcess === entity.id
+                      }).length} documentos
                     </Badge>
                   </div>
 
@@ -153,13 +253,9 @@ export function MemberEntitySelector() {
                 </CardContent>
               </Card>
             ))}
-          </div>
-        )}
-
-        {/* Help Text */}
-        <p className="text-center text-sm text-muted-foreground">
-          ¿No encuentras tu entidad? Contacta a tu administrador para obtener acceso.
-        </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

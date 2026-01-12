@@ -46,11 +46,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   getOrganizations,
   createOrganization,
+  updateOrganization,
   deleteOrganization,
   impersonateOrganization,
+  createMember,
   type OrganizationMapped,
 } from "@/lib/supabase/client-data-access"
 
@@ -68,6 +71,7 @@ interface OrganizationFormData {
   address: string
   adminName: string
   adminEmail: string
+  status: "active" | "inactive"
 }
 
 export function OrganizationsPage() {
@@ -84,6 +88,15 @@ export function OrganizationsPage() {
   const [isImpersonateConfirmOpen, setIsImpersonateConfirmOpen] = React.useState(false)
   const [orgToImpersonate, setOrgToImpersonate] = React.useState<Organization | null>(null)
 
+  // Invite admin form states
+  const [inviteAdminForm, setInviteAdminForm] = React.useState({
+    name: "",
+    email: "",
+    message: "",
+  })
+  const [isSendingInvite, setIsSendingInvite] = React.useState(false)
+  const [inviteError, setInviteError] = React.useState<string | null>(null)
+
   const [isSaving, setIsSaving] = React.useState(false)
   const [formData, setFormData] = React.useState<OrganizationFormData>({
     name: "",
@@ -92,11 +105,25 @@ export function OrganizationsPage() {
     address: "",
     adminName: "",
     adminEmail: "",
+    status: "active",
   })
   const [formError, setFormError] = React.useState<string | null>(null)
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = React.useState(false)
   const [orgToDelete, setOrgToDelete] = React.useState<Organization | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+
+  // Edit organization states
+  const [isEditOrgOpen, setIsEditOrgOpen] = React.useState(false)
+  const [orgToEdit, setOrgToEdit] = React.useState<Organization | null>(null)
+  const [editFormData, setEditFormData] = React.useState<OrganizationFormData>({
+    name: "",
+    nit: "",
+    phone: "",
+    address: "",
+    adminName: "",
+    adminEmail: "",
+    status: "active",
+  })
 
   const { startImpersonation } = useImpersonation()
   const router = useRouter()
@@ -127,6 +154,7 @@ export function OrganizationsPage() {
       address: "",
       adminName: "",
       adminEmail: "",
+      status: "active",
     })
     setFormError(null)
   }
@@ -191,12 +219,114 @@ export function OrganizationsPage() {
 
   const handleInviteAdmin = (org: Organization) => {
     setSelectedOrg(org)
+    setInviteAdminForm({ name: "", email: "", message: "" })
+    setInviteError(null)
     setIsInviteAdminOpen(true)
+  }
+
+  const handleSendAdminInvitation = async () => {
+    if (!selectedOrg) return
+
+    if (!inviteAdminForm.name.trim() || !inviteAdminForm.email.trim()) {
+      setInviteError("El nombre y el correo electrónico son obligatorios")
+      return
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(inviteAdminForm.email)) {
+      setInviteError("Por favor ingresa un correo electrónico válido")
+      return
+    }
+
+    try {
+      setIsSendingInvite(true)
+      setInviteError(null)
+
+      // Create the admin member (this will send the invitation email automatically)
+      await createMember({
+        email: inviteAdminForm.email,
+        name: inviteAdminForm.name,
+        role: "admin",
+        organizationId: selectedOrg.id,
+      })
+
+      // Reload organizations to update counts
+      await loadOrganizations()
+
+      // Close dialog and reset form
+      setIsInviteAdminOpen(false)
+      setInviteAdminForm({ name: "", email: "", message: "" })
+      
+      alert(`Invitación enviada exitosamente a ${inviteAdminForm.email}`)
+    } catch (err) {
+      console.error("[v0] Error sending admin invitation:", err)
+      const errorMessage = err instanceof Error ? err.message : "Error al enviar la invitación"
+      setInviteError(errorMessage)
+    } finally {
+      setIsSendingInvite(false)
+    }
   }
 
   const handleImpersonate = (org: Organization) => {
     setOrgToImpersonate(org)
     setIsImpersonateConfirmOpen(true)
+  }
+
+  const handleEditOrganization = (org: Organization) => {
+    setOrgToEdit(org)
+    setEditFormData({
+      name: org.name,
+      nit: org.nit,
+      phone: "",
+      address: "",
+      adminName: "",
+      adminEmail: "",
+      status: org.status,
+    })
+    setFormError(null)
+    setIsEditOrgOpen(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!orgToEdit) return
+
+    if (!editFormData.name.trim() || !editFormData.nit.trim()) {
+      setFormError("El nombre y el NIT son obligatorios")
+      return
+    }
+
+    try {
+      setIsSaving(true)
+      setFormError(null)
+
+      await updateOrganization(orgToEdit.id, {
+        name: editFormData.name,
+        nit: editFormData.nit,
+        status: editFormData.status || "active",
+      })
+
+      await loadOrganizations()
+      setIsEditOrgOpen(false)
+      setOrgToEdit(null)
+      setEditFormData({ name: "", nit: "", phone: "", address: "", adminName: "", adminEmail: "", status: "active" })
+    } catch (err) {
+      console.error("[v0] Error updating organization:", err)
+      const errorMessage = err instanceof Error ? err.message : "Error al actualizar la organización"
+      setFormError(errorMessage)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleStatusChange = async (org: Organization, newStatus: "active" | "inactive") => {
+    try {
+      await updateOrganization(org.id, { status: newStatus })
+      await loadOrganizations()
+    } catch (err) {
+      console.error("[v0] Error changing organization status:", err)
+      setFormError("Error al cambiar el estado de la organización")
+    }
   }
 
   const confirmImpersonation = async () => {
@@ -434,7 +564,12 @@ export function OrganizationsPage() {
                             <LogIn className="mr-2 h-4 w-4" />
                             Suplantar
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleEditOrganization(org)
+                            }}
+                          >
                             <Pencil className="mr-2 h-4 w-4" />
                             Editar
                           </DropdownMenuItem>
@@ -686,13 +821,31 @@ export function OrganizationsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {inviteError && (
+              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+                {inviteError}
+              </div>
+            )}
             <div className="grid gap-2">
-              <Label htmlFor="invite-name">Nombre completo</Label>
-              <Input id="invite-name" placeholder="Nombre del administrador" />
+              <Label htmlFor="invite-name">Nombre completo *</Label>
+              <Input
+                id="invite-name"
+                placeholder="Nombre del administrador"
+                value={inviteAdminForm.name}
+                onChange={(e) => setInviteAdminForm({ ...inviteAdminForm, name: e.target.value })}
+                disabled={isSendingInvite}
+              />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="invite-email">Correo electrónico</Label>
-              <Input id="invite-email" type="email" placeholder="nuevo.admin@bufete.com" />
+              <Label htmlFor="invite-email">Correo electrónico *</Label>
+              <Input
+                id="invite-email"
+                type="email"
+                placeholder="nuevo.admin@bufete.com"
+                value={inviteAdminForm.email}
+                onChange={(e) => setInviteAdminForm({ ...inviteAdminForm, email: e.target.value })}
+                disabled={isSendingInvite}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="invite-message">Mensaje personalizado (opcional)</Label>
@@ -700,16 +853,36 @@ export function OrganizationsPage() {
                 id="invite-message"
                 placeholder="Escribe un mensaje para incluir en la invitación..."
                 rows={3}
+                value={inviteAdminForm.message}
+                onChange={(e) => setInviteAdminForm({ ...inviteAdminForm, message: e.target.value })}
+                disabled={isSendingInvite}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsInviteAdminOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsInviteAdminOpen(false)
+                setInviteAdminForm({ name: "", email: "", message: "" })
+                setInviteError(null)
+              }}
+              disabled={isSendingInvite}
+            >
               Cancelar
             </Button>
-            <Button onClick={() => setIsInviteAdminOpen(false)}>
-              <Mail className="mr-2 h-4 w-4" />
-              Enviar Invitación
+            <Button onClick={handleSendAdminInvitation} disabled={isSendingInvite}>
+              {isSendingInvite ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Mail className="mr-2 h-4 w-4" />
+                  Enviar Invitación
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -769,7 +942,14 @@ export function OrganizationsPage() {
                     Invitar Administrador
                   </Button>
 
-                  <Button variant="outline" size="sm">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setIsDetailOpen(false)
+                      handleEditOrganization(selectedOrg)
+                    }}
+                  >
                     <Pencil className="mr-2 h-4 w-4" />
                     Editar Datos
                   </Button>
@@ -785,6 +965,87 @@ export function OrganizationsPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Organization Dialog */}
+      <Dialog open={isEditOrgOpen} onOpenChange={setIsEditOrgOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Organización</DialogTitle>
+            <DialogDescription>
+              Modifica los datos de {orgToEdit?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {formError && (
+              <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+                {formError}
+              </div>
+            )}
+            <div className="grid gap-2">
+              <Label htmlFor="edit-org-name">Nombre *</Label>
+              <Input
+                id="edit-org-name"
+                placeholder="Nombre de la organización"
+                value={editFormData.name}
+                onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                disabled={isSaving}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-org-nit">NIT *</Label>
+              <Input
+                id="edit-org-nit"
+                placeholder="Número de identificación tributaria"
+                value={editFormData.nit}
+                onChange={(e) => setEditFormData({ ...editFormData, nit: e.target.value })}
+                disabled={isSaving}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-org-status">Estado *</Label>
+              <Select
+                value={editFormData.status || "active"}
+                onValueChange={(value: "active" | "inactive") =>
+                  setEditFormData({ ...editFormData, status: value })
+                }
+                disabled={isSaving}
+              >
+                <SelectTrigger id="edit-org-status">
+                  <SelectValue placeholder="Selecciona un estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Activa</SelectItem>
+                  <SelectItem value="inactive">Inactiva</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsEditOrgOpen(false)
+                setOrgToEdit(null)
+                setEditFormData({ name: "", nit: "", phone: "", address: "", adminName: "", adminEmail: "", status: "active" })
+                setFormError(null)
+              }}
+              disabled={isSaving}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar Cambios"
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

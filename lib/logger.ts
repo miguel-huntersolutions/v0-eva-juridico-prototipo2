@@ -64,14 +64,43 @@ export const logger = {
 
   // Error tracking
   error: (page: string, error: string, errorDetails?: any, userId?: string, role?: string) => {
+    // Ensure error is a string
+    const errorString = typeof error === "string" ? error : error instanceof Error ? error.message : String(error)
+    
+    // Safely extract error details
+    let errorData: Record<string, any> | undefined = undefined
+    if (errorDetails) {
+      if (errorDetails instanceof Error) {
+        errorData = {
+          message: errorDetails.message,
+          name: errorDetails.name,
+          stack: errorDetails.stack,
+        }
+      } else if (typeof errorDetails === "object" && errorDetails !== null) {
+        // If it's an object, try to extract useful information
+        errorData = {
+          ...(errorDetails.message ? { message: errorDetails.message } : {}),
+          ...(errorDetails.name ? { name: errorDetails.name } : {}),
+          ...(errorDetails.code ? { code: errorDetails.code } : {}),
+          ...(errorDetails.status ? { status: errorDetails.status } : {}),
+          // Include other properties but avoid circular references
+          ...Object.fromEntries(
+            Object.entries(errorDetails).filter(([key]) => !["stack", "cause"].includes(key))
+          ),
+        }
+      } else {
+        errorData = { error: errorDetails }
+      }
+    }
+
     const event: LogEvent = {
       timestamp: new Date().toISOString(),
       level: "error",
       page,
-      event: `ERROR: ${error}`,
+      event: `ERROR: ${errorString}`,
       userId,
       role,
-      data: errorDetails ? { error: errorDetails?.message || errorDetails } : undefined,
+      data: errorData,
     }
     console.error(formatLog(event))
   },

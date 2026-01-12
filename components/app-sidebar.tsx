@@ -1,6 +1,6 @@
 "use client"
 
-import type * as React from "react"
+import * as React from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -119,7 +119,14 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
     isSimulatingAdmin: isSimulating && effectiveRole === "admin",
   })
 
-  const filteredItems = navItems.filter((item) => item.roles.includes(effectiveRole))
+  const filteredItems = React.useMemo(() => {
+    const filtered = navItems.filter((item) => item.roles.includes(effectiveRole))
+    // Debug: log filtered items in development
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Sidebar] Effective role:", effectiveRole, "Filtered items:", filtered.map((i) => i.href))
+    }
+    return filtered
+  }, [effectiveRole])
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
@@ -172,9 +179,9 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
   }
 
   return (
-    <aside className="flex h-screen w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
+    <aside className="flex h-screen w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border overflow-hidden">
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
+      <div className="flex-shrink-0 flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
           <FileText className="h-5 w-5 text-primary-foreground" />
         </div>
@@ -184,64 +191,69 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
         </div>
       </div>
 
-      {isImpersonating && impersonatedOrg && (
-        <div className="mx-3 mt-3 rounded-lg bg-primary/10 border border-primary/30 p-2">
-          <div className="flex items-center gap-2 text-xs text-primary">
-            <RefreshCw className="h-3.5 w-3.5" />
-            <span className="font-medium">Suplantando: {impersonatedOrg.name}</span>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-1.5 h-6 w-full text-xs text-primary hover:text-primary hover:bg-primary/20"
-            onClick={stopImpersonation}
-          >
-            <RefreshCw className="mr-1.5 h-3 w-3" />
-            Salir de Suplantación
-          </Button>
-        </div>
-      )}
-
-      {isSimulating && (
-        <div className="mx-3 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/30 p-2">
-          <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
-            <ArrowLeftRight className="h-3.5 w-3.5" />
-            <span className="font-medium">Modo vista: {getRoleLabel(effectiveRole)}</span>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-1.5 h-6 w-full text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/20"
-            onClick={() => handleRoleSwitch(null)}
-          >
-            <ShieldCheck className="mr-1.5 h-3 w-3" />
-            Volver a Superadmin
-          </Button>
-        </div>
-      )}
-
-      {effectiveRole === "admin" && selectedOrganization && (
-        <div className="mx-3 mt-3 rounded-lg bg-muted/50 border p-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Building2 className="h-3.5 w-3.5" />
-            <span className="font-medium truncate">{selectedOrganization.name}</span>
-          </div>
-          {canChangeOrganization && (
-            <Button variant="ghost" size="sm" className="mt-1.5 h-6 w-full text-xs" onClick={handleChangeOrganization}>
+      {/* Status Banners */}
+      {(isImpersonating || isSimulating || (effectiveRole === "admin" && selectedOrganization)) && (
+        <div className="flex-shrink-0 space-y-2 px-3 pt-3">
+        {isImpersonating && impersonatedOrg && (
+          <div className="rounded-lg bg-primary/10 border border-primary/30 p-2">
+            <div className="flex items-center gap-2 text-xs text-primary">
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span className="font-medium">Suplantando: {impersonatedOrg.name}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-1.5 h-6 w-full text-xs text-primary hover:text-primary hover:bg-primary/20"
+              onClick={stopImpersonation}
+            >
               <RefreshCw className="mr-1.5 h-3 w-3" />
-              Cambiar Organización
+              Salir de Suplantación
             </Button>
-          )}
+          </div>
+        )}
+
+        {isSimulating && (
+          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-2">
+            <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+              <span className="font-medium">Modo vista: {getRoleLabel(effectiveRole)}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-1.5 h-6 w-full text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/20"
+              onClick={() => handleRoleSwitch(null)}
+            >
+              <ShieldCheck className="mr-1.5 h-3 w-3" />
+              Volver a Superadmin
+            </Button>
+          </div>
+        )}
+
+        {effectiveRole === "admin" && selectedOrganization && (
+          <div className="rounded-lg bg-muted/50 border p-2">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Building2 className="h-3.5 w-3.5" />
+              <span className="font-medium truncate">{selectedOrganization.name}</span>
+            </div>
+            {canChangeOrganization && (
+              <Button variant="ghost" size="sm" className="mt-1.5 h-6 w-full text-xs" onClick={handleChangeOrganization}>
+                <RefreshCw className="mr-1.5 h-3 w-3" />
+                Cambiar Organización
+              </Button>
+            )}
+          </div>
+        )}
         </div>
       )}
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 min-h-0 space-y-1 overflow-y-auto px-3 py-4">
         {filteredItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
           return (
             <Link
-              key={item.href + item.title}
+              key={`${item.href}-${item.title}`}
               href={item.href}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
@@ -266,7 +278,7 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
       </nav>
 
       {/* Theme Toggle */}
-      <div className="border-t border-sidebar-border px-3 py-3">
+      <div className="flex-shrink-0 border-t border-sidebar-border px-3 py-3">
         <div className="flex items-center justify-between">
           <span className="text-xs text-sidebar-foreground/60">Apariencia</span>
           <ThemeToggle variant="switch" />
@@ -274,7 +286,7 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
       </div>
 
       {/* User Profile */}
-      <div className="border-t border-sidebar-border p-3">
+      <div className="flex-shrink-0 border-t border-sidebar-border p-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="w-full justify-start gap-3 px-2 py-6 hover:bg-sidebar-accent">

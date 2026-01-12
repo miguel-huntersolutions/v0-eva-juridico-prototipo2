@@ -136,6 +136,11 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
       setOrganization(org || null)
       setMembers(membersList)
       setEntities(entitiesList)
+      
+      // Debug: Log members data
+      console.log("[loadData] Members loaded:", membersList)
+      console.log("[loadData] Admin count:", membersList.filter((m) => m.role === "admin").length)
+      console.log("[loadData] Member roles:", membersList.map((m) => ({ name: m.name, role: m.role })))
       logger.fetch("/superadmin/organizations/[id]", "Organization data", true, Date.now() - startTime)
       logger.pageLoaded("/superadmin/organizations/[id]", Date.now() - pageLoadTime.current)
     } catch (err) {
@@ -224,9 +229,15 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
       await loadData()
       setIsDeleteMemberOpen(false)
       setMemberToDelete(null)
-      logger.action("/superadmin/organizations/[id]", "Delete Member", undefined, undefined, { organizationId, member: memberToDelete })
+      logger.action("/superadmin/organizations/[id]", "Delete Member", undefined, undefined, {
+        organizationId,
+        memberId: memberToDelete.id,
+        memberEmail: memberToDelete.email,
+      })
     } catch (err) {
       console.error("[v0] Error deleting member:", err)
+      const errorMessage = err instanceof Error ? err.message : "Error desconocido al eliminar el miembro"
+      alert(`Error al eliminar el miembro: ${errorMessage}`)
       logger.error("/superadmin/organizations/[id]", "Error deleting member", err)
     } finally {
       setIsDeleting(false)
@@ -434,6 +445,62 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
     setIsEditMemberOpen(true)
   }
 
+  const handleSendInvitation = async (member: Profile) => {
+    try {
+      setSavingMember(true)
+      setMemberError(null)
+
+      console.log("[handleSendInvitation] Sending invitation to:", member.email, "for organization:", organizationId)
+
+      const response = await fetch("/api/send-invitation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          memberId: member.id,
+          organizationId,
+        }),
+      })
+
+      console.log("[handleSendInvitation] Response status:", response.status)
+
+      if (!response.ok) {
+        let errorMessage = "Error al enviar la invitación"
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.message || errorData.error || errorMessage
+          console.error("[handleSendInvitation] Error response:", errorData)
+        } catch (parseError) {
+          const text = await response.text()
+          console.error("[handleSendInvitation] Error response (text):", text)
+          errorMessage = text || errorMessage
+        }
+        throw new Error(errorMessage)
+      }
+
+      const result = await response.json()
+      console.log("[handleSendInvitation] Success:", result)
+
+      // Show success message
+      alert(result.message || `Invitación enviada exitosamente a ${member.email}`)
+
+      logger.action("/superadmin/organizations/[id]", "Send Invitation", undefined, undefined, {
+        organizationId,
+        memberId: member.id,
+        memberEmail: member.email,
+      })
+    } catch (err) {
+      console.error("[handleSendInvitation] Error:", err)
+      const errorMessage = err instanceof Error ? err.message : "Error desconocido al enviar la invitación"
+      setMemberError(errorMessage)
+      alert(`Error al enviar invitación: ${errorMessage}`)
+      logger.error("/superadmin/organizations/[id]", "Error sending invitation", err)
+    } finally {
+      setSavingMember(false)
+    }
+  }
+
   const getRoleBadge = (role: string) => {
     switch (role) {
       case "admin":
@@ -482,7 +549,18 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
     } catch (err) {
       console.error("[v0] Error creating member:", err)
       setMemberError("Error al crear el usuario. Es posible que el correo ya esté registrado.")
-      logger.error("/superadmin/organizations/[id]", err instanceof Error ? err.message : String(err), { action: "handleCreateNewMember" })
+      // Extract error message safely
+      let errorMessage = "Error desconocido"
+      if (err instanceof Error) {
+        errorMessage = err.message || "Error al crear el usuario"
+      } else if (typeof err === "string") {
+        errorMessage = err
+      } else if (err && typeof err === "object" && "message" in err) {
+        errorMessage = String(err.message)
+      } else {
+        errorMessage = JSON.stringify(err)
+      }
+      logger.error("/superadmin/organizations/[id]", errorMessage, err, undefined, undefined)
     } finally {
       setSavingMember(false)
     }
@@ -547,7 +625,13 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
             <UserPlus className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{members.filter((m) => m.role === "admin").length}</div>
+            <div className="text-2xl font-bold">
+              {(() => {
+                const adminCount = members.filter((m) => m.role === "admin").length
+                console.log("[Admin Count] Total members:", members.length, "Admin count:", adminCount, "Members:", members.map(m => ({ name: m.name, role: m.role })))
+                return adminCount
+              })()}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -629,7 +713,7 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
                               <Pencil className="mr-2 h-4 w-4" />
                               Editar
                             </DropdownMenuItem>
-                            <DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleSendInvitation(member)}>
                               <Mail className="mr-2 h-4 w-4" />
                               Enviar Invitación
                             </DropdownMenuItem>
