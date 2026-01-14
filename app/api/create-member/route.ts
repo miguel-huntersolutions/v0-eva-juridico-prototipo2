@@ -18,20 +18,45 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Verify user is superadmin
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    // Verify user is superadmin or admin
+    const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single()
 
-    if (!profile || profile.role !== "superadmin") {
-      return NextResponse.json({ error: "Forbidden: Only superadmins can create members" }, { status: 403 })
+    if (!profile || (profile.role !== "superadmin" && profile.role !== "admin")) {
+      return NextResponse.json(
+        { error: "Forbidden: Only superadmins and admins can create members" },
+        { status: 403 },
+      )
     }
 
     const body = await request.json()
     const { email, name, role, organizationId, avatarUrl } = body
 
+    console.log("[create-member] Request body:", { email, name, role, organizationId })
+
     if (!email || !name || !role || !organizationId) {
       return NextResponse.json(
         { error: "Missing required fields: email, name, role, organizationId" },
         { status: 400 },
+      )
+    }
+
+    // Ensure role is 'member' (not 'admin') when creating from admin panel
+    const finalRole = role === "member" ? "member" : "member"
+    console.log("[create-member] Final role to use:", finalRole)
+
+    // If user is admin (not superadmin), verify they can only create members in their own organization
+    if (profile.role === "admin" && profile.organization_id !== organizationId) {
+      return NextResponse.json(
+        { error: "Forbidden: Admins can only create members in their own organization" },
+        { status: 403 },
+      )
+    }
+
+    // Verify that admins can only create members (not other admins)
+    if (profile.role === "admin" && role === "admin") {
+      return NextResponse.json(
+        { error: "Forbidden: Admins can only create members, not other admins" },
+        { status: 403 },
       )
     }
 
@@ -56,17 +81,29 @@ export async function POST(request: NextRequest) {
     const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/callback?invite=true&org=${organizationId}`
     
     // Use inviteUserByEmail instead of createUser to automatically send invitation email
+    // Note: The 'data' field goes to user_metadata, but the trigger reads from raw_user_meta_data
+    // We need to ensure the role is explicitly set in the profile after creation
+    console.log("[create-member] Inviting user with role:", finalRole)
+    console.log("[create-member] Inviting user with metadata:", { name, role: finalRole, organization_id: organizationId })
     const { data: inviteData, error: inviteError } = await serviceRoleClient.auth.admin.inviteUserByEmail(
       email,
       {
         data: {
           name,
-          role,
+          role: finalRole, // Use finalRole to ensure it's 'member'
           organization_id: organizationId,
         },
         redirectTo,
       },
     )
+    
+    if (inviteData?.user) {
+      console.log("[create-member] User created, checking raw_user_meta_data:", inviteData.user.user_metadata)
+      // Also check if we can read the user's metadata directly
+      const { data: userData } = await serviceRoleClient.auth.admin.getUserById(inviteData.user.id)
+      console.log("[create-member] User metadata from getUserById:", userData?.user?.user_metadata)
+      console.log("[create-member] User raw_user_meta_data from getUserById:", userData?.user?.raw_user_meta_data)
+    }
 
     if (inviteError) {
       console.error("Error inviting user:", inviteError)
@@ -100,7 +137,7 @@ export async function POST(request: NextRequest) {
               .update({
                 email,
                 name,
-                role,
+                role: finalRole, // Use finalRole to ensure it's 'member'
                 organization_id: organizationId,
                 avatar_url: avatarUrl || null,
               })
@@ -170,27 +207,45 @@ export async function POST(request: NextRequest) {
 
     // The trigger handle_new_user() automatically creates a profile when auth user is created
     // So we need to update the existing profile instead of inserting
-    // Wait a moment for the trigger to execute
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Wait a moment for the trigger to execute (increased timeout)
+    await new Promise((resolve) => setTimeout(resolve, 1000))
 
-    // Check if profile exists (created by trigger)
-    const { data: existingProfile } = await serviceRoleClient
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single()
+    // Check if profile exists (created by trigger) - retry up to 3 times
+    let existingProfile = null
+    let retries = 0
+    while (retries < 3 && !existingProfile) {
+      const { data: profile, error: profileError } = await serviceRoleClient
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single()
+      
+      if (profile && !profileError) {
+        existingProfile = profile
+        break
+      }
+      
+      if (retries < 2) {
+        console.log(`[create-member] Profile not found yet, retrying... (attempt ${retries + 1})`)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      retries++
+    }
 
     let newProfile
 
     if (existingProfile) {
       console.log("[create-member] Profile exists, updating with organization_id:", organizationId)
-      // Update existing profile with correct data
+      console.log("[create-member] Current profile:", { id: existingProfile.id, organization_id: existingProfile.organization_id, role: existingProfile.role })
+      console.log("[create-member] Updating with role:", finalRole, "organizationId:", organizationId)
+      
+      // Update existing profile with correct data - ensure role is set correctly
       const { data: updatedProfile, error: updateError } = await serviceRoleClient
         .from("profiles")
         .update({
           email,
           name,
-          role,
+          role: finalRole, // Use finalRole to ensure it's 'member'
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
         })
@@ -199,7 +254,7 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (updateError) {
-        console.error("Error updating profile:", updateError)
+        console.error("[create-member] Error updating profile:", updateError)
         // Try to clean up auth user if profile update fails
         await serviceRoleClient.auth.admin.deleteUser(userId)
         return NextResponse.json(
@@ -208,17 +263,70 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      console.log("[create-member] Profile updated successfully:", updatedProfile)
-      newProfile = updatedProfile
+      console.log("[create-member] Profile updated successfully:", { 
+        id: updatedProfile.id, 
+        email: updatedProfile.email, 
+        organization_id: updatedProfile.organization_id,
+        role: updatedProfile.role 
+      })
+      
+      // Re-read the profile to ensure we have the latest data
+      const { data: reReadProfile } = await serviceRoleClient
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single()
+      
+      console.log("[create-member] Re-read profile after update:", { 
+        id: reReadProfile?.id, 
+        role: reReadProfile?.role,
+        organization_id: reReadProfile?.organization_id 
+      })
+      
+      // Verify the role was updated correctly - retry up to 3 times if needed
+      let profileToUse = reReadProfile || updatedProfile
+      let retryCount = 0
+      while (profileToUse.role !== finalRole && retryCount < 3) {
+        console.warn(`[create-member] WARNING: Role mismatch! Expected '${finalRole}' but got '${profileToUse.role}'. Retrying update... (attempt ${retryCount + 1})`)
+        // Wait a bit before retrying
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        
+        // Retry the update
+        const { data: retryProfile, error: retryError } = await serviceRoleClient
+          .from("profiles")
+          .update({ role: finalRole })
+          .eq("id", userId)
+          .select()
+          .single()
+        
+        if (retryError) {
+          console.error("[create-member] Error retrying role update:", retryError)
+          break
+        } else {
+          console.log("[create-member] Role after retry:", retryProfile.role)
+          profileToUse = retryProfile
+        }
+        retryCount++
+      }
+      
+      // Final verification
+      if (profileToUse.role !== finalRole) {
+        console.error(`[create-member] CRITICAL: Failed to set role to '${finalRole}' after ${retryCount} attempts. Final role: '${profileToUse.role}'`)
+      } else {
+        console.log(`[create-member] SUCCESS: Role correctly set to '${finalRole}'`)
+      }
+      
+      newProfile = profileToUse
     } else {
       // Profile doesn't exist (trigger didn't fire?), create it manually
+      console.log("[create-member] Profile doesn't exist, creating manually with role:", finalRole)
       const { data: createdProfile, error: insertError } = await serviceRoleClient
         .from("profiles")
         .insert({
           id: userId,
           email,
           name,
-          role,
+          role: finalRole, // Use finalRole to ensure it's 'member'
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
         })
@@ -235,9 +343,73 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      newProfile = createdProfile
+      console.log("[create-member] Profile created successfully:", { 
+        id: createdProfile.id, 
+        email: createdProfile.email, 
+        organization_id: createdProfile.organization_id,
+        role: createdProfile.role 
+      })
+      
+      // Verify the role was set correctly - retry up to 3 times if needed
+      let profileToUse = createdProfile
+      let retryCount = 0
+      while (profileToUse.role !== finalRole && retryCount < 3) {
+        console.warn(`[create-member] WARNING: Role mismatch on creation! Expected '${finalRole}' but got '${profileToUse.role}'. Updating... (attempt ${retryCount + 1})`)
+        // Wait a bit before retrying
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        
+        const { data: fixedProfile, error: fixError } = await serviceRoleClient
+          .from("profiles")
+          .update({ role: finalRole })
+          .eq("id", userId)
+          .select()
+          .single()
+        
+        if (fixError) {
+          console.error("[create-member] Error fixing role:", fixError)
+          break
+        } else {
+          console.log("[create-member] Role after fix attempt:", fixedProfile.role)
+          profileToUse = fixedProfile
+        }
+        retryCount++
+      }
+      
+      // Final verification
+      if (profileToUse.role !== finalRole) {
+        console.error(`[create-member] CRITICAL: Failed to set role to '${finalRole}' after ${retryCount} attempts. Final role: '${profileToUse.role}'`)
+      } else {
+        console.log(`[create-member] SUCCESS: Role correctly set to '${finalRole}'`)
+      }
+      
+      newProfile = profileToUse
     }
 
+    // Final check: verify role one more time before returning
+    const { data: finalProfileCheck } = await serviceRoleClient
+      .from("profiles")
+      .select("role")
+      .eq("id", newProfile.id)
+      .single()
+    
+    if (finalProfileCheck && finalProfileCheck.role !== finalRole) {
+      console.error(`[create-member] FINAL CHECK FAILED: Profile role is '${finalProfileCheck.role}' but should be '${finalRole}'. Attempting one final update...`)
+      const { error: finalUpdateError } = await serviceRoleClient
+        .from("profiles")
+        .update({ role: finalRole })
+        .eq("id", newProfile.id)
+      
+      if (finalUpdateError) {
+        console.error("[create-member] Error in final role update:", finalUpdateError)
+      } else {
+        console.log("[create-member] Final role update successful")
+        // Update newProfile to reflect the correct role
+        newProfile = { ...newProfile, role: finalRole }
+      }
+    }
+
+    console.log("[create-member] Returning profile with role:", newProfile.role)
+    
     return NextResponse.json({
       success: true,
       profile: {

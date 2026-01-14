@@ -46,7 +46,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import type { Entity } from "@/lib/mock-data"
+import type { EntityMapped } from "@/lib/supabase/client-data-access"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -59,7 +59,8 @@ import {
   getOrganizations,
   getSecretaries,
   getOrganizationMembers,
-  type Organization,
+  getProcessesMapped,
+  type OrganizationMapped,
   type Profile,
   type Secretary,
 } from "@/lib/supabase/client-data-access"
@@ -75,8 +76,9 @@ interface SecretaryForm {
 }
 
 export function EntitiesPage() {
-  const { profile, loading: profileLoading } = useProfile()
-  const { effectiveRole, isSuperadmin } = useRoleSwitcher()
+  const { profile, isLoading: profileLoading } = useProfile()
+  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role)
+  const isSuperadmin = actualRole === "superadmin"
   const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
 
   const {
@@ -96,22 +98,28 @@ export function EntitiesPage() {
   // Added isDeleteOpen state
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
   const [isAssignMembersOpen, setIsAssignMembersOpen] = React.useState(false)
-  const [selectedEntity, setSelectedEntity] = React.useState<Entity | null>(null)
+  const [selectedEntity, setSelectedEntity] = React.useState<EntityMapped | null>(null)
   const [currentStep, setCurrentStep] = React.useState(1)
 
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
   // Added loading and saving states
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false) // Added state for detail dialog
 
-  const [organizations, setOrganizations] = React.useState<Organization[]>([])
+  const [organizations, setOrganizations] = React.useState<OrganizationMapped[]>([])
   const [loadingOrgs, setLoadingOrgs] = React.useState(false)
 
   const [members, setMembers] = React.useState<Profile[]>([])
   const [secretaries, setSecretaries] = React.useState<Secretary[]>([])
   const [loadingMembers, setLoadingMembers] = React.useState(false)
+  const [entityProcessStats, setEntityProcessStats] = React.useState<{
+    total: number
+    inProgress: number
+    completed: number
+  } | null>(null)
+  const [loadingProcessStats, setLoadingProcessStats] = React.useState(false)
 
   const [formData, setFormData] = React.useState({
     name: "",
@@ -207,7 +215,7 @@ export function EntitiesPage() {
   }
 
   const handleCreate = () => {
-    const newEntity: Entity = {
+    const newEntity: EntityMapped = {
       id: `ent-${Date.now()}`,
       name: formData.name,
       nit: formData.nit,
@@ -295,7 +303,7 @@ export function EntitiesPage() {
     }
   }
 
-  const handleDelete = (entity: Entity) => {
+  const handleDelete = (entity: EntityMapped) => {
     console.log("Deleting entity:", entity)
     setEntities(entities.filter((e) => e.id !== entity.id))
   }
@@ -336,7 +344,7 @@ export function EntitiesPage() {
     setSelectedMembers([]) // Reset selected members as well
   }
 
-  const openEditDialog = async (entity: Entity) => {
+  const openEditDialog = async (entity: EntityMapped) => {
     setSelectedEntity(entity)
 
     // Load secretaries from database
@@ -380,19 +388,52 @@ export function EntitiesPage() {
     setIsEditOpen(true)
   }
 
-  const openDetailDialog = (entity: Entity) => {
+  const openDetailDialog = async (entity: EntityMapped) => {
     setSelectedEntity(entity)
-    setIsDetailOpen(true) // Set the state for the detail dialog
+    setIsDetailOpen(true)
+    setLoadingProcessStats(true)
+    
+    // Load secretaries for this entity
+    try {
+      const entitySecretaries = await getSecretaries(entity.id)
+      setSecretaries(entitySecretaries)
+    } catch (err) {
+      console.error("Error loading secretaries:", err)
+      setSecretaries([])
+    }
+    
+    // Load process statistics for this entity
+    try {
+      const processes = await getProcessesMapped({ entityId: entity.id })
+      const total = processes.length
+      const inProgress = processes.filter((p) => p.status === "in_progress" || p.status === "review").length
+      const completed = processes.filter((p) => p.status === "completed").length
+      
+      setEntityProcessStats({
+        total,
+        inProgress,
+        completed,
+      })
+    } catch (err) {
+      console.error("Error loading process stats:", err)
+      setEntityProcessStats({
+        total: entity.processesCount || 0,
+        inProgress: 0,
+        completed: 0,
+      })
+    } finally {
+      setLoadingProcessStats(false)
+    }
   }
 
-  const openAssignDialog = (entity: Entity) => {
+  const openAssignDialog = (entity: EntityMapped) => {
     setSelectedEntity(entity)
     // setSelectedMembers(["3", "4"]) // Mock pre-selected members
     setIsAssignMembersOpen(true)
   }
 
   // Added openDeleteDialog
-  const openDeleteDialog = (entity: Entity) => {
+  const openDeleteDialog = (entity: EntityMapped) => {
     setSelectedEntity(entity)
     setIsDeleteOpen(true)
   }
@@ -491,7 +532,7 @@ export function EntitiesPage() {
                     key={org.id}
                     variant="outline"
                     className="w-full justify-start h-auto py-3 bg-transparent"
-                    onClick={() => selectOrganization(org)}
+                    onClick={() => selectOrganization(org as any)}
                   >
                     <Building className="mr-3 h-5 w-5 text-muted-foreground" />
                     <div className="text-left">
@@ -513,13 +554,12 @@ export function EntitiesPage() {
       <PageHeader
         title="Gestión de Entidades"
         description="Administra los clientes de tu organización"
-        action={
-          <Button onClick={() => setIsCreateOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Nueva Entidad
-          </Button>
-        }
-      />
+      >
+        <Button onClick={() => setIsCreateOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          Nueva Entidad
+        </Button>
+      </PageHeader>
 
       {/* Stats Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -1283,25 +1323,30 @@ export function EntitiesPage() {
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Contacto</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Teléfono:</span>
-                      <p className="font-medium">+57 1 234 5678</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Email:</span>
-                      <p className="font-medium">contacto@entidad.gov.co</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Dirección:</span>
-                      <p className="font-medium">Calle 123 #45-67, Bogotá</p>
-                    </div>
-                  </CardContent>
-                </Card>
+                {secretaries.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Contacto Principal</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                      {secretaries[0]?.email && (
+                        <div>
+                          <span className="text-muted-foreground">Email:</span>
+                          <p className="font-medium">{secretaries[0].email}</p>
+                        </div>
+                      )}
+                      {secretaries[0]?.phone && (
+                        <div>
+                          <span className="text-muted-foreground">Teléfono:</span>
+                          <p className="font-medium">{secretaries[0].phone}</p>
+                        </div>
+                      )}
+                      {!secretaries[0]?.email && !secretaries[0]?.phone && (
+                        <p className="text-muted-foreground text-xs">No hay información de contacto disponible</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
               </div>
 
               <Card>
@@ -1339,73 +1384,71 @@ export function EntitiesPage() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm">Documentos de Contexto</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-8 w-8 text-primary" />
-                      <div>
-                        <p className="text-sm font-medium">Logo</p>
-                        <p className="text-xs text-muted-foreground">logo-alcaldia.png</p>
+              {selectedEntity?.logoUrl && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Documentos de Contexto</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="flex items-center gap-3">
+                        <FileText className="h-8 w-8 text-primary" />
+                        <div>
+                          <p className="text-sm font-medium">Logo</p>
+                          <p className="text-xs text-muted-foreground">
+                            {selectedEntity.logoUrl.split("/").pop() || "logo.png"}
+                          </p>
+                        </div>
                       </div>
+                      {selectedEntity.logoUrl && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => selectedEntity.logoUrl && window.open(selectedEntity.logoUrl, "_blank")}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
-                    <Button variant="ghost" size="sm">
-                      <Download className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-8 w-8 text-primary" />
-                      <div>
-                        <p className="text-sm font-medium">PAA 2024</p>
-                        <p className="text-xs text-muted-foreground">paa-2024.pdf • 2.3 MB</p>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm">
-                      <Download className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="flex items-center gap-3">
-                      <FileStack className="h-8 w-8 text-primary" />
-                      <div>
-                        <p className="text-sm font-medium">Plan de Desarrollo 2024-2027</p>
-                        <p className="text-xs text-muted-foreground">plan-desarrollo.pdf • 5.1 MB</p>
-                      </div>
-                    </div>
-                    <Button variant="ghost" size="sm">
-                      <Download className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                    <p className="text-xs text-muted-foreground pt-2">
+                      Los documentos adicionales (PAA, Plan de Desarrollo) se pueden gestionar desde la edición de la
+                      entidad.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm">Estadísticas</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div className="space-y-1">
-                      <p className="text-2xl font-bold text-primary">{selectedEntity?.processesCount}</p>
-                      <p className="text-xs text-muted-foreground">Procesos Totales</p>
+                  {loadingProcessStats ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-2xl font-bold text-amber-500">
-                        {Math.floor((selectedEntity?.processesCount || 0) * 0.4)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">En Progreso</p>
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      <div className="space-y-1">
+                        <p className="text-2xl font-bold text-primary">
+                          {entityProcessStats?.total ?? selectedEntity?.processesCount ?? 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Procesos Totales</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-2xl font-bold text-amber-500">
+                          {entityProcessStats?.inProgress ?? 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">En Progreso</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-2xl font-bold text-emerald-500">
+                          {entityProcessStats?.completed ?? 0}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Completados</p>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-2xl font-bold text-emerald-500">
-                        {Math.floor((selectedEntity?.processesCount || 0) * 0.6)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Completados</p>
-                    </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

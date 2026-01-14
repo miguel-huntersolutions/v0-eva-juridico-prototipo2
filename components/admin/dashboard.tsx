@@ -12,6 +12,7 @@ import {
   UserPlus,
   Trash2,
   Loader2,
+  UserCheck,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -38,25 +39,39 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { getEntities, type Entity, type Profile } from "@/lib/supabase/client-data-access"
+import { getEntities, getMemberAssignedEntities, assignMemberEntities, createEntity, type EntityMapped, type Profile } from "@/lib/supabase/client-data-access"
+import { cn } from "@/lib/utils"
 import { createBrowserClient } from "@/lib/supabase/client"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useProfile } from "@/hooks/use-profile"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
-interface EntityWithCount extends Entity {
+interface EntityWithCount extends EntityMapped {
   processesCount?: number
 }
 
 export function AdminDashboard() {
   const [isCreateEntityOpen, setIsCreateEntityOpen] = React.useState(false)
   const [isInviteMemberOpen, setIsInviteMemberOpen] = React.useState(false)
+  const [isAssignEntitiesOpen, setIsAssignEntitiesOpen] = React.useState(false)
+  const [selectedMember, setSelectedMember] = React.useState<Profile | null>(null)
+  const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [entities, setEntities] = React.useState<EntityWithCount[]>([])
   const [members, setMembers] = React.useState<Profile[]>([])
+  const [memberAssignments, setMemberAssignments] = React.useState<Record<string, string[]>>({})
   const [totalProcesses, setTotalProcesses] = React.useState(0)
   const [organizationName, setOrganizationName] = React.useState("")
+  
+  // Entity form state
+  const [entityForm, setEntityForm] = React.useState({
+    name: "",
+    nit: "",
+    representativeName: "",
+  })
+  const [isSavingEntity, setIsSavingEntity] = React.useState(false)
 
   const { profile } = useProfile()
   const { actualRole, isSimulating } = useRoleSwitcher(profile?.role)
@@ -110,13 +125,30 @@ export function AdminDashboard() {
         setEntities(entitiesWithCount)
         setTotalProcesses(entitiesWithCount.reduce((acc, e) => acc + (e.processesCount || 0), 0))
 
-        const { data: membersData } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("organization_id", effectiveOrganizationId)
-          .eq("role", "member")
-
-        setMembers(membersData || [])
+        // Use getOrganizationMembers to bypass RLS
+        const { getOrganizationMembers, getMemberAssignedEntities } = await import("@/lib/supabase/client-data-access")
+        const membersData = await getOrganizationMembers(effectiveOrganizationId)
+        // Filter only members (not admins)
+        const memberProfiles = membersData.filter((m) => m.role === "member")
+        setMembers(memberProfiles)
+        console.log("[AdminDashboard] Loaded members:", memberProfiles.length)
+        
+        // Load assigned entities for each member
+        const assignments: Record<string, string[]> = {}
+        await Promise.all(
+          memberProfiles.map(async (member) => {
+            try {
+              const assignedIds = await getMemberAssignedEntities(member.id)
+              // If no assignments, default to all entities (backward compatibility)
+              assignments[member.id] = assignedIds.length > 0 ? assignedIds : entitiesWithCount.map((e) => e.id)
+            } catch (error) {
+              console.error(`[AdminDashboard] Error loading assignments for ${member.name}:`, error)
+              // Default to all entities if error
+              assignments[member.id] = entitiesWithCount.map((e) => e.id)
+            }
+          })
+        )
+        setMemberAssignments(assignments)
       } catch (error) {
         console.error("Error loading data:", error)
       } finally {
@@ -125,6 +157,99 @@ export function AdminDashboard() {
     }
     loadData()
   }, [effectiveOrganizationId, selectedOrganization])
+
+  const openAssignDialog = async (member: Profile) => {
+    setSelectedMember(member)
+    try {
+      // Load current assignments
+      const assignedIds = await getMemberAssignedEntities(member.id)
+      setSelectedEntities(assignedIds.length > 0 ? assignedIds : entities.map((e) => e.id))
+    } catch (error) {
+      console.error("Error loading assigned entities:", error)
+      // Default to all entities if error
+      setSelectedEntities(entities.map((e) => e.id))
+    }
+    setIsAssignEntitiesOpen(true)
+  }
+
+  const toggleEntity = (entityId: string) => {
+    if (selectedEntities.includes(entityId)) {
+      setSelectedEntities(selectedEntities.filter((id) => id !== entityId))
+    } else {
+      setSelectedEntities([...selectedEntities, entityId])
+    }
+  }
+
+  const handleSaveAssignments = async () => {
+    if (!selectedMember) return
+
+    try {
+      await assignMemberEntities(selectedMember.id, selectedEntities)
+      
+      // Update assignments state immediately
+      setMemberAssignments((prev) => ({
+        ...prev,
+        [selectedMember.id]: selectedEntities,
+      }))
+      
+      setIsAssignEntitiesOpen(false)
+    } catch (error) {
+      console.error("Error saving assignments:", error)
+      alert(error instanceof Error ? error.message : "Error al guardar las asignaciones")
+    }
+  }
+
+  const handleCreateEntity = async () => {
+    if (!effectiveOrganizationId) {
+      alert("No se ha seleccionado una organización")
+      return
+    }
+
+    if (!entityForm.name || !entityForm.nit || !entityForm.representativeName) {
+      alert("Por favor completa todos los campos requeridos")
+      return
+    }
+
+    try {
+      setIsSavingEntity(true)
+      const newEntity = await createEntity({
+        name: entityForm.name,
+        nit: entityForm.nit,
+        representativeName: entityForm.representativeName,
+        organizationId: effectiveOrganizationId,
+        status: "active",
+      })
+
+      // Reload entities
+      const entitiesData = await getEntities(effectiveOrganizationId)
+      const supabase = createBrowserClient()
+      const entitiesWithCount = await Promise.all(
+        entitiesData.map(async (entity) => {
+          const { count } = await supabase
+            .from("processes")
+            .select("*", { count: "exact", head: true })
+            .eq("entity_id", entity.id)
+
+          return {
+            ...entity,
+            processesCount: count || 0,
+          }
+        }),
+      )
+
+      setEntities(entitiesWithCount)
+      setTotalProcesses(entitiesWithCount.reduce((acc, e) => acc + (e.processesCount || 0), 0))
+      
+      // Reset form and close dialog
+      setEntityForm({ name: "", nit: "", representativeName: "" })
+      setIsCreateEntityOpen(false)
+    } catch (error) {
+      console.error("Error creating entity:", error)
+      alert(error instanceof Error ? error.message : "Error al crear la entidad")
+    } finally {
+      setIsSavingEntity(false)
+    }
+  }
 
   const stats = {
     totalEntities: entities.length,
@@ -150,9 +275,9 @@ export function AdminDashboard() {
       ),
     },
     {
-      key: "representative_name",
+      key: "representativeName",
       title: "Representante Legal",
-      render: (entity: EntityWithCount) => <span className="text-sm">{entity.representative_name}</span>,
+      render: (entity: EntityWithCount) => <span className="text-sm">{entity.representativeName || "N/A"}</span>,
     },
     {
       key: "processesCount",
@@ -220,17 +345,50 @@ export function AdminDashboard() {
     {
       key: "entities",
       title: "Entidades Asignadas",
-      render: () => (
-        <div className="flex gap-1">
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs">Todas las entidades</span>
-        </div>
-      ),
+      render: (user: Profile) => {
+        const assignedIds = memberAssignments[user.id] || []
+        const allEntityIds = entities.map((e) => e.id)
+        const hasAllEntities = assignedIds.length === allEntityIds.length && 
+          assignedIds.every((id) => allEntityIds.includes(id))
+        
+        if (hasAllEntities) {
+          return (
+            <div className="flex gap-1">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">Todas las entidades</span>
+            </div>
+          )
+        }
+        
+        const assignedEntities = entities.filter((e) => assignedIds.includes(e.id))
+        if (assignedEntities.length === 0) {
+          return (
+            <div className="flex gap-1">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Sin asignar</span>
+            </div>
+          )
+        }
+        
+        return (
+          <div className="flex flex-wrap gap-1">
+            {assignedEntities.slice(0, 2).map((entity) => (
+              <span key={entity.id} className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-xs">
+                {entity.name}
+              </span>
+            ))}
+            {assignedEntities.length > 2 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                +{assignedEntities.length - 2} más
+              </span>
+            )}
+          </div>
+        )
+      },
     },
     {
       key: "actions",
       title: "",
       className: "w-10",
-      render: () => (
+      render: (user: Profile) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -238,7 +396,7 @@ export function AdminDashboard() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openAssignDialog(user)}>
               <Pencil className="mr-2 h-4 w-4" />
               Editar Permisos
             </DropdownMenuItem>
@@ -352,32 +510,44 @@ export function AdminDashboard() {
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label htmlFor="entity-name">Nombre de la Entidad</Label>
-              <Input id="entity-name" placeholder="Ej: Alcaldía de Medellín" />
+              <Input 
+                id="entity-name" 
+                placeholder="Ej: Alcaldía de Medellín"
+                value={entityForm.name}
+                onChange={(e) => setEntityForm({ ...entityForm, name: e.target.value })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="entity-nit">NIT</Label>
-                <Input id="entity-nit" placeholder="899.999.XXX-X" />
+                <Input 
+                  id="entity-nit" 
+                  placeholder="899.999.XXX-X"
+                  value={entityForm.nit}
+                  onChange={(e) => setEntityForm({ ...entityForm, nit: e.target.value })}
+                />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="entity-rep">Representante Legal</Label>
-                <Input id="entity-rep" placeholder="Nombre completo" />
+                <Input 
+                  id="entity-rep" 
+                  placeholder="Nombre completo"
+                  value={entityForm.representativeName}
+                  onChange={(e) => setEntityForm({ ...entityForm, representativeName: e.target.value })}
+                />
               </div>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="entity-secretaries">Secretarías</Label>
-              <Textarea
-                id="entity-secretaries"
-                placeholder="Una secretaría por línea (ej: Secretaría de Hacienda)"
-                rows={3}
-              />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateEntityOpen(false)}>
+            <Button variant="outline" onClick={() => {
+              setIsCreateEntityOpen(false)
+              setEntityForm({ name: "", nit: "", representativeName: "" })
+            }} disabled={isSavingEntity}>
               Cancelar
             </Button>
-            <Button onClick={() => setIsCreateEntityOpen(false)}>Crear Entidad</Button>
+            <Button onClick={handleCreateEntity} disabled={isSavingEntity}>
+              {isSavingEntity ? "Guardando..." : "Crear Entidad"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -403,6 +573,70 @@ export function AdminDashboard() {
               Cancelar
             </Button>
             <Button onClick={() => setIsInviteMemberOpen(false)}>Enviar Invitación</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Entities Dialog */}
+      <Dialog open={isAssignEntitiesOpen} onOpenChange={setIsAssignEntitiesOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building className="h-5 w-5 text-primary" />
+              Asignar Entidades
+            </DialogTitle>
+            <DialogDescription>
+              Selecciona las entidades a las que {selectedMember?.name} tendrá acceso
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              {entities.map((entity) => (
+                <div
+                  key={entity.id}
+                  className={cn(
+                    "flex items-center space-x-3 rounded-lg border p-3 transition-colors cursor-pointer",
+                    selectedEntities.includes(entity.id) ? "border-primary bg-primary/5" : "hover:bg-muted/50",
+                  )}
+                  onClick={() => toggleEntity(entity.id)}
+                >
+                  <Checkbox
+                    id={`entity-${entity.id}`}
+                    checked={selectedEntities.includes(entity.id)}
+                    onCheckedChange={() => toggleEntity(entity.id)}
+                  />
+                  <label htmlFor={`entity-${entity.id}`} className="flex flex-1 items-center gap-3 cursor-pointer">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                      <Building className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{entity.name}</p>
+                      <p className="text-xs text-muted-foreground">NIT: {entity.nit} • {entity.processesCount || 0} procesos</p>
+                    </div>
+                  </label>
+                </div>
+              ))}
+            </div>
+
+            <Card className="bg-muted/50">
+              <CardContent className="pt-4">
+                <p className="text-sm text-muted-foreground">
+                  <strong>{selectedEntities.length}</strong> entidades seleccionadas. El miembro podrá ver y gestionar
+                  los procesos de las entidades asignadas.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignEntitiesOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveAssignments}>
+              <UserCheck className="mr-2 h-4 w-4" />
+              Guardar Asignaciones
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

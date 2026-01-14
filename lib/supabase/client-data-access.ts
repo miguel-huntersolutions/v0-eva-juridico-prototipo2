@@ -25,6 +25,20 @@ export type {
   DocumentWithRelations,
 }
 
+// Client-side Entity type (with camelCase fields matching the mapped return values)
+export interface EntityMapped {
+  id: string
+  name: string
+  nit: string
+  representativeName: string
+  organizationId: string
+  logoUrl?: string | null
+  status: "active" | "inactive"
+  processesCount: number
+  documentsCount?: number
+  createdAt?: string
+}
+
 // Client-side Template type (with camelCase fields matching the mapped return values)
 export interface Template {
   id: string
@@ -171,7 +185,7 @@ export async function impersonateOrganization(organizationId: string) {
 }
 
 // Entities
-export async function getEntities(organizationId?: string) {
+export async function getEntities(organizationId?: string): Promise<EntityMapped[]> {
   const supabase = createBrowserClient()
   let query = supabase.from("entities").select("*").order("name")
  
@@ -185,16 +199,46 @@ export async function getEntities(organizationId?: string) {
   const { data, error } = await query
   if (error) throw error
 
-  return (data || []).map((e) => ({
-    id: e.id,
-    name: e.name,
-    nit: e.nit,
-    representativeName: e.representative_name,
-    organizationId: e.organization_id,
-    logoUrl: e.logo_url,
-    status: e.status,
-    processesCount: 0, // Will be calculated separately if needed
-  })) as Entity[]
+  // Calculate processes and documents count for each entity
+  const entitiesWithCounts = await Promise.all(
+    (data || []).map(async (e) => {
+      // Get processes count
+      const { count: processesCount } = await supabase
+        .from("processes")
+        .select("*", { count: "exact", head: true })
+        .eq("entity_id", e.id)
+
+      // Get documents count (through processes)
+      const { data: processes } = await supabase
+        .from("processes")
+        .select("id")
+        .eq("entity_id", e.id)
+
+      const processIds = processes?.map((p) => p.id) || []
+      let documentsCount = 0
+      if (processIds.length > 0) {
+        const { count } = await supabase
+          .from("documents")
+          .select("*", { count: "exact", head: true })
+          .in("process_id", processIds)
+        documentsCount = count || 0
+      }
+
+      return {
+        id: e.id,
+        name: e.name,
+        nit: e.nit,
+        representativeName: e.representative_name,
+        organizationId: e.organization_id,
+        logoUrl: e.logo_url,
+        status: e.status,
+        processesCount: processesCount || 0,
+        documentsCount: documentsCount,
+      }
+    })
+  )
+
+  return entitiesWithCounts
 }
 
 export async function createEntity(data: {
@@ -204,7 +248,7 @@ export async function createEntity(data: {
   organizationId: string
   logoUrl?: string
   status?: string
-}) {
+}): Promise<EntityMapped> {
   const supabase = createBrowserClient()
 
   const { data: newEntity, error } = await supabase
@@ -222,6 +266,12 @@ export async function createEntity(data: {
 
   if (error) throw error
 
+  // Get processes count
+  const { count: processesCount } = await supabase
+    .from("processes")
+    .select("*", { count: "exact", head: true })
+    .eq("entity_id", newEntity.id)
+
   return {
     id: newEntity.id,
     name: newEntity.name,
@@ -230,8 +280,9 @@ export async function createEntity(data: {
     organizationId: newEntity.organization_id,
     logoUrl: newEntity.logo_url,
     status: newEntity.status,
-    processesCount: 0,
-  } as Entity
+    processesCount: processesCount || 0,
+    documentsCount: 0,
+  }
 }
 
 export async function updateEntity(
@@ -243,7 +294,7 @@ export async function updateEntity(
     logoUrl: string
     status: string
   }>,
-) {
+): Promise<EntityMapped> {
   const supabase = createBrowserClient()
 
   const updateData: Record<string, unknown> = {}
@@ -262,6 +313,12 @@ export async function updateEntity(
 
   if (error) throw error
 
+  // Get processes count
+  const { count: processesCount } = await supabase
+    .from("processes")
+    .select("*", { count: "exact", head: true })
+    .eq("entity_id", id)
+
   return {
     id: updatedEntity.id,
     name: updatedEntity.name,
@@ -270,8 +327,9 @@ export async function updateEntity(
     organizationId: updatedEntity.organization_id,
     logoUrl: updatedEntity.logo_url,
     status: updatedEntity.status,
-    processesCount: 0,
-  } as Entity
+    processesCount: processesCount || 0,
+    documentsCount: 0,
+  }
 }
 
 export async function deleteEntity(id: string) {
@@ -897,25 +955,29 @@ export async function getCurrentProfile() {
 }
 
 export async function getOrganizationMembers(organizationId: string) {
-  const supabase = createBrowserClient()
+  // Use API route to get members (bypasses RLS using service role)
+  const response = await fetch(`/api/get-organization-members?organizationId=${encodeURIComponent(organizationId)}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("organization_id", organizationId)
-    .order("name")
-
-  if (error) {
-    console.error("[getOrganizationMembers] Error fetching members:", error)
-    throw error
+  if (!response.ok) {
+    const errorData = await response.json()
+    console.error("[getOrganizationMembers] Error fetching members:", errorData)
+    throw new Error(errorData.message || errorData.error || "Failed to fetch members")
   }
 
-  console.log(`[getOrganizationMembers] Found ${data?.length || 0} members for organization ${organizationId}`)
-  console.log(`[getOrganizationMembers] Raw data:`, data)
-  console.log(`[getOrganizationMembers] Admin count:`, data?.filter((m: any) => m.role === "admin").length)
-  console.log(`[getOrganizationMembers] Member roles:`, data?.map((m: any) => ({ name: m.name, role: m.role, email: m.email })))
+  const result = await response.json()
+  const members = result.members || []
+
+  console.log(`[getOrganizationMembers] Found ${members.length} members for organization ${organizationId}`)
+  console.log(`[getOrganizationMembers] Raw data:`, members)
+  console.log(`[getOrganizationMembers] Admin count:`, members.filter((m: any) => m.role === "admin").length)
+  console.log(`[getOrganizationMembers] Member roles:`, members.map((m: any) => ({ name: m.name, role: m.role, email: m.email })))
   
-  return data as Profile[]
+  return members as Profile[]
 }
 
 export async function createMember(data: {
@@ -951,22 +1013,25 @@ export async function updateMember(
     avatarUrl: string
   }>,
 ) {
-  const supabase = createBrowserClient()
+  // Use API route to update member (bypasses RLS using service role)
+  const response = await fetch("/api/update-member", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      memberId: id,
+      ...data,
+    }),
+  })
 
-  const updateData: Record<string, unknown> = {}
-  if (data.name !== undefined) updateData.name = data.name
-  if (data.role !== undefined) updateData.role = data.role
-  if (data.avatarUrl !== undefined) updateData.avatar_url = data.avatarUrl
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || "Failed to update member")
+  }
 
-  const { data: updatedProfile, error } = await supabase
-    .from("profiles")
-    .update(updateData)
-    .eq("id", id)
-    .select()
-    .single()
-
-  if (error) throw error
-  return updatedProfile as Profile
+  const result = await response.json()
+  return result.profile as Profile
 }
 
 export async function deleteMember(id: string) {
@@ -1022,4 +1087,41 @@ export async function getUsersWithoutOrganization() {
 
   if (error) throw error
   return data as Profile[]
+}
+
+export async function getMemberAssignedEntities(memberId: string): Promise<string[]> {
+  // Use API route to get member entity assignments (bypasses RLS using service role)
+  const response = await fetch(`/api/get-member-entities?memberId=${encodeURIComponent(memberId)}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || "Failed to get member entities")
+  }
+
+  const result = await response.json()
+  return result.entityIds || []
+}
+
+export async function assignMemberEntities(memberId: string, entityIds: string[]): Promise<void> {
+  // Use API route to assign entities to member (bypasses RLS using service role)
+  const response = await fetch("/api/assign-member-entities", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      memberId,
+      entityIds,
+    }),
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || "Failed to assign entities")
+  }
 }

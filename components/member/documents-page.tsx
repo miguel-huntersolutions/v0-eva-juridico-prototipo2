@@ -20,6 +20,7 @@ import {
   ExternalLink,
   FolderOpen,
   Loader2,
+  Send,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -38,7 +39,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { documentTypes } from "@/lib/mock-data"
-import { getEntities, getDocuments, type Entity } from "@/lib/supabase/client-data-access"
+import { getEntities, getDocuments, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 
 type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
@@ -99,13 +100,31 @@ export function DocumentsPage() {
   const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
   const [isLoadingDocs, setIsLoadingDocs] = React.useState(true)
   const { profile } = useProfile()
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
+  const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
 
   React.useEffect(() => {
     async function loadDocuments() {
+      if (!profile?.organization_id) {
+        setIsLoadingDocs(false)
+        return
+      }
+      
       try {
-        const docs = await getDocuments()
-        const mapped: MappedDocument[] = docs.map((d) => ({
+        // First, get entities for the organization
+        const orgEntities = await getEntities(profile.organization_id)
+        const entityIds = orgEntities.map((e) => e.id)
+        
+        // Get all documents
+        const allDocs = await getDocuments()
+        
+        // Filter documents to only include those from processes belonging to organization entities
+        const filteredDocs = allDocs.filter((d: any) => {
+          const processEntityId = d.process?.entity?.id
+          return processEntityId && entityIds.includes(processEntityId)
+        })
+        
+        const mapped: MappedDocument[] = filteredDocs.map((d) => ({
           id: d.id,
           processId: d.process_id,
           processCode: d.process?.code || "",
@@ -124,14 +143,17 @@ export function DocumentsPage() {
           driveFolderUrl: (d.process as any)?.drive_folder_url || null,
         }))
         setAllDocuments(mapped)
+        console.log("[DocumentsPage] Total documents in DB:", allDocs.length, "Organization documents:", mapped.length)
       } catch (err) {
         console.error("Error loading documents:", err)
       } finally {
         setIsLoadingDocs(false)
       }
     }
-    loadDocuments()
-  }, [])
+    if (profile?.organization_id) {
+      loadDocuments()
+    }
+  }, [profile?.organization_id])
 
   React.useEffect(() => {
     async function loadEntities() {
@@ -183,6 +205,54 @@ export function DocumentsPage() {
   const handleViewDocument = (document: MappedDocument) => {
     setSelectedDocument(document)
     setIsDetailOpen(true)
+  }
+
+  const handleSendToReview = async (doc: MappedDocument) => {
+    if (doc.status === "pending") {
+      alert("Este documento ya está pendiente de revisión")
+      return
+    }
+
+    if (!confirm(`¿Estás seguro de que deseas enviar "${doc.name}" a revisión?`)) {
+      return
+    }
+
+    try {
+      setIsUpdatingStatus(true)
+      
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          documentId: doc.id,
+          status: "pending",
+        }),
+      })
+
+      const responseData = await response.json()
+
+      if (!response.ok) {
+        const errorMsg = responseData?.message || responseData?.error || "Error al enviar el documento a revisión"
+        throw new Error(errorMsg)
+      }
+
+      // Update local state
+      setAllDocuments((prev) =>
+        prev.map((d) =>
+          d.id === doc.id ? { ...d, status: "pending" as const } : d
+        )
+      )
+
+      alert("Documento enviado a revisión exitosamente")
+    } catch (err) {
+      console.error("Error sending document to review:", err)
+      const errorMsg = err instanceof Error ? err.message : "Error al enviar el documento a revisión"
+      alert(errorMsg)
+    } finally {
+      setIsUpdatingStatus(false)
+    }
   }
 
   const clearFilters = () => {
@@ -447,8 +517,21 @@ export function DocumentsPage() {
                                     }
                                     return null
                                   })()}
-                                  <DropdownMenuSeparator />
-              
+                                  {(document.status === "draft" || document.status === "rejected") && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleSendToReview(document)
+                                        }}
+                                        disabled={isUpdatingStatus}
+                                      >
+                                        <Send className="mr-2 h-4 w-4" />
+                                        Enviar a Revisión
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
                                   <DropdownMenuSeparator />
                                 </DropdownMenuContent>
                               </DropdownMenu>

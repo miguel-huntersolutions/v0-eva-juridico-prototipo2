@@ -51,12 +51,24 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import type { User } from "@/lib/mock-data"
-import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import {
+  getEntities,
+  getOrganizationMembers,
+  getProcessesMapped,
+  getDocuments,
+  updateMember,
+  getMemberAssignedEntities,
+  assignMemberEntities,
+  type EntityMapped,
+  type Profile,
+} from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useRoleSwitcher } from "@/hooks/use-role-switcher"
+import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { cn } from "@/lib/utils"
+import { Loader2 } from "lucide-react"
 
-interface MemberExtended extends User {
+interface MemberExtended extends Profile {
   status: "active" | "pending" | "inactive"
   assignedEntities: string[]
   processesCount: number
@@ -65,74 +77,24 @@ interface MemberExtended extends User {
   invitedAt?: string
 }
 
-const mockMembers: MemberExtended[] = [
-  {
-    id: "3",
-    name: "Juan Rodríguez",
-    email: "juan@bufetegarcia.com",
-    role: "member",
-    organizationId: "org-1",
-    avatar: "/placeholder.svg?height=40&width=40",
-    status: "active",
-    assignedEntities: ["1", "2"],
-    processesCount: 24,
-    documentsCount: 48,
-    lastActive: "2025-01-15T10:30:00",
-  },
-  {
-    id: "4",
-    name: "Ana Martínez",
-    email: "ana@bufetegarcia.com",
-    role: "member",
-    organizationId: "org-1",
-    avatar: "/placeholder.svg?height=40&width=40",
-    status: "active",
-    assignedEntities: ["1", "3"],
-    processesCount: 18,
-    documentsCount: 32,
-    lastActive: "2025-01-15T09:15:00",
-  },
-  {
-    id: "5",
-    name: "Pedro Sánchez",
-    email: "pedro@bufetegarcia.com",
-    role: "member",
-    organizationId: "org-1",
-    status: "active",
-    assignedEntities: ["2"],
-    processesCount: 12,
-    documentsCount: 21,
-    lastActive: "2025-01-14T16:45:00",
-  },
-  {
-    id: "6",
-    name: "Laura Gómez",
-    email: "laura@bufetegarcia.com",
-    role: "member",
-    organizationId: "org-1",
-    status: "pending",
-    assignedEntities: [],
-    processesCount: 0,
-    documentsCount: 0,
-    lastActive: "",
-    invitedAt: "2025-01-10",
-  },
-  {
-    id: "7",
-    name: "Carlos Herrera",
-    email: "carlos.h@bufetegarcia.com",
-    role: "member",
-    organizationId: "org-1",
-    status: "inactive",
-    assignedEntities: ["1"],
-    processesCount: 8,
-    documentsCount: 15,
-    lastActive: "2024-12-20T14:00:00",
-  },
-]
-
 export function MembersPage() {
-  const [members] = React.useState<MemberExtended[]>(mockMembers)
+  const { profile, isLoading: profileLoading } = useProfile()
+  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role)
+  const isSuperadmin = actualRole === "superadmin"
+  const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
+
+  const {
+    effectiveOrganizationId,
+    isLoaded: orgLoaded,
+    selectOrganization,
+  } = useOrganizationSelector({
+    userOrganizationId: profile?.organization_id,
+    isSuperadmin,
+    isSimulatingAdmin,
+  })
+
+  const [members, setMembers] = React.useState<MemberExtended[]>([])
+  const [loading, setLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
@@ -154,23 +116,126 @@ export function MembersPage() {
   const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
   const [isSending, setIsSending] = React.useState(false)
 
-  const { profile } = useProfile()
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  // Edit form state
+  const [editFormData, setEditFormData] = React.useState({
+    name: "",
+    email: "",
+    status: "active" as "active" | "inactive",
+  })
+  const [isSaving, setIsSaving] = React.useState(false)
+
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
+
+  // Load members and calculate stats
+  const loadData = React.useCallback(async () => {
+    if (!effectiveOrganizationId || !orgLoaded) {
+      setLoading(false)
+      return
+    }
+
+    try {
+      setLoading(true)
+      console.log("[MembersPage] Loading data for organization:", effectiveOrganizationId)
+      const [membersData, entitiesData] = await Promise.all([
+        getOrganizationMembers(effectiveOrganizationId),
+        getEntities(effectiveOrganizationId),
+      ])
+
+      // Get entity IDs for this organization
+      const organizationEntityIds = entitiesData.map((e) => e.id)
+      console.log("[MembersPage] Organization entity IDs:", organizationEntityIds)
+
+      // Filter processes and documents by organization entities
+      const allProcesses = await getProcessesMapped()
+      const allDocuments = await getDocuments()
+      
+      // Filter processes to only include those from this organization's entities
+      const organizationProcesses = allProcesses.filter((p) => organizationEntityIds.includes(p.entityId))
+      console.log("[MembersPage] Total processes in DB:", allProcesses.length, "Organization processes:", organizationProcesses.length)
+      
+      // Filter documents to only include those from this organization's processes
+      const organizationProcessIds = organizationProcesses.map((p) => p.id)
+      const organizationDocuments = allDocuments.filter((d: any) => {
+        // getDocuments returns documents with process_id field (snake_case)
+        return organizationProcessIds.includes(d.process_id)
+      })
+      console.log("[MembersPage] Total documents in DB:", allDocuments.length, "Organization documents:", organizationDocuments.length)
+
+      console.log("[MembersPage] Raw members data:", membersData)
+      console.log("[MembersPage] Total profiles:", membersData.length)
+      
+      // Filter only members (not admins)
+      const memberProfiles = membersData.filter((m) => m.role === "member")
+      console.log("[MembersPage] Filtered members (role='member'):", memberProfiles.length)
+      console.log("[MembersPage] Member profiles:", memberProfiles.map(m => ({ id: m.id, name: m.name, email: m.email, role: m.role, organization_id: m.organization_id })))
+
+      // Calculate stats for each member
+      const membersWithStats = await Promise.all(
+        memberProfiles.map(async (member) => {
+          // Get assigned entities from database, or default to all entities if none assigned
+          let assignedEntityIds: string[] = []
+          try {
+            assignedEntityIds = await getMemberAssignedEntities(member.id)
+            // If no entities assigned, default to all entities in organization (backward compatibility)
+            if (assignedEntityIds.length === 0) {
+              assignedEntityIds = entitiesData.map((e) => e.id)
+            }
+          } catch (error) {
+            console.error(`[MembersPage] Error loading assigned entities for ${member.name}:`, error)
+            // Default to all entities if there's an error
+            assignedEntityIds = entitiesData.map((e) => e.id)
+          }
+
+          // Calculate processes count (processes from assigned entities)
+          const memberProcesses = organizationProcesses.filter((p) => assignedEntityIds.includes(p.entityId))
+          const processesCount = memberProcesses.length
+
+          // Calculate documents count
+          // Since all members have access to all entities, use organization documents count
+          // But filter by the member's assigned entities' processes to be accurate
+          const processIds = memberProcesses.map((p) => p.id)
+          const documentsCount = organizationDocuments.filter((d: any) => {
+            // getDocuments returns documents with process_id field (snake_case)
+            return processIds.includes(d.process_id)
+          }).length
+          
+          console.log(`[MembersPage] Member ${member.name}: processes=${processesCount}, documents=${documentsCount}, processIds=${processIds.length}, orgProcesses=${organizationProcesses.length}, orgDocuments=${organizationDocuments.length}`)
+
+          // Determine status based on created_at and last_sign_in_at
+          // For now, we'll use "active" if the profile exists, "pending" if recently created
+          const createdAt = new Date(member.created_at || Date.now())
+          const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
+          const status: "active" | "pending" | "inactive" =
+            daysSinceCreation < 1 ? "pending" : "active"
+
+          return {
+            ...member,
+            status,
+            assignedEntities: assignedEntityIds,
+            processesCount,
+            documentsCount,
+            lastActive: member.updated_at || member.created_at || "",
+          } as MemberExtended
+        }),
+      )
+
+      console.log("[MembersPage] Final members with stats:", membersWithStats.length)
+      setMembers(membersWithStats)
+      setEntities(entitiesData)
+    } catch (err) {
+      console.error("[MembersPage] Error loading members:", err)
+    } finally {
+      setLoading(false)
+    }
+  }, [effectiveOrganizationId, orgLoaded])
 
   React.useEffect(() => {
-    async function loadEntities() {
-      if (!profile?.organization_id) return
-      try {
-        const data = await getEntities(profile.organization_id)
-        setEntities(data)
-      } catch (err) {
-        console.error("Error loading entities:", err)
-      }
+    if (!profileLoading && orgLoaded && effectiveOrganizationId) {
+      loadData()
+    } else if (!profileLoading && orgLoaded && !effectiveOrganizationId) {
+      setLoading(false)
     }
-    if (profile?.organization_id) {
-      loadEntities()
-    }
-  }, [profile?.organization_id])
+  }, [profileLoading, orgLoaded, effectiveOrganizationId, loadData])
 
   // Stats
   const stats = {
@@ -206,7 +271,36 @@ export function MembersPage() {
 
   const openEditDialog = (member: MemberExtended) => {
     setSelectedMember(member)
+    setEditFormData({
+      name: member.name,
+      email: member.email,
+      status: member.status,
+    })
     setIsEditOpen(true)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!selectedMember) return
+
+    try {
+      setIsSaving(true)
+      // Update member using updateMember function
+      // Note: email and status are not directly editable via updateMember
+      // For now, we'll only update the name
+      await updateMember(selectedMember.id, {
+        name: editFormData.name,
+      })
+      
+      // Reload members to reflect changes
+      await loadData()
+      
+      setIsEditOpen(false)
+    } catch (error) {
+      console.error("Error updating member:", error)
+      alert(error instanceof Error ? error.message : "Error al actualizar el miembro")
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const openAssignDialog = (member: MemberExtended) => {
@@ -220,13 +314,48 @@ export function MembersPage() {
     setIsDeleteOpen(true)
   }
 
-  const handleInvite = () => {
-    setIsSending(true)
-    setTimeout(() => {
-      setIsSending(false)
+  const handleInvite = async () => {
+    if (!effectiveOrganizationId || !inviteData.email) return
+
+    try {
+      setIsSending(true)
+      const response = await fetch("/api/create-member", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: inviteData.email,
+          name: inviteData.name || inviteData.email.split("@")[0],
+          role: "member",
+          organizationId: effectiveOrganizationId,
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.message || "Error al enviar la invitación")
+      }
+
+      const result = await response.json()
+      console.log("[MembersPage] Member created successfully:", result)
+      
       setIsInviteOpen(false)
       setInviteData({ email: "", name: "", message: "" })
-    }, 1500)
+      
+      // Wait a bit for the database trigger to create the profile
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      // Reload members data
+      console.log("[MembersPage] Reloading members data...")
+      await loadData()
+      
+      // Switch to "pending" tab to show the newly invited member
+      setStatusFilter("pending")
+    } catch (err) {
+      console.error("Error sending invitation:", err)
+      alert(err instanceof Error ? err.message : "Error al enviar la invitación")
+    } finally {
+      setIsSending(false)
+    }
   }
 
   const toggleEntity = (entityId: string) => {
@@ -234,6 +363,31 @@ export function MembersPage() {
       setSelectedEntities(selectedEntities.filter((id) => id !== entityId))
     } else {
       setSelectedEntities([...selectedEntities, entityId])
+    }
+  }
+
+  const handleSaveAssignments = async () => {
+    if (!selectedMember) return
+
+    try {
+      // Save assignments to database
+      await assignMemberEntities(selectedMember.id, selectedEntities)
+      
+      // Update local state
+      setMembers((prevMembers) =>
+        prevMembers.map((m) =>
+          m.id === selectedMember.id
+            ? { ...m, assignedEntities: selectedEntities }
+            : m
+        )
+      )
+
+      console.log(`[MembersPage] Successfully assigned ${selectedEntities.length} entities to ${selectedMember.name}`)
+      
+      setIsAssignEntitiesOpen(false)
+    } catch (error) {
+      console.error("Error saving assignments:", error)
+      alert(error instanceof Error ? error.message : "Error al guardar las asignaciones. Por favor, intenta de nuevo.")
     }
   }
 
@@ -283,6 +437,30 @@ export function MembersPage() {
     if (diffDays === 1) return "Ayer"
     if (diffDays < 7) return `Hace ${diffDays} días`
     return formatDate(dateString)
+  }
+
+  if (loading || profileLoading || !orgLoaded) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!effectiveOrganizationId) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <Card className="w-full max-w-lg">
+          <CardContent className="pt-6 text-center">
+            <Users className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-medium mb-2">Selecciona una Organización</h3>
+            <p className="text-sm text-muted-foreground">
+              Para gestionar miembros, primero debes seleccionar la organización con la que trabajarás.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -380,7 +558,7 @@ export function MembersPage() {
                 {/* Member Info */}
                 <div className="flex items-start gap-4">
                   <Avatar className="h-14 w-14 border-2 border-primary/20">
-                    <AvatarImage src={member.avatar || "/placeholder.svg"} alt={member.name} />
+                    <AvatarImage src={member.avatar_url || "/placeholder.svg"} alt={member.name} />
                     <AvatarFallback className="bg-primary/20 text-primary text-lg">
                       {member.name
                         .split(" ")
@@ -477,22 +655,31 @@ export function MembersPage() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEditDialog(member)}>
+                      <DropdownMenuItem onSelect={() => openEditDialog(member)}>
                         <Pencil className="mr-2 h-4 w-4" />
                         Editar
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => openAssignDialog(member)}>
+                      <DropdownMenuItem onSelect={() => openAssignDialog(member)}>
                         <UserCheck className="mr-2 h-4 w-4" />
                         Asignar Entidades
                       </DropdownMenuItem>
                       {member.status === "pending" && (
-                        <DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => {
+                          // TODO: Implement resend invitation
+                          console.log("Reenviar invitación para:", member.email)
+                        }}>
                           <Send className="mr-2 h-4 w-4" />
                           Reenviar Invitación
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(member)}>
+                      <DropdownMenuItem 
+                        className="text-destructive" 
+                        onSelect={(e) => {
+                          e.preventDefault()
+                          openDeleteDialog(member)
+                        }}
+                      >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Eliminar
                       </DropdownMenuItem>
@@ -619,7 +806,7 @@ export function MembersPage() {
               {/* Header */}
               <div className="flex items-start gap-4">
                 <Avatar className="h-20 w-20 border-2 border-primary/20">
-                  <AvatarImage src={selectedMember.avatar || "/placeholder.svg"} alt={selectedMember.name} />
+                  <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
                   <AvatarFallback className="bg-primary/20 text-primary text-2xl">
                     {selectedMember.name
                       .split(" ")
@@ -734,7 +921,7 @@ export function MembersPage() {
             <div className="space-y-4 py-4">
               <div className="flex items-center gap-4 p-4 rounded-lg bg-muted/50">
                 <Avatar className="h-12 w-12">
-                  <AvatarImage src={selectedMember.avatar || "/placeholder.svg"} alt={selectedMember.name} />
+                  <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
                   <AvatarFallback className="bg-primary/20 text-primary">
                     {selectedMember.name
                       .split(" ")
@@ -750,17 +937,31 @@ export function MembersPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="edit-name">Nombre</Label>
-                <Input id="edit-name" defaultValue={selectedMember.name} />
+                <Input 
+                  id="edit-name" 
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="edit-email">Correo Electrónico</Label>
-                <Input id="edit-email" type="email" defaultValue={selectedMember.email} />
+                <Input 
+                  id="edit-email" 
+                  type="email" 
+                  value={editFormData.email}
+                  disabled
+                  className="bg-muted"
+                />
+                <p className="text-xs text-muted-foreground">El correo electrónico no se puede modificar</p>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="edit-status">Estado</Label>
-                <Select defaultValue={selectedMember.status}>
+                <Select 
+                  value={editFormData.status}
+                  onValueChange={(value: "active" | "inactive") => setEditFormData({ ...editFormData, status: value })}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -769,15 +970,18 @@ export function MembersPage() {
                     <SelectItem value="inactive">Inactivo</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">El estado se calcula automáticamente según la actividad del usuario</p>
               </div>
             </div>
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditOpen(false)}>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)} disabled={isSaving}>
               Cancelar
             </Button>
-            <Button onClick={() => setIsEditOpen(false)}>Guardar Cambios</Button>
+            <Button onClick={handleSaveEdit} disabled={isSaving}>
+              {isSaving ? "Guardando..." : "Guardar Cambios"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -840,7 +1044,7 @@ export function MembersPage() {
             <Button variant="outline" onClick={() => setIsAssignEntitiesOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={() => setIsAssignEntitiesOpen(false)}>
+            <Button onClick={handleSaveAssignments}>
               <UserCheck className="mr-2 h-4 w-4" />
               Guardar Asignaciones
             </Button>
@@ -861,7 +1065,7 @@ export function MembersPage() {
           {selectedMember && (
             <div className="flex items-center gap-4 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
               <Avatar className="h-12 w-12">
-                <AvatarImage src={selectedMember.avatar || "/placeholder.svg"} alt={selectedMember.name} />
+                <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
                 <AvatarFallback className="bg-destructive/20 text-destructive">
                   {selectedMember.name
                     .split(" ")

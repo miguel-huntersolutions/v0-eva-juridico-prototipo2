@@ -24,32 +24,55 @@ export function MemberEntitySelector() {
       try {
         setIsLoading(true)
         const profile = await getCurrentProfile()
-        if (profile?.organization_id) {
-          const data = await getEntities(profile.organization_id)
-          const activeEntities = data.filter((e) => e.status === "active")
-          setEntities(activeEntities)
-          // Obtener nombre de la organización del primer resultado si existe
-          if (profile.full_name) {
-            setOrganizationName(profile.full_name)
-          }
+        console.log("[MemberEntitySelector] Profile loaded:", { 
+          id: profile?.id, 
+          organization_id: profile?.organization_id,
+          role: profile?.role 
+        })
+        
+        if (!profile?.organization_id) {
+          console.warn("[MemberEntitySelector] No organization_id found in profile")
+          setEntities([])
+          setIsLoading(false)
+          return
+        }
+        
+        console.log("[MemberEntitySelector] Loading entities for organization:", profile.organization_id)
+        const data = await getEntities(profile.organization_id)
+        console.log("[MemberEntitySelector] Entities loaded:", data.length, "total entities")
+        
+        const activeEntities = data.filter((e) => e.status === "active")
+        console.log("[MemberEntitySelector] Active entities:", activeEntities.length)
+        setEntities(activeEntities)
+        
+        // Obtener nombre de la organización del primer resultado si existe
+        if (profile.full_name) {
+          setOrganizationName(profile.full_name)
+        }
 
           // Cargar procesos y documentos para estadísticas
+          // Filtrar por entidades de la organización
           try {
-            const processes = await getProcessesMapped()
-            setAllProcesses(processes || [])
+            const allProcessesData = await getProcessesMapped()
+            // Filtrar procesos por las entidades de la organización
+            const entityIds = activeEntities.map((e) => e.id)
+            const organizationProcesses = (allProcessesData || []).filter((p) => entityIds.includes(p.entityId))
+            setAllProcesses(organizationProcesses)
+            
+            // Filtrar documentos por los procesos de la organización
+            const allDocumentsData = await getDocuments()
+            const processIds = organizationProcesses.map((p) => p.id)
+            const organizationDocuments = (allDocumentsData || []).filter((d: any) => {
+              // getDocuments returns documents with process_id field (snake_case)
+              return processIds.includes(d.process_id)
+            })
+            setAllDocuments(organizationDocuments)
           } catch (err) {
-            console.error("[v0] Error loading processes:", err)
+            console.error("[v0] Error loading processes or documents:", err)
           }
-
-          try {
-            const documents = await getDocuments()
-            setAllDocuments(documents || [])
-          } catch (err) {
-            console.error("[v0] Error loading documents:", err)
-          }
-        }
       } catch (err) {
         console.error("[v0] Error loading entities:", err)
+        setEntities([])
       } finally {
         setIsLoading(false)
       }
