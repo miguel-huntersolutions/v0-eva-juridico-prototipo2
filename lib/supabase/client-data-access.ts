@@ -351,8 +351,69 @@ export async function getSecretaries(entityId?: string) {
   }
 
   const { data, error } = await query
+  if (error) {
+    console.error("[getSecretaries] Error fetching secretaries:", error)
+    throw error
+  }
+  console.log("[getSecretaries] Secretaries fetched:", data?.length || 0, "for entityId:", entityId)
+  return (data || []) as Secretary[]
+}
+
+export async function createSecretary(data: {
+  name: string
+  secretaryName: string
+  email: string
+  phone?: string
+  entityId: string
+}): Promise<Secretary> {
+  const supabase = createBrowserClient()
+  const { data: secretary, error } = await supabase
+    .from("secretaries")
+    .insert({
+      name: data.name,
+      secretary_name: data.secretaryName,
+      email: data.email,
+      phone: data.phone || null,
+      entity_id: data.entityId,
+    })
+    .select()
+    .single()
+
   if (error) throw error
-  return data as Secretary[]
+  return secretary as Secretary
+}
+
+export async function updateSecretary(
+  id: string,
+  data: Partial<{
+    name: string
+    secretaryName: string
+    email: string
+    phone: string
+  }>,
+): Promise<Secretary> {
+  const supabase = createBrowserClient()
+  const updateData: Record<string, unknown> = {}
+  if (data.name !== undefined) updateData.name = data.name
+  if (data.secretaryName !== undefined) updateData.secretary_name = data.secretaryName
+  if (data.email !== undefined) updateData.email = data.email
+  if (data.phone !== undefined) updateData.phone = data.phone
+
+  const { data: secretary, error } = await supabase
+    .from("secretaries")
+    .update(updateData)
+    .eq("id", id)
+    .select()
+    .single()
+
+  if (error) throw error
+  return secretary as Secretary
+}
+
+export async function deleteSecretary(id: string) {
+  const supabase = createBrowserClient()
+  const { error } = await supabase.from("secretaries").delete().eq("id", id)
+  if (error) throw error
 }
 
 // Process Types

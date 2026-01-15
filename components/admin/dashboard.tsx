@@ -38,10 +38,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { getEntities, getMemberAssignedEntities, assignMemberEntities, createEntity, type EntityMapped, type Profile } from "@/lib/supabase/client-data-access"
+import { getEntities, getMemberAssignedEntities, assignMemberEntities, createEntity, updateEntity, type EntityMapped, type Profile } from "@/lib/supabase/client-data-access"
 import { cn } from "@/lib/utils"
 import { createBrowserClient } from "@/lib/supabase/client"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
@@ -56,8 +57,12 @@ export function AdminDashboard() {
   const [isCreateEntityOpen, setIsCreateEntityOpen] = React.useState(false)
   const [isInviteMemberOpen, setIsInviteMemberOpen] = React.useState(false)
   const [isAssignEntitiesOpen, setIsAssignEntitiesOpen] = React.useState(false)
+  const [isEditEntityOpen, setIsEditEntityOpen] = React.useState(false)
+  const [isAssignMembersToEntityOpen, setIsAssignMembersToEntityOpen] = React.useState(false)
+  const [selectedEntity, setSelectedEntity] = React.useState<EntityWithCount | null>(null)
   const [selectedMember, setSelectedMember] = React.useState<Profile | null>(null)
   const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
+  const [selectedMembersForEntity, setSelectedMembersForEntity] = React.useState<string[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [entities, setEntities] = React.useState<EntityWithCount[]>([])
   const [members, setMembers] = React.useState<Profile[]>([])
@@ -72,6 +77,15 @@ export function AdminDashboard() {
     representativeName: "",
   })
   const [isSavingEntity, setIsSavingEntity] = React.useState(false)
+  
+  // Edit entity form state
+  const [editEntityForm, setEditEntityForm] = React.useState({
+    name: "",
+    nit: "",
+    representativeName: "",
+    status: "active" as "active" | "inactive",
+  })
+  const [isSavingEdit, setIsSavingEdit] = React.useState(false)
 
   const { profile } = useProfile()
   const { actualRole, isSimulating } = useRoleSwitcher(profile?.role)
@@ -199,6 +213,117 @@ export function AdminDashboard() {
     }
   }
 
+  const openEditEntityDialog = (entity: EntityWithCount) => {
+    setSelectedEntity(entity)
+    setEditEntityForm({
+      name: entity.name,
+      nit: entity.nit,
+      representativeName: entity.representativeName || "",
+      status: (entity.status || "active") as "active" | "inactive",
+    })
+    setIsEditEntityOpen(true)
+  }
+
+  const handleSaveEditEntity = async () => {
+    if (!selectedEntity) return
+
+    try {
+      setIsSavingEdit(true)
+      const updatedEntity = await updateEntity(selectedEntity.id, {
+        name: editEntityForm.name,
+        nit: editEntityForm.nit,
+        representativeName: editEntityForm.representativeName,
+        status: editEntityForm.status,
+      })
+      
+      setEntities(entities.map((e) => (e.id === selectedEntity.id ? { ...updatedEntity, processesCount: selectedEntity.processesCount } : e)))
+      setIsEditEntityOpen(false)
+      setSelectedEntity(null)
+    } catch (error) {
+      console.error("Error updating entity:", error)
+      alert(error instanceof Error ? error.message : "Error al actualizar la entidad")
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
+  const openAssignMembersToEntityDialog = async (entity: EntityWithCount) => {
+    setSelectedEntity(entity)
+    try {
+      // Get members that are assigned to this entity
+      const assignedMemberIds: string[] = []
+      for (const member of members) {
+        const assignedIds = memberAssignments[member.id] || []
+        if (assignedIds.includes(entity.id)) {
+          assignedMemberIds.push(member.id)
+        }
+      }
+      // If no members are assigned, default to all members (backward compatibility)
+      setSelectedMembersForEntity(assignedMemberIds.length > 0 ? assignedMemberIds : members.map((m) => m.id))
+    } catch (error) {
+      console.error("Error loading assigned members:", error)
+      setSelectedMembersForEntity(members.map((m) => m.id))
+    }
+    setIsAssignMembersToEntityOpen(true)
+  }
+
+  const toggleMemberForEntity = (memberId: string) => {
+    setSelectedMembersForEntity((prev) =>
+      prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+    )
+  }
+
+  const handleSaveMembersToEntity = async () => {
+    if (!selectedEntity) return
+
+    try {
+      // Update assignments for each selected member
+      await Promise.all(
+        selectedMembersForEntity.map(async (memberId) => {
+          const currentAssignments = memberAssignments[memberId] || []
+          if (!currentAssignments.includes(selectedEntity.id)) {
+            await assignMemberEntities(memberId, [...currentAssignments, selectedEntity.id])
+          }
+        })
+      )
+
+      // Remove entity from members that are not selected
+      await Promise.all(
+        members
+          .filter((m) => !selectedMembersForEntity.includes(m.id))
+          .map(async (member) => {
+            const currentAssignments = memberAssignments[member.id] || []
+            const updatedAssignments = currentAssignments.filter((id) => id !== selectedEntity.id)
+            await assignMemberEntities(member.id, updatedAssignments)
+          })
+      )
+
+      // Reload data to refresh assignments
+      const { getOrganizationMembers, getMemberAssignedEntities } = await import("@/lib/supabase/client-data-access")
+      const membersData = await getOrganizationMembers(effectiveOrganizationId)
+      const memberProfiles = membersData.filter((m) => m.role === "member")
+      
+      const assignments: Record<string, string[]> = {}
+      await Promise.all(
+        memberProfiles.map(async (member) => {
+          try {
+            const assignedIds = await getMemberAssignedEntities(member.id)
+            assignments[member.id] = assignedIds.length > 0 ? assignedIds : entities.map((e) => e.id)
+          } catch (error) {
+            assignments[member.id] = entities.map((e) => e.id)
+          }
+        })
+      )
+      setMemberAssignments(assignments)
+
+      setIsAssignMembersToEntityOpen(false)
+      setSelectedEntity(null)
+    } catch (error) {
+      console.error("Error saving member assignments:", error)
+      alert(error instanceof Error ? error.message : "Error al guardar las asignaciones")
+    }
+  }
+
   const handleCreateEntity = async () => {
     if (!effectiveOrganizationId) {
       alert("No se ha seleccionado una organización")
@@ -293,7 +418,7 @@ export function AdminDashboard() {
       key: "actions",
       title: "",
       className: "w-10",
-      render: () => (
+      render: (entity: EntityWithCount) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -301,11 +426,11 @@ export function AdminDashboard() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openEditEntityDialog(entity)}>
               <Pencil className="mr-2 h-4 w-4" />
               Editar
             </DropdownMenuItem>
-            <DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openAssignMembersToEntityDialog(entity)}>
               <UserPlus className="mr-2 h-4 w-4" />
               Asignar Miembros
             </DropdownMenuItem>
@@ -634,6 +759,120 @@ export function AdminDashboard() {
               Cancelar
             </Button>
             <Button onClick={handleSaveAssignments}>
+              <UserCheck className="mr-2 h-4 w-4" />
+              Guardar Asignaciones
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Entity Dialog */}
+      <Dialog open={isEditEntityOpen} onOpenChange={setIsEditEntityOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Entidad</DialogTitle>
+            <DialogDescription>Actualiza la información de {selectedEntity?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Nombre</Label>
+              <Input
+                id="edit-name"
+                value={editEntityForm.name}
+                onChange={(e) => setEditEntityForm({ ...editEntityForm, name: e.target.value })}
+                placeholder="Nombre de la entidad"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-nit">NIT</Label>
+              <Input
+                id="edit-nit"
+                value={editEntityForm.nit}
+                onChange={(e) => setEditEntityForm({ ...editEntityForm, nit: e.target.value })}
+                placeholder="NIT de la entidad"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-representative">Representante Legal</Label>
+              <Input
+                id="edit-representative"
+                value={editEntityForm.representativeName}
+                onChange={(e) => setEditEntityForm({ ...editEntityForm, representativeName: e.target.value })}
+                placeholder="Nombre del representante legal"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-status">Estado</Label>
+              <Select
+                value={editEntityForm.status}
+                onValueChange={(value: "active" | "inactive") => setEditEntityForm({ ...editEntityForm, status: value })}
+              >
+                <SelectTrigger id="edit-status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Activa</SelectItem>
+                  <SelectItem value="inactive">Inactiva</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditEntityOpen(false)} disabled={isSavingEdit}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveEditEntity} disabled={isSavingEdit}>
+              {isSavingEdit ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar Cambios"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Members to Entity Dialog */}
+      <Dialog open={isAssignMembersToEntityOpen} onOpenChange={setIsAssignMembersToEntityOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Asignar Miembros</DialogTitle>
+            <DialogDescription>
+              Selecciona los miembros que tendrán acceso a {selectedEntity?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4 max-h-[400px] overflow-y-auto">
+            {members.map((member) => (
+              <div
+                key={member.id}
+                className="flex items-center space-x-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50"
+                onClick={() => toggleMemberForEntity(member.id)}
+              >
+                <Checkbox checked={selectedMembersForEntity.includes(member.id)} />
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={member.avatar_url || "/placeholder.svg"} alt={member.name} />
+                  <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                    {member.name
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1">
+                  <p className="text-sm font-medium">{member.name}</p>
+                  <p className="text-xs text-muted-foreground">{member.email}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignMembersToEntityOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveMembersToEntity}>
               <UserCheck className="mr-2 h-4 w-4" />
               Guardar Asignaciones
             </Button>

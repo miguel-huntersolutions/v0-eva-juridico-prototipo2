@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   DropdownMenu,
@@ -58,7 +59,12 @@ import {
   deleteEntity,
   getOrganizations,
   getSecretaries,
+  createSecretary,
+  updateSecretary,
+  deleteSecretary,
   getOrganizationMembers,
+  getMemberAssignedEntities,
+  assignMemberEntities,
   getProcessesMapped,
   type OrganizationMapped,
   type Profile,
@@ -69,6 +75,7 @@ import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
 interface SecretaryForm {
+  id?: string // ID of existing secretary (if editing)
   name: string
   secretaryName: string
   email: string
@@ -98,6 +105,7 @@ export function EntitiesPage() {
   // Added isDeleteOpen state
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
   const [isAssignMembersOpen, setIsAssignMembersOpen] = React.useState(false)
+  const [isSecretariesOpen, setIsSecretariesOpen] = React.useState(false)
   const [selectedEntity, setSelectedEntity] = React.useState<EntityMapped | null>(null)
   const [currentStep, setCurrentStep] = React.useState(1)
 
@@ -128,6 +136,7 @@ export function EntitiesPage() {
     representativeEmail: "",
     address: "",
     phone: "",
+    status: "active" as "active" | "inactive",
     secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }] as SecretaryForm[],
     logoFile: null as File | null,
     paaFile: null as File | null,
@@ -278,6 +287,90 @@ export function EntitiesPage() {
     resetForm()
   }
 
+  const handleSaveSecretaries = async () => {
+    if (!selectedEntity) return
+
+    try {
+      setSaving(true)
+      setError(null)
+
+      // Get existing secretaries for this entity
+      const existingSecretaries = await getSecretaries(selectedEntity.id)
+      const existingSecretaryIds = existingSecretaries.map((s) => s.id)
+
+      // Process secretaries: create, update, or delete
+      const formSecretaryIds: string[] = []
+      
+      for (const secretaryForm of formData.secretaries) {
+        // Skip empty secretaries
+        if (!secretaryForm.name && !secretaryForm.secretaryName && !secretaryForm.email) {
+          continue
+        }
+
+        // If secretary has an ID, it's an existing one - update it
+        if (secretaryForm.id) {
+          const existingSecretary = existingSecretaries.find((s) => s.id === secretaryForm.id)
+          if (existingSecretary) {
+            // Update existing secretary
+            const updated = await updateSecretary(existingSecretary.id, {
+              name: secretaryForm.name,
+              secretaryName: secretaryForm.secretaryName,
+              email: secretaryForm.email,
+              phone: secretaryForm.phone,
+            })
+            formSecretaryIds.push(updated.id)
+          } else {
+            // ID exists but secretary not found - create new one
+            const newSecretary = await createSecretary({
+              name: secretaryForm.name,
+              secretaryName: secretaryForm.secretaryName,
+              email: secretaryForm.email,
+              phone: secretaryForm.phone,
+              entityId: selectedEntity.id,
+            })
+            formSecretaryIds.push(newSecretary.id)
+          }
+        } else {
+          // No ID - this is a new secretary
+          const newSecretary = await createSecretary({
+            name: secretaryForm.name,
+            secretaryName: secretaryForm.secretaryName,
+            email: secretaryForm.email,
+            phone: secretaryForm.phone,
+            entityId: selectedEntity.id,
+          })
+          formSecretaryIds.push(newSecretary.id)
+        }
+      }
+
+      // Delete secretaries that are no longer in the form
+      const secretariesToDelete = existingSecretaries.filter(
+        (s) => !formSecretaryIds.includes(s.id)
+      )
+      for (const secretaryToDelete of secretariesToDelete) {
+        await deleteSecretary(secretaryToDelete.id)
+      }
+
+      console.log("[EntitiesPage] Secretaries updated:", {
+        created: formSecretaryIds.length - existingSecretaryIds.length,
+        updated: formSecretaryIds.filter((id) => existingSecretaryIds.includes(id)).length,
+        deleted: secretariesToDelete.length,
+      })
+
+      setIsSecretariesOpen(false)
+      // Reload entities to refresh any counts
+      if (effectiveOrganizationId) {
+        const entitiesData = await getEntities(effectiveOrganizationId)
+        setEntities(entitiesData)
+      }
+    } catch (err) {
+      console.error("Error saving secretaries:", err)
+      setError("Error al guardar las secretarías")
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleEditDB = async () => {
     if (!selectedEntity) return
 
@@ -285,12 +378,16 @@ export function EntitiesPage() {
       setSaving(true)
       setError(null)
 
+      // Update entity with basic information and status only
       const updatedEntity = await updateEntity(selectedEntity.id, {
         name: formData.name,
         nit: formData.nit,
         representativeName: formData.representativeName,
+        status: formData.status,
         logoUrl: formData.logoFile ? URL.createObjectURL(formData.logoFile) : undefined, // Handle actual upload
       })
+
+      console.log("[EntitiesPage] Updated entity:", updatedEntity)
 
       setEntities(entities.map((e) => (e.id === selectedEntity.id ? updatedEntity : e)))
       setIsEditOpen(false)
@@ -335,6 +432,7 @@ export function EntitiesPage() {
       representativeEmail: "",
       address: "",
       phone: "",
+      status: "active" as "active" | "inactive",
       secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
       logoFile: null,
       paaFile: null,
@@ -346,11 +444,33 @@ export function EntitiesPage() {
 
   const openEditDialog = async (entity: EntityMapped) => {
     setSelectedEntity(entity)
+    setCurrentStep(1) // Reset to step 1
+
+    // Load only basic information and status
+    setFormData({
+      name: entity.name,
+      nit: entity.nit,
+      representativeName: entity.representativeName,
+      representativeEmail: "",
+      address: "",
+      phone: "",
+      status: entity.status as "active" | "inactive",
+      secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
+      logoFile: null,
+      paaFile: null,
+      planFile: null,
+    })
+    setIsEditOpen(true)
+  }
+
+  const openSecretariesDialog = async (entity: EntityMapped) => {
+    setSelectedEntity(entity)
 
     // Load secretaries from database
     try {
       const entitySecretaries = await getSecretaries(entity.id)
       const secretaryForms = entitySecretaries.map((s) => ({
+        id: s.id, // Store the ID for later matching
         name: s.name,
         secretaryName: s.secretary_name || "",
         email: s.email || "",
@@ -358,34 +478,18 @@ export function EntitiesPage() {
       }))
 
       setFormData({
-        name: entity.name,
-        nit: entity.nit,
-        representativeName: entity.representativeName,
-        representativeEmail: "",
-        address: "",
-        phone: "",
+        ...formData,
         secretaries:
           secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }],
-        logoFile: null,
-        paaFile: null,
-        planFile: null,
       })
     } catch (err) {
       console.error("Error loading secretaries:", err)
       setFormData({
-        name: entity.name,
-        nit: entity.nit,
-        representativeName: entity.representativeName,
-        representativeEmail: "",
-        address: "",
-        phone: "",
+        ...formData,
         secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
-        logoFile: null,
-        paaFile: null,
-        planFile: null,
       })
     }
-    setIsEditOpen(true)
+    setIsSecretariesOpen(true)
   }
 
   const openDetailDialog = async (entity: EntityMapped) => {
@@ -426,9 +530,29 @@ export function EntitiesPage() {
     }
   }
 
-  const openAssignDialog = (entity: EntityMapped) => {
+  const openAssignDialog = async (entity: EntityMapped) => {
     setSelectedEntity(entity)
-    // setSelectedMembers(["3", "4"]) // Mock pre-selected members
+    
+    // Load members that are already assigned to this entity
+    try {
+      const assignedMemberIds: string[] = []
+      for (const member of members) {
+        try {
+          const assignedIds = await getMemberAssignedEntities(member.id)
+          if (assignedIds.includes(entity.id)) {
+            assignedMemberIds.push(member.id)
+          }
+        } catch (error) {
+          console.error(`Error loading assigned entities for member ${member.name}:`, error)
+        }
+      }
+      // Set selected members to those already assigned, or empty array if none
+      setSelectedMembers(assignedMemberIds)
+    } catch (error) {
+      console.error("Error loading assigned members:", error)
+      setSelectedMembers([])
+    }
+    
     setIsAssignMembersOpen(true)
   }
 
@@ -642,6 +766,10 @@ export function EntitiesPage() {
                             <DropdownMenuItem onClick={() => openAssignDialog(entity)}>
                               <Users className="mr-2 h-4 w-4" />
                               Asignar Miembros
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openSecretariesDialog(entity)}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              Gestionar Secretarías
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(entity)}>
@@ -981,307 +1109,72 @@ export function EntitiesPage() {
 
       {/* Edit Entity Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="h-[90vh] flex flex-col overflow-hidden max-w-2xl">
-          <DialogHeader className="flex-shrink-0">
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
             <DialogTitle>Editar Entidad</DialogTitle>
             <DialogDescription>Actualiza la información de {selectedEntity?.name}</DialogDescription>
           </DialogHeader>
 
-          {renderStepIndicator()}
-
-          <div className="flex-1 overflow-y-auto px-1">
-            {/* Step 1: Basic Information */}
-            {currentStep === 1 && (
-              <div className="space-y-4">
-                <div className="grid gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="edit-name">Nombre de la Entidad *</Label>
-                    <Input
-                      id="edit-name"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="edit-nit">NIT *</Label>
-                      <Input
-                        id="edit-nit"
-                        value={formData.nit}
-                        onChange={(e) => setFormData({ ...formData, nit: e.target.value })}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="edit-phone">Teléfono</Label>
-                      <Input
-                        id="edit-phone"
-                        value={formData.phone}
-                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="edit-address">Dirección</Label>
-                    <Input
-                      id="edit-address"
-                      value={formData.address}
-                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="edit-rep-name">Representante Legal *</Label>
-                      <Input
-                        id="edit-rep-name"
-                        value={formData.representativeName}
-                        onChange={(e) => setFormData({ ...formData, representativeName: e.target.value })}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="edit-rep-email">Correo del Representante</Label>
-                      <Input
-                        id="edit-rep-email"
-                        type="email"
-                        value={formData.representativeEmail}
-                        onChange={(e) => setFormData({ ...formData, representativeEmail: e.target.value })}
-                      />
-                    </div>
-                  </div>
+          <div className="space-y-4 py-4">
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-name">Nombre de la Entidad *</Label>
+                <Input
+                  id="edit-name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-nit">NIT *</Label>
+                  <Input
+                    id="edit-nit"
+                    value={formData.nit}
+                    onChange={(e) => setFormData({ ...formData, nit: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-status">Estado *</Label>
+                  <Select
+                    value={formData.status}
+                    onValueChange={(value: "active" | "inactive") => setFormData({ ...formData, status: value })}
+                  >
+                    <SelectTrigger id="edit-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Activa</SelectItem>
+                      <SelectItem value="inactive">Inactiva</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-            )}
-
-            {/* Step 2: Documents */}
-            {currentStep === 2 && (
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <div className="grid gap-2">
-                    <Label>Logo de la Entidad</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleFileUpload("logoFile", e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="edit-logo-upload"
-                      />
-                      <Button
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={() => document.getElementById("edit-logo-upload")?.click()}
-                      >
-                        <Upload className="mr-2 h-4 w-4" />
-                        {formData.logoFile ? formData.logoFile.name : "Seleccionar nuevo logo"}
-                      </Button>
-                      {formData.logoFile && (
-                        <Button variant="ghost" size="icon" onClick={() => handleFileUpload("logoFile", null)}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    {!formData.logoFile && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Check className="h-3 w-3 text-primary" />
-                        <span>Logo actual: logo-alcaldia.png</span>
-                        <Button variant="ghost" size="sm" className="h-6 gap-1">
-                          <Download className="h-3 w-3" />
-                          Descargar
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Plan Anual de Adquisiciones (PAA)</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept=".pdf,.doc,.docx"
-                        onChange={(e) => handleFileUpload("paaFile", e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="edit-paa-upload"
-                      />
-                      <Button
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={() => document.getElementById("edit-paa-upload")?.click()}
-                      >
-                        <FileText className="mr-2 h-4 w-4" />
-                        {formData.paaFile ? formData.paaFile.name : "Reemplazar PAA"}
-                      </Button>
-                      {formData.paaFile && (
-                        <Button variant="ghost" size="icon" onClick={() => handleFileUpload("paaFile", null)}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    {!formData.paaFile && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Check className="h-3 w-3 text-primary" />
-                        <span>PAA actual: paa-2024.pdf</span>
-                        <Button variant="ghost" size="sm" className="h-6 gap-1">
-                          <Download className="h-3 w-3" />
-                          Descargar
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Plan de Desarrollo</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept=".pdf,.doc,.docx"
-                        onChange={(e) => handleFileUpload("planFile", e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="edit-plan-upload"
-                      />
-                      <Button
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={() => document.getElementById("edit-plan-upload")?.click()}
-                      >
-                        <FileStack className="mr-2 h-4 w-4" />
-                        {formData.planFile ? formData.planFile.name : "Reemplazar Plan"}
-                      </Button>
-                      {formData.planFile && (
-                        <Button variant="ghost" size="icon" onClick={() => handleFileUpload("planFile", null)}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    {!formData.planFile && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Check className="h-3 w-3 text-primary" />
-                        <span>Plan actual: plan-desarrollo-2024-2027.pdf</span>
-                        <Button variant="ghost" size="sm" className="h-6 gap-1">
-                          <Download className="h-3 w-3" />
-                          Descargar
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit-rep-name">Representante Legal *</Label>
+                <Input
+                  id="edit-rep-name"
+                  value={formData.representativeName}
+                  onChange={(e) => setFormData({ ...formData, representativeName: e.target.value })}
+                />
               </div>
-            )}
-
-            {currentStep === 3 && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-base">Secretarías de la Entidad</Label>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Edita las secretarías y la información de contacto de cada secretario
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={addSecretaryField}>
-                    <Plus className="mr-2 h-3 w-3" />
-                    Agregar
-                  </Button>
-                </div>
-
-                <div className="space-y-4">
-                  {formData.secretaries.map((secretary, index) => (
-                    <Card key={index} className="relative">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <Building className="h-4 w-4 text-primary" />
-                            Secretaría {index + 1}
-                          </CardTitle>
-                          {formData.secretaries.length > 1 && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive"
-                              onClick={() => removeSecretaryField(index)}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor={`edit-sec-name-${index}`}>Nombre de la Secretaría *</Label>
-                          <Input
-                            id={`edit-sec-name-${index}`}
-                            placeholder="Ej: Secretaría de Hacienda"
-                            value={secretary.name}
-                            onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor={`edit-sec-person-${index}`} className="flex items-center gap-2">
-                            <User className="h-3 w-3" />
-                            Nombre del Secretario *
-                          </Label>
-                          <Input
-                            id={`edit-sec-person-${index}`}
-                            placeholder="Ej: Carlos Andrés Pérez"
-                            value={secretary.secretaryName}
-                            onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label htmlFor={`edit-sec-email-${index}`} className="flex items-center gap-2">
-                              <Mail className="h-3 w-3" />
-                              Correo Electrónico
-                            </Label>
-                            <Input
-                              id={`edit-sec-email-${index}`}
-                              type="email"
-                              placeholder="secretaria@entidad.gov.co"
-                              value={secretary.email}
-                              onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
-                            />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor={`edit-sec-phone-${index}`} className="flex items-center gap-2">
-                              <Phone className="h-3 w-3" />
-                              Teléfono
-                            </Label>
-                            <Input
-                              id={`edit-sec-phone-${index}`}
-                              placeholder="+57 1 234 5678"
-                              value={secretary.phone}
-                              onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-
-                <Card className="bg-muted/50">
-                  <CardContent className="pt-4 text-xs text-muted-foreground">
-                    <p>
-                      Las secretarías representan las áreas de la entidad que supervisan procesos contractuales. La
-                      información del secretario permite enviar notificaciones y coordinar los procesos.
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+            </div>
           </div>
 
-          <DialogFooter className="flex-shrink-0 pt-4 border-t">
-            {currentStep > 1 && (
-              <Button variant="outline" onClick={() => setCurrentStep(currentStep - 1)} disabled={saving}>
-                Anterior
-              </Button>
-            )}
-            {currentStep < 3 ? (
-              <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
-            ) : (
-              <Button onClick={handleEditDB} disabled={saving}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {saving ? "Guardando..." : "Guardar Cambios"}
-              </Button>
-            )}
+          {error && (
+            <div className="px-4 py-2 text-sm text-destructive bg-destructive/10 rounded-md">
+              {error}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button onClick={handleEditDB} disabled={saving}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {saving ? "Guardando..." : "Guardar Cambios"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1500,7 +1393,165 @@ export function EntitiesPage() {
             <Button variant="outline" onClick={() => setIsAssignMembersOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={() => setIsAssignMembersOpen(false)}>Guardar Asignaciones</Button>
+            <Button 
+              onClick={async () => {
+                if (!selectedEntity) return
+                
+                try {
+                  setSaving(true)
+                  setError(null)
+                  
+                  // Update assignments for each member
+                  for (const member of members) {
+                    const isSelected = selectedMembers.includes(member.id)
+                    const currentAssignedIds = await getMemberAssignedEntities(member.id)
+                    const isCurrentlyAssigned = currentAssignedIds.includes(selectedEntity.id)
+                    
+                    if (isSelected && !isCurrentlyAssigned) {
+                      // Add entity to member's assignments
+                      await assignMemberEntities(member.id, [...currentAssignedIds, selectedEntity.id])
+                    } else if (!isSelected && isCurrentlyAssigned) {
+                      // Remove entity from member's assignments
+                      await assignMemberEntities(member.id, currentAssignedIds.filter(id => id !== selectedEntity.id))
+                    }
+                  }
+                  
+                  setIsAssignMembersOpen(false)
+                } catch (error) {
+                  console.error("Error saving member assignments:", error)
+                  setError("Error al guardar las asignaciones")
+                } finally {
+                  setSaving(false)
+                }
+              }}
+              disabled={saving}
+            >
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {saving ? "Guardando..." : "Guardar Asignaciones"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage Secretaries Dialog */}
+      <Dialog open={isSecretariesOpen} onOpenChange={setIsSecretariesOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Gestionar Secretarías</DialogTitle>
+            <DialogDescription>
+              Administra las secretarías de {selectedEntity?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto px-1">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-base">Secretarías de la Entidad</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Agrega o edita las secretarías y la información de contacto de cada secretario
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={addSecretaryField}>
+                  <Plus className="mr-2 h-3 w-3" />
+                  Agregar
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                {formData.secretaries.map((secretary, index) => (
+                  <Card key={index} className="relative">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Building className="h-4 w-4 text-primary" />
+                          Secretaría {index + 1}
+                        </CardTitle>
+                        {formData.secretaries.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => removeSecretaryField(index)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor={`sec-name-${index}`} className="flex items-center gap-2">
+                          <Building className="h-3 w-3" />
+                          Nombre de la Secretaría *
+                        </Label>
+                        <Input
+                          id={`sec-name-${index}`}
+                          placeholder="Ej: Secretaría de Hacienda"
+                          value={secretary.name}
+                          onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor={`sec-person-${index}`} className="flex items-center gap-2">
+                          <User className="h-3 w-3" />
+                          Nombre del Secretario *
+                        </Label>
+                        <Input
+                          id={`sec-person-${index}`}
+                          placeholder="Ej: Juan Pérez"
+                          value={secretary.secretaryName}
+                          onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor={`sec-email-${index}`} className="flex items-center gap-2">
+                            <Mail className="h-3 w-3" />
+                            Correo Electrónico *
+                          </Label>
+                          <Input
+                            id={`sec-email-${index}`}
+                            type="email"
+                            placeholder="secretario@entidad.gov.co"
+                            value={secretary.email}
+                            onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor={`sec-phone-${index}`} className="flex items-center gap-2">
+                            <Phone className="h-3 w-3" />
+                            Teléfono
+                          </Label>
+                          <Input
+                            id={`sec-phone-${index}`}
+                            placeholder="+57 1 234 5678"
+                            value={secretary.phone}
+                            onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="px-4 py-2 text-sm text-destructive bg-destructive/10 rounded-md">
+              {error}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSecretariesOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveSecretaries} disabled={saving}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {saving ? "Guardando..." : "Guardar Cambios"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

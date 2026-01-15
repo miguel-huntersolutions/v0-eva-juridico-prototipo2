@@ -95,6 +95,8 @@ export function MembersPage() {
 
   const [members, setMembers] = React.useState<MemberExtended[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [allProcesses, setAllProcesses] = React.useState<any[]>([])
+  const [allDocuments, setAllDocuments] = React.useState<any[]>([])
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
@@ -146,20 +148,24 @@ export function MembersPage() {
       console.log("[MembersPage] Organization entity IDs:", organizationEntityIds)
 
       // Filter processes and documents by organization entities
-      const allProcesses = await getProcessesMapped()
-      const allDocuments = await getDocuments()
+      const processesData = await getProcessesMapped()
+      const documentsData = await getDocuments()
+      
+      // Store in state for later use
+      setAllProcesses(processesData)
+      setAllDocuments(documentsData)
       
       // Filter processes to only include those from this organization's entities
-      const organizationProcesses = allProcesses.filter((p) => organizationEntityIds.includes(p.entityId))
-      console.log("[MembersPage] Total processes in DB:", allProcesses.length, "Organization processes:", organizationProcesses.length)
+      const organizationProcesses = processesData.filter((p) => organizationEntityIds.includes(p.entityId))
+      console.log("[MembersPage] Total processes in DB:", processesData.length, "Organization processes:", organizationProcesses.length)
       
       // Filter documents to only include those from this organization's processes
       const organizationProcessIds = organizationProcesses.map((p) => p.id)
-      const organizationDocuments = allDocuments.filter((d: any) => {
+      const organizationDocuments = documentsData.filter((d: any) => {
         // getDocuments returns documents with process_id field (snake_case)
         return organizationProcessIds.includes(d.process_id)
       })
-      console.log("[MembersPage] Total documents in DB:", allDocuments.length, "Organization documents:", organizationDocuments.length)
+      console.log("[MembersPage] Total documents in DB:", documentsData.length, "Organization documents:", organizationDocuments.length)
 
       console.log("[MembersPage] Raw members data:", membersData)
       console.log("[MembersPage] Total profiles:", membersData.length)
@@ -172,34 +178,33 @@ export function MembersPage() {
       // Calculate stats for each member
       const membersWithStats = await Promise.all(
         memberProfiles.map(async (member) => {
-          // Get assigned entities from database, or default to all entities if none assigned
+          // Get assigned entities from database
           let assignedEntityIds: string[] = []
           try {
             assignedEntityIds = await getMemberAssignedEntities(member.id)
-            // If no entities assigned, default to all entities in organization (backward compatibility)
-            if (assignedEntityIds.length === 0) {
-              assignedEntityIds = entitiesData.map((e) => e.id)
-            }
+            console.log(`[MembersPage] Member ${member.name} assigned entities:`, assignedEntityIds.length, assignedEntityIds)
+            // If no entities assigned, use empty array (member has no access)
+            // Don't default to all entities - this was causing incorrect counts
           } catch (error) {
             console.error(`[MembersPage] Error loading assigned entities for ${member.name}:`, error)
-            // Default to all entities if there's an error
-            assignedEntityIds = entitiesData.map((e) => e.id)
+            // Use empty array if there's an error (safer than defaulting to all)
+            assignedEntityIds = []
           }
 
-          // Calculate processes count (processes from assigned entities)
+          // Calculate processes count (processes from assigned entities only)
           const memberProcesses = organizationProcesses.filter((p) => assignedEntityIds.includes(p.entityId))
           const processesCount = memberProcesses.length
 
-          // Calculate documents count
-          // Since all members have access to all entities, use organization documents count
-          // But filter by the member's assigned entities' processes to be accurate
+          // Calculate documents count (documents from member's assigned entities' processes only)
           const processIds = memberProcesses.map((p) => p.id)
-          const documentsCount = organizationDocuments.filter((d: any) => {
-            // getDocuments returns documents with process_id field (snake_case)
-            return processIds.includes(d.process_id)
-          }).length
+          const documentsCount = processIds.length > 0 
+            ? organizationDocuments.filter((d: any) => {
+                // getDocuments returns documents with process_id field (snake_case)
+                return processIds.includes(d.process_id)
+              }).length
+            : 0
           
-          console.log(`[MembersPage] Member ${member.name}: processes=${processesCount}, documents=${documentsCount}, processIds=${processIds.length}, orgProcesses=${organizationProcesses.length}, orgDocuments=${organizationDocuments.length}`)
+          console.log(`[MembersPage] Member ${member.name}: assignedEntities=${assignedEntityIds.length}, processes=${processesCount}, documents=${documentsCount}, processIds=${processIds.length}`)
 
           // Determine status based on created_at and last_sign_in_at
           // For now, we'll use "active" if the profile exists, "pending" if recently created
@@ -373,11 +378,37 @@ export function MembersPage() {
       // Save assignments to database
       await assignMemberEntities(selectedMember.id, selectedEntities)
       
-      // Update local state
+      // Recalculate processes and documents count for this member based on new assigned entities
+      // Use stored processes and documents, but filter by organization entities first
+      const organizationEntityIds = entities.map((e) => e.id)
+      const organizationProcesses = allProcesses.filter((p) => organizationEntityIds.includes(p.entityId))
+      
+      // Filter processes by assigned entities (only from organization)
+      const memberProcesses = organizationProcesses.filter((p) => selectedEntities.includes(p.entityId))
+      const processesCount = memberProcesses.length
+      
+      // Filter documents by member's processes
+      const processIds = memberProcesses.map((p) => p.id)
+      const organizationProcessIds = organizationProcesses.map((p) => p.id)
+      const organizationDocuments = allDocuments.filter((d: any) => {
+        return organizationProcessIds.includes(d.process_id)
+      })
+      const documentsCount = organizationDocuments.filter((d: any) => {
+        return processIds.includes(d.process_id)
+      }).length
+      
+      console.log(`[MembersPage] Recalculated for ${selectedMember.name}: processes=${processesCount}, documents=${documentsCount}, entities=${selectedEntities.length}`)
+      
+      // Update local state with recalculated values
       setMembers((prevMembers) =>
         prevMembers.map((m) =>
           m.id === selectedMember.id
-            ? { ...m, assignedEntities: selectedEntities }
+            ? { 
+                ...m, 
+                assignedEntities: selectedEntities,
+                processesCount,
+                documentsCount,
+              }
             : m
         )
       )

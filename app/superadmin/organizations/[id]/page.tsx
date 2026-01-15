@@ -13,6 +13,12 @@ import {
   MoreHorizontal,
   Mail,
   UserPlus,
+  FileText,
+  X,
+  Building,
+  User,
+  Phone,
+  ImageIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -37,7 +43,6 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ImageIcon, X } from "lucide-react"
 import {
   getOrganizations,
   getOrganizationMembers,
@@ -50,9 +55,15 @@ import {
   deleteEntity,
   getUsersWithoutOrganization,
   createMember,
+  getSecretaries,
+  createSecretary,
+  updateSecretary,
+  deleteSecretary,
   type OrganizationMapped,
   type Profile,
   type Entity,
+  type EntityMapped,
+  type Secretary,
 } from "@/lib/supabase/client-data-access"
 
 // Alias for backward compatibility
@@ -67,7 +78,7 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
 
   const [organization, setOrganization] = React.useState<Organization | null>(null)
   const [members, setMembers] = React.useState<Profile[]>([])
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [loading, setLoading] = React.useState(true)
   const [activeTab, setActiveTab] = React.useState("members")
 
@@ -89,7 +100,7 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
   // Entity dialog state
   const [isAddEntityOpen, setIsAddEntityOpen] = React.useState(false)
   const [isEditEntityOpen, setIsEditEntityOpen] = React.useState(false)
-  const [selectedEntity, setSelectedEntity] = React.useState<Entity | null>(null)
+  const [selectedEntity, setSelectedEntity] = React.useState<EntityMapped | null>(null)
   const [entityForm, setEntityForm] = React.useState({
     name: "",
     nit: "",
@@ -107,8 +118,20 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
   const [isDeleteMemberOpen, setIsDeleteMemberOpen] = React.useState(false)
   const [memberToDelete, setMemberToDelete] = React.useState<Profile | null>(null)
   const [isDeleteEntityOpen, setIsDeleteEntityOpen] = React.useState(false)
-  const [entityToDelete, setEntityToDelete] = React.useState<Entity | null>(null)
+  const [entityToDelete, setEntityToDelete] = React.useState<EntityMapped | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+
+  // Secretaries dialog state
+  const [isSecretariesOpen, setIsSecretariesOpen] = React.useState(false)
+  const [secretaryForm, setSecretaryForm] = React.useState<Array<{
+    id?: string
+    name: string
+    secretaryName: string
+    email: string
+    phone: string
+  }>>([{ name: "", secretaryName: "", email: "", phone: "" }])
+  const [savingSecretaries, setSavingSecretaries] = React.useState(false)
+  const [secretariesError, setSecretariesError] = React.useState<string | null>(null)
 
   // State for managing member creation mode
   const [memberMode, setMemberMode] = useState<"existing" | "new">("existing")
@@ -367,16 +390,16 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
     }
   }
 
-  const openEditEntity = (entity: Entity) => {
+  const openEditEntity = (entity: EntityMapped) => {
     setSelectedEntity(entity)
     setEntityForm({
       name: entity.name,
       nit: entity.nit,
-      representativeName: entity.representative_name,
+      representativeName: entity.representativeName,
       status: entity.status as "active" | "inactive",
-      logoUrl: (entity as any).logoUrl || (entity as any).logo_url || "",
+      logoUrl: entity.logoUrl || "",
     })
-    setEntityLogoPreview((entity as any).logoUrl || (entity as any).logo_url || null)
+    setEntityLogoPreview(entity.logoUrl || null)
     setEntityLogoFile(null)
     setIsEditEntityOpen(true)
     setEntityError(null)
@@ -432,6 +455,132 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
       logger.error("/superadmin/organizations/[id]", "Error deleting entity", err)
     } finally {
       setIsDeleting(false)
+    }
+  }
+
+  const openSecretariesDialog = async (entity: EntityMapped) => {
+    setSelectedEntity(entity)
+    
+    // Load secretaries from database
+    try {
+      console.log("[OrganizationsPage] Loading secretaries for entity:", entity.id, entity.name)
+      const entitySecretaries = await getSecretaries(entity.id)
+      console.log("[OrganizationsPage] Secretaries loaded:", entitySecretaries)
+      
+      const secretaryForms = entitySecretaries.map((s) => ({
+        id: s.id,
+        name: s.name,
+        secretaryName: s.secretary_name || "",
+        email: s.email || "",
+        phone: s.phone || "",
+      }))
+
+      console.log("[OrganizationsPage] Secretary forms mapped:", secretaryForms)
+
+      setSecretaryForm(
+        secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }]
+      )
+    } catch (err) {
+      console.error("[OrganizationsPage] Error loading secretaries:", err)
+      setSecretariesError("Error al cargar las secretarías")
+      setSecretaryForm([{ name: "", secretaryName: "", email: "", phone: "" }])
+    }
+    setIsSecretariesOpen(true)
+    setSecretariesError(null)
+  }
+
+  const addSecretaryField = () => {
+    setSecretaryForm([...secretaryForm, { name: "", secretaryName: "", email: "", phone: "" }])
+  }
+
+  const removeSecretaryField = (index: number) => {
+    const newSecretaries = secretaryForm.filter((_, i) => i !== index)
+    setSecretaryForm(newSecretaries)
+  }
+
+  const updateSecretaryField = (index: number, field: string, value: string) => {
+    const newSecretaries = [...secretaryForm]
+    newSecretaries[index] = { ...newSecretaries[index], [field]: value }
+    setSecretaryForm(newSecretaries)
+  }
+
+  const handleSaveSecretaries = async () => {
+    if (!selectedEntity) return
+
+    try {
+      setSavingSecretaries(true)
+      setSecretariesError(null)
+
+      // Get existing secretaries for this entity
+      const existingSecretaries = await getSecretaries(selectedEntity.id)
+      const existingSecretaryIds = existingSecretaries.map((s) => s.id)
+
+      // Process secretaries: create, update, or delete
+      const formSecretaryIds: string[] = []
+      
+      for (const secretaryFormItem of secretaryForm) {
+        // Skip empty secretaries
+        if (!secretaryFormItem.name && !secretaryFormItem.secretaryName && !secretaryFormItem.email) {
+          continue
+        }
+
+        // If secretary has an ID, it's an existing one - update it
+        if (secretaryFormItem.id) {
+          const existingSecretary = existingSecretaries.find((s) => s.id === secretaryFormItem.id)
+          if (existingSecretary) {
+            // Update existing secretary
+            const updated = await updateSecretary(existingSecretary.id, {
+              name: secretaryFormItem.name,
+              secretaryName: secretaryFormItem.secretaryName,
+              email: secretaryFormItem.email,
+              phone: secretaryFormItem.phone,
+            })
+            formSecretaryIds.push(updated.id)
+          } else {
+            // ID exists but secretary not found - create new one
+            const newSecretary = await createSecretary({
+              name: secretaryFormItem.name,
+              secretaryName: secretaryFormItem.secretaryName,
+              email: secretaryFormItem.email,
+              phone: secretaryFormItem.phone,
+              entityId: selectedEntity.id,
+            })
+            formSecretaryIds.push(newSecretary.id)
+          }
+        } else {
+          // No ID - this is a new secretary
+          const newSecretary = await createSecretary({
+            name: secretaryFormItem.name,
+            secretaryName: secretaryFormItem.secretaryName,
+            email: secretaryFormItem.email,
+            phone: secretaryFormItem.phone,
+            entityId: selectedEntity.id,
+          })
+          formSecretaryIds.push(newSecretary.id)
+        }
+      }
+
+      // Delete secretaries that are no longer in the form
+      const secretariesToDelete = existingSecretaries.filter(
+        (s) => !formSecretaryIds.includes(s.id)
+      )
+      for (const secretaryToDelete of secretariesToDelete) {
+        await deleteSecretary(secretaryToDelete.id)
+      }
+
+      console.log("[OrganizationsPage] Secretaries updated:", {
+        created: formSecretaryIds.length - existingSecretaryIds.length,
+        updated: formSecretaryIds.filter((id) => existingSecretaryIds.includes(id)).length,
+        deleted: secretariesToDelete.length,
+      })
+
+      setIsSecretariesOpen(false)
+      await loadData()
+    } catch (err) {
+      console.error("Error saving secretaries:", err)
+      setSecretariesError("Error al guardar las secretarías")
+    } finally {
+      setSavingSecretaries(false)
     }
   }
 
@@ -783,6 +932,10 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
                             <DropdownMenuItem onClick={() => openEditEntity(entity)}>
                               <Pencil className="mr-2 h-4 w-4" />
                               Editar
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openSecretariesDialog(entity)}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              Gestionar Secretarías
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -1328,6 +1481,129 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
             <Button variant="destructive" onClick={handleDeleteEntity} disabled={isDeleting}>
               {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Eliminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage Secretaries Dialog */}
+      <Dialog open={isSecretariesOpen} onOpenChange={setIsSecretariesOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Gestionar Secretarías</DialogTitle>
+            <DialogDescription>
+              Administra las secretarías de {selectedEntity?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto px-1">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-base">Secretarías de la Entidad</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Agrega o edita las secretarías y la información de contacto de cada secretario
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={addSecretaryField}>
+                  <Plus className="mr-2 h-3 w-3" />
+                  Agregar
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                {secretaryForm.map((secretary, index) => (
+                  <Card key={index} className="relative">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Building className="h-4 w-4 text-primary" />
+                          Secretaría {index + 1}
+                        </CardTitle>
+                        {secretaryForm.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => removeSecretaryField(index)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor={`sec-name-${index}`} className="flex items-center gap-2">
+                          <Building className="h-3 w-3" />
+                          Nombre de la Secretaría *
+                        </Label>
+                        <Input
+                          id={`sec-name-${index}`}
+                          placeholder="Ej: Secretaría de Hacienda"
+                          value={secretary.name}
+                          onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor={`sec-person-${index}`} className="flex items-center gap-2">
+                          <User className="h-3 w-3" />
+                          Nombre del Secretario *
+                        </Label>
+                        <Input
+                          id={`sec-person-${index}`}
+                          placeholder="Ej: Juan Pérez"
+                          value={secretary.secretaryName}
+                          onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor={`sec-email-${index}`} className="flex items-center gap-2">
+                            <Mail className="h-3 w-3" />
+                            Correo Electrónico *
+                          </Label>
+                          <Input
+                            id={`sec-email-${index}`}
+                            type="email"
+                            placeholder="secretario@entidad.gov.co"
+                            value={secretary.email}
+                            onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor={`sec-phone-${index}`} className="flex items-center gap-2">
+                            <Phone className="h-3 w-3" />
+                            Teléfono
+                          </Label>
+                          <Input
+                            id={`sec-phone-${index}`}
+                            placeholder="+57 1 234 5678"
+                            value={secretary.phone}
+                            onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {secretariesError && (
+            <div className="px-4 py-2 text-sm text-destructive bg-destructive/10 rounded-md">
+              {secretariesError}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSecretariesOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveSecretaries} disabled={savingSecretaries}>
+              {savingSecretaries && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {savingSecretaries ? "Guardando..." : "Guardar Cambios"}
             </Button>
           </DialogFooter>
         </DialogContent>
