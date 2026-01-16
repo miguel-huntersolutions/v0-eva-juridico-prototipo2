@@ -69,7 +69,7 @@ import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
 
 interface MemberExtended extends Profile {
-  status: "active" | "pending" | "inactive"
+  status: "pending" | "approved" | "rejected"
   assignedEntities: string[]
   processesCount: number
   documentsCount: number
@@ -206,12 +206,8 @@ export function MembersPage() {
           
           console.log(`[MembersPage] Member ${member.name}: assignedEntities=${assignedEntityIds.length}, processes=${processesCount}, documents=${documentsCount}, processIds=${processIds.length}`)
 
-          // Determine status based on created_at and last_sign_in_at
-          // For now, we'll use "active" if the profile exists, "pending" if recently created
-          const createdAt = new Date(member.created_at || Date.now())
-          const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24)
-          const status: "active" | "pending" | "inactive" =
-            daysSinceCreation < 1 ? "pending" : "active"
+          // Use the status from the database, default to "pending" if not set
+          const status: "pending" | "approved" | "rejected" = (member.status as "pending" | "approved" | "rejected") || "pending"
 
           return {
             ...member,
@@ -220,6 +216,7 @@ export function MembersPage() {
             processesCount,
             documentsCount,
             lastActive: member.updated_at || member.created_at || "",
+            invitedAt: member.created_at || "", // Use created_at as invitation date
           } as MemberExtended
         }),
       )
@@ -245,9 +242,11 @@ export function MembersPage() {
   // Stats
   const stats = {
     total: members.length,
-    active: members.filter((m) => m.status === "active").length,
+    approved: members.filter((m) => m.status === "approved").length,
     pending: members.filter((m) => m.status === "pending").length,
-    inactive: members.filter((m) => m.status === "inactive").length,
+    rejected: members.filter((m) => m.status === "rejected").length,
+    active: members.filter((m) => m.status === "approved").length, // Active = approved
+    inactive: members.filter((m) => m.status === "rejected").length, // Inactive = rejected
   }
 
   // Filtering
@@ -282,6 +281,82 @@ export function MembersPage() {
       status: member.status,
     })
     setIsEditOpen(true)
+  }
+
+  const handleApproveUser = async (memberId: string) => {
+    try {
+      if (!effectiveOrganizationId) {
+        alert("Error: No se pudo determinar la organización. Por favor, recarga la página.")
+        return
+      }
+
+      console.log("[handleApproveUser] Approving user:", memberId, "for organization:", effectiveOrganizationId)
+      
+      const response = await fetch("/api/update-user-status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: memberId,
+          status: "approved",
+          organizationId: effectiveOrganizationId,
+        }),
+      })
+
+      const responseData = await response.json()
+      console.log("[handleApproveUser] Response:", response.status, responseData)
+
+      if (!response.ok) {
+        const errorMessage = responseData.message || responseData.error || "Error al aprobar el usuario"
+        console.error("[handleApproveUser] Error response:", errorMessage)
+        throw new Error(errorMessage)
+      }
+
+      // Reload data
+      await loadData()
+      alert("Usuario aprobado exitosamente")
+    } catch (error) {
+      console.error("[handleApproveUser] Error approving user:", error)
+      alert(error instanceof Error ? error.message : "Error al aprobar el usuario")
+    }
+  }
+
+  const handleRejectUser = async (memberId: string) => {
+    if (!confirm("¿Estás seguro de que deseas rechazar este usuario?")) {
+      return
+    }
+
+    try {
+      console.log("[handleRejectUser] Rejecting user:", memberId)
+      
+      const response = await fetch("/api/update-user-status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          userId: memberId,
+          status: "rejected",
+        }),
+      })
+
+      const responseData = await response.json()
+      console.log("[handleRejectUser] Response:", response.status, responseData)
+
+      if (!response.ok) {
+        const errorMessage = responseData.message || responseData.error || "Error al rechazar el usuario"
+        console.error("[handleRejectUser] Error response:", errorMessage)
+        throw new Error(errorMessage)
+      }
+
+      // Reload data
+      await loadData()
+      alert("Usuario rechazado")
+    } catch (error) {
+      console.error("[handleRejectUser] Error rejecting user:", error)
+      alert(error instanceof Error ? error.message : "Error al rechazar el usuario")
+    }
   }
 
   const handleSaveEdit = async () => {
@@ -444,15 +519,25 @@ export function MembersPage() {
   }
 
   const formatDate = (dateString: string) => {
-    if (!dateString) return "Nunca"
-    const date = new Date(dateString)
-    return date.toLocaleDateString("es-CO", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+    if (!dateString || dateString === "" || dateString === "null" || dateString === "undefined") {
+      return "Nunca"
+    }
+    try {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) {
+        return "Nunca"
+      }
+      return date.toLocaleDateString("es-CO", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    } catch (error) {
+      console.error("[formatDate] Error formatting date:", dateString, error)
+      return "Nunca"
+    }
   }
 
   const formatRelativeTime = (dateString: string) => {
@@ -695,13 +780,37 @@ export function MembersPage() {
                         Asignar Entidades
                       </DropdownMenuItem>
                       {member.status === "pending" && (
-                        <DropdownMenuItem onSelect={() => {
-                          // TODO: Implement resend invitation
-                          console.log("Reenviar invitación para:", member.email)
-                        }}>
-                          <Send className="mr-2 h-4 w-4" />
-                          Reenviar Invitación
-                        </DropdownMenuItem>
+                        <>
+                          <DropdownMenuItem onSelect={() => handleApproveUser(member.id)}>
+                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                            Aprobar Usuario
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            className="text-destructive"
+                            onSelect={() => handleRejectUser(member.id)}
+                          >
+                            <XCircle className="mr-2 h-4 w-4" />
+                            Rechazar Usuario
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => {
+                            // TODO: Implement resend invitation
+                            console.log("Reenviar invitación para:", member.email)
+                          }}>
+                            <Send className="mr-2 h-4 w-4" />
+                            Reenviar Invitación
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      )}
+                      {member.status === "rejected" && (
+                        <>
+                          <DropdownMenuItem onSelect={() => handleApproveUser(member.id)}>
+                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                            Aprobar Usuario
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
                       )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem 

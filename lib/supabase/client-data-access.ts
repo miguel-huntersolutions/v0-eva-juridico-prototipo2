@@ -88,28 +88,49 @@ export interface OrganizationMapped {
 export async function getOrganizations(): Promise<OrganizationMapped[]> {
   const supabase = createBrowserClient()
   
-  // Get organizations with member and entity counts
+  // Get organizations - filter by active status for public access
+  // This allows unauthenticated users to see organizations during signup
   const { data: orgsData, error: orgsError } = await supabase
     .from("organizations")
     .select("*")
+    .eq("status", "active") // Only get active organizations
     .order("name")
 
-  if (orgsError) throw orgsError
+  if (orgsError) {
+    console.error("[getOrganizations] Error fetching organizations:", orgsError)
+    throw orgsError
+  }
 
-  // Get counts for all organizations
+  console.log("[getOrganizations] Fetched organizations:", orgsData?.length || 0)
+
+  // Get counts for all organizations (this might fail for unauthenticated users, so we'll skip it)
   const organizations = await Promise.all(
     (orgsData || []).map(async (org) => {
-      // Get members count
-      const { count: membersCount } = await supabase
-        .from("profiles")
-        .select("*", { count: "exact", head: true })
-        .eq("organization_id", org.id)
+      // Try to get counts, but don't fail if user is not authenticated
+      let membersCount = 0
+      let entitiesCount = 0
 
-      // Get entities count
-      const { count: entitiesCount } = await supabase
-        .from("entities")
-        .select("*", { count: "exact", head: true })
-        .eq("organization_id", org.id)
+      try {
+        const { count: mCount } = await supabase
+          .from("profiles")
+          .select("*", { count: "exact", head: true })
+          .eq("organization_id", org.id)
+        membersCount = mCount || 0
+      } catch (err) {
+        // Ignore errors for unauthenticated users
+        console.warn("[getOrganizations] Could not get members count:", err)
+      }
+
+      try {
+        const { count: eCount } = await supabase
+          .from("entities")
+          .select("*", { count: "exact", head: true })
+          .eq("organization_id", org.id)
+        entitiesCount = eCount || 0
+      } catch (err) {
+        // Ignore errors for unauthenticated users
+        console.warn("[getOrganizations] Could not get entities count:", err)
+      }
 
       return {
         id: org.id,
@@ -118,8 +139,8 @@ export async function getOrganizations(): Promise<OrganizationMapped[]> {
         status: org.status,
         createdAt: org.created_at,
         updatedAt: org.updated_at,
-        membersCount: membersCount || 0,
-        entitiesCount: entitiesCount || 0,
+        membersCount: membersCount,
+        entitiesCount: entitiesCount,
       } as OrganizationMapped
     })
   )

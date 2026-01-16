@@ -63,12 +63,66 @@ function AuthCallbackContent() {
             return
           }
 
-          // Get user profile to check role
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("role")
-            .eq("id", user.id)
-            .single()
+          // Get user profile to check role and status
+          // Wait a bit for the trigger to create the profile if it's a new user
+          let profile = null
+          let attempts = 0
+          while (!profile && attempts < 5) {
+            const { data: profileData } = await supabase
+              .from("profiles")
+              .select("role, status")
+              .eq("id", user.id)
+              .single()
+            
+            if (profileData) {
+              profile = profileData
+              break
+            }
+            
+            // Wait 200ms before retrying
+            await new Promise((resolve) => setTimeout(resolve, 200))
+            attempts++
+          }
+
+          // If profile still doesn't exist, create it manually (trigger might have failed)
+          if (!profile) {
+            console.log("[AuthCallback] Profile not found, creating manually for user:", user.id)
+            const userName = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario"
+            // Get organization_id from query params (for Google OAuth) or user metadata
+            const orgIdFromQuery = searchParams.get("org")
+            const orgIdFromMetadata = user.user_metadata?.organization_id
+            const organizationId = orgIdFromQuery || orgIdFromMetadata || null
+            
+            const { data: newProfile, error: createError } = await supabase
+              .from("profiles")
+              .insert({
+                id: user.id,
+                email: user.email || "",
+                name: userName,
+                role: user.user_metadata?.role || "member",
+                status: "pending", // New users must be approved
+                organization_id: organizationId, // Associate with selected organization
+              })
+              .select("role, status")
+              .single()
+
+            if (createError) {
+              console.error("[AuthCallback] Error creating profile:", createError)
+              setError("Error al crear el perfil. Por favor, contacta al administrador.")
+              setIsLoading(false)
+              return
+            }
+
+            profile = newProfile
+          }
+
+          // Check if user is approved
+          if (!profile || profile.status !== "approved") {
+            // Sign out the user and redirect to login with message
+            await supabase.auth.signOut()
+            router.push("/auth/login?error=account_pending")
+            return
+          }
 
           const role = profile?.role || "member"
           const isInvite = searchParams.get("invite") === "true"
@@ -96,11 +150,65 @@ function AuthCallbackContent() {
 
           if (user) {
             // Already authenticated, redirect based on role
-            const { data: profile } = await supabase
-              .from("profiles")
-              .select("role")
-              .eq("id", user.id)
-              .single()
+            // Wait a bit for the trigger to create the profile if it's a new user
+            let profile = null
+            let attempts = 0
+            while (!profile && attempts < 5) {
+              const { data: profileData } = await supabase
+                .from("profiles")
+                .select("role, status")
+                .eq("id", user.id)
+                .single()
+              
+              if (profileData) {
+                profile = profileData
+                break
+              }
+              
+              // Wait 200ms before retrying
+              await new Promise((resolve) => setTimeout(resolve, 200))
+              attempts++
+            }
+
+            // If profile still doesn't exist, create it manually (trigger might have failed)
+            if (!profile) {
+              console.log("[AuthCallback] Profile not found, creating manually for user:", user.id)
+              const userName = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario"
+              // Get organization_id from query params (for Google OAuth) or user metadata
+              const orgIdFromQuery = searchParams.get("org")
+              const orgIdFromMetadata = user.user_metadata?.organization_id
+              const organizationId = orgIdFromQuery || orgIdFromMetadata || null
+              
+              const { data: newProfile, error: createError } = await supabase
+                .from("profiles")
+                .insert({
+                  id: user.id,
+                  email: user.email || "",
+                  name: userName,
+                  role: user.user_metadata?.role || "member",
+                  status: "pending", // New users must be approved
+                  organization_id: organizationId, // Associate with selected organization
+                })
+                .select("role, status")
+                .single()
+
+              if (createError) {
+                console.error("[AuthCallback] Error creating profile:", createError)
+                setError("Error al crear el perfil. Por favor, contacta al administrador.")
+                setIsLoading(false)
+                return
+              }
+
+              profile = newProfile
+            }
+
+            // Check if user is approved
+            if (!profile || profile.status !== "approved") {
+              // Sign out the user and redirect to login with message
+              await supabase.auth.signOut()
+              router.push("/auth/login?error=account_pending")
+              return
+            }
 
             const role = profile?.role || "member"
             if (role === "superadmin") {

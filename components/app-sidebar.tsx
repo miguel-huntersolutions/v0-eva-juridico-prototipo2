@@ -336,11 +336,11 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
           <DropdownMenuContent align="start" className="w-56">
             <DropdownMenuLabel>Mi Cuenta</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => router.push("/account/profile")}>
               <UserCircle className="mr-2 h-4 w-4" />
               Perfil
             </DropdownMenuItem>
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={() => router.push("/account/settings")}>
               <Settings className="mr-2 h-4 w-4" />
               Configuración
             </DropdownMenuItem>

@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   Building2,
   FileText,
@@ -14,6 +14,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Chrome,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -73,6 +74,7 @@ const profileOptions: ProfileOption[] = [
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [showPassword, setShowPassword] = React.useState(false)
@@ -84,10 +86,15 @@ export default function LoginPage() {
 
   React.useEffect(() => {
     logger.pageView("/login", undefined, undefined, { mode })
+    // Check for error message from query params
+    const errorParam = searchParams.get("error")
+    if (errorParam === "account_pending") {
+      setError("Tu cuenta está pendiente de aprobación. Un administrador revisará tu solicitud y te notificará cuando puedas acceder.")
+    }
     return () => {
       logger.pageLoaded("/login", Date.now() - pageLoadTime.current)
     }
-  }, [])
+  }, [searchParams])
 
   React.useEffect(() => {
     async function checkExistingSession() {
@@ -99,7 +106,15 @@ export default function LoginPage() {
         } = await supabase.auth.getUser()
 
         if (user) {
-          const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+          const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", user.id).single()
+
+          // Check if user is approved
+          if (!profile || profile.status !== "approved") {
+            await supabase.auth.signOut()
+            setError("Tu cuenta está pendiente de aprobación. Un administrador revisará tu solicitud y te notificará cuando puedas acceder.")
+            setCheckingAuth(false)
+            return
+          }
 
           const role = profile?.role || "member"
           logger.auth("SESSION_CHECK", user.id, role, true)
@@ -145,7 +160,15 @@ export default function LoginPage() {
       if (data.user) {
         await new Promise((resolve) => setTimeout(resolve, 200))
 
-        const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).single()
+        const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", data.user.id).single()
+
+        // Check if user is approved
+        if (!profile || profile.status !== "approved") {
+          await supabase.auth.signOut()
+          setError("Tu cuenta está pendiente de aprobación. Un administrador revisará tu solicitud y te notificará cuando puedas acceder.")
+          setIsLoading(false)
+          return
+        }
 
         const role = profile?.role || "member"
         logger.auth("LOGIN", data.user.id, role, true)
@@ -156,6 +179,37 @@ export default function LoginPage() {
     } catch (err) {
       logger.error("/login", "Login error", err)
       setError("Error al iniciar sesión. Intenta de nuevo.")
+      setIsLoading(false)
+    }
+  }
+
+  const handleGoogleLogin = async () => {
+    const supabase = createClient()
+    setIsLoading(true)
+    setError(null)
+    logger.action("/login", "GOOGLE_LOGIN_ATTEMPT")
+
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      })
+
+      if (error) {
+        logger.error("/login", "Google login failed", error)
+        setError("Error al iniciar sesión con Google. Intenta de nuevo.")
+        setIsLoading(false)
+      }
+      // Note: signInWithOAuth redirects the user, so we don't need to handle success here
+    } catch (err) {
+      logger.error("/login", "Google login exception", err)
+      setError(err instanceof Error ? err.message : "Ocurrió un error")
       setIsLoading(false)
     }
   }
@@ -293,6 +347,27 @@ export default function LoginPage() {
                   )}
                 </Button>
               </form>
+
+              <div className="mt-4">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">O</span>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full mt-4"
+                  onClick={handleGoogleLogin}
+                  disabled={isLoading}
+                >
+                  <Chrome className="mr-2 h-4 w-4" />
+                  Continuar con Google
+                </Button>
+              </div>
 
               <div className="mt-6 text-center">
                 <a href="/auth/sign-up" className="text-sm text-primary hover:underline">

@@ -138,6 +138,7 @@ export async function POST(request: NextRequest) {
                 email,
                 name,
                 role: finalRole, // Use finalRole to ensure it's 'member'
+                status: "pending", // Ensure new invited users are pending approval
                 organization_id: organizationId,
                 avatar_url: avatarUrl || null,
               })
@@ -240,12 +241,17 @@ export async function POST(request: NextRequest) {
       console.log("[create-member] Updating with role:", finalRole, "organizationId:", organizationId)
       
       // Update existing profile with correct data - ensure role is set correctly
+      // Preserve status 'pending' for new users, or set it if not set
+      const currentStatus = existingProfile.status || "pending"
+      const statusToSet = currentStatus === "approved" ? currentStatus : "pending"
+      
       const { data: updatedProfile, error: updateError } = await serviceRoleClient
         .from("profiles")
         .update({
           email,
           name,
           role: finalRole, // Use finalRole to ensure it's 'member'
+          status: statusToSet, // Preserve pending status for new users
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
         })
@@ -327,6 +333,7 @@ export async function POST(request: NextRequest) {
           email,
           name,
           role: finalRole, // Use finalRole to ensure it's 'member'
+          status: "pending", // New users must be approved by admin
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
         })

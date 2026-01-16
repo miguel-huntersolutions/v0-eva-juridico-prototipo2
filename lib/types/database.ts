@@ -7,6 +7,7 @@ export interface Profile {
   name: string
   email: string
   role: UserRole
+  status: "pending" | "approved" | "rejected"
   avatar_url?: string | null
   organization_id?: string | null
   created_at: string

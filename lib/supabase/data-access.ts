@@ -93,6 +93,7 @@ export interface Profile {
   name: string
   email: string
   role: "superadmin" | "admin" | "member"
+  status: "pending" | "approved" | "rejected"
   organization_id: string | null
   avatar_url: string | null
   created_at: string

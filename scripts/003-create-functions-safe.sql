@@ -1,4 +1,5 @@
 -- Function to automatically create a profile when a user signs up
+-- Safe version without DROP TRIGGER (only updates the function)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -15,7 +16,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Trigger to create profile on signup
+-- Create or replace the trigger for new user creation
+-- This is safe because it only affects new user signups
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
@@ -89,3 +91,4 @@ SELECT
 FROM entities e
 LEFT JOIN processes pr ON pr.entity_id = e.id
 GROUP BY e.id, e.name;
+

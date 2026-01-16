@@ -4,20 +4,25 @@ import type React from "react"
 import { logger } from "@/lib/logger"
 
 import { createClient } from "@/lib/supabase/client"
+import { getOrganizations, type OrganizationMapped } from "@/lib/supabase/client-data-access"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useEffect, useRef } from "react"
-import { FileText } from "lucide-react"
+import { FileText, Chrome, Loader2, Building2 } from "lucide-react"
 
 export default function SignUpPage() {
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [repeatPassword, setRepeatPassword] = useState("")
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>("")
+  const [organizations, setOrganizations] = useState<OrganizationMapped[]>([])
+  const [loadingOrganizations, setLoadingOrganizations] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
@@ -30,12 +35,37 @@ export default function SignUpPage() {
     }
   }, [])
 
+  useEffect(() => {
+    async function loadOrganizations() {
+      try {
+        setLoadingOrganizations(true)
+        const orgs = await getOrganizations()
+        // Only show active organizations
+        const activeOrgs = orgs.filter((org) => org.status === "active")
+        setOrganizations(activeOrgs)
+        console.log("[SignUp] Loaded organizations:", activeOrgs.length)
+      } catch (err) {
+        console.error("[SignUp] Error loading organizations:", err)
+        setError(err instanceof Error ? err.message : "Error al cargar las organizaciones. Por favor, recarga la página.")
+      } finally {
+        setLoadingOrganizations(false)
+      }
+    }
+    loadOrganizations()
+  }, [])
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     const supabase = createClient()
     setIsLoading(true)
     setError(null)
     logger.action("/auth/sign-up", "SIGNUP_ATTEMPT", undefined, undefined, { email })
+
+    if (!selectedOrganizationId) {
+      setError("Debes seleccionar una organización")
+      setIsLoading(false)
+      return
+    }
 
     if (password !== repeatPassword) {
       logger.warn("/auth/sign-up", "Passwords do not match")
@@ -60,16 +90,57 @@ export default function SignUpPage() {
           data: {
             name: name,
             role: "member",
+            organization_id: selectedOrganizationId, // Store organization in user metadata
           },
         },
       })
       if (error) throw error
-      logger.action("/auth/sign-up", "SIGNUP_SUCCESS", undefined, undefined, { email })
-      router.push("/auth/sign-up-success")
+      logger.action("/auth/sign-up", "SIGNUP_SUCCESS", undefined, undefined, { email, organizationId: selectedOrganizationId })
+      // Redirect to success page with message about approval
+      router.push("/auth/sign-up-success?pending=true")
     } catch (error: unknown) {
       logger.error("/auth/sign-up", "Signup failed", error)
       setError(error instanceof Error ? error.message : "Ocurrió un error")
     } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleGoogleSignUp = async () => {
+    if (!selectedOrganizationId) {
+      setError("Debes seleccionar una organización")
+      return
+    }
+
+    const supabase = createClient()
+    setIsLoading(true)
+    setError(null)
+    logger.action("/auth/sign-up", "GOOGLE_SIGNUP_ATTEMPT", undefined, undefined, { organizationId: selectedOrganizationId })
+
+    // Store organization in sessionStorage to retrieve it in the callback
+    sessionStorage.setItem("signup_organization_id", selectedOrganizationId)
+
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?org=${selectedOrganizationId}`,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      })
+
+      if (error) {
+        logger.error("/auth/sign-up", "Google signup failed", error)
+        setError("Error al registrarse con Google. Intenta de nuevo.")
+        setIsLoading(false)
+      }
+      // Note: signInWithOAuth redirects the user, so we don't need to handle success here
+    } catch (error: unknown) {
+      logger.error("/auth/sign-up", "Google signup exception", error)
+      setError(error instanceof Error ? error.message : "Ocurrió un error")
       setIsLoading(false)
     }
   }
@@ -94,6 +165,32 @@ export default function SignUpPage() {
             <CardContent>
               <form onSubmit={handleSignUp}>
                 <div className="flex flex-col gap-6">
+                  <div className="grid gap-2">
+                    <Label htmlFor="organization">Organización</Label>
+                    <Select
+                      value={selectedOrganizationId}
+                      onValueChange={setSelectedOrganizationId}
+                      disabled={loadingOrganizations}
+                      required
+                    >
+                      <SelectTrigger id="organization">
+                        <SelectValue placeholder={loadingOrganizations ? "Cargando organizaciones..." : "Selecciona una organización"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {organizations.map((org) => (
+                          <SelectItem key={org.id} value={org.id}>
+                            <div className="flex items-center gap-2">
+                              <Building2 className="h-4 w-4" />
+                              <span>{org.name}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {organizations.length === 0 && !loadingOrganizations && (
+                      <p className="text-xs text-muted-foreground">No hay organizaciones disponibles</p>
+                    )}
+                  </div>
                   <div className="grid gap-2">
                     <Label htmlFor="name">Nombre Completo</Label>
                     <Input
@@ -138,7 +235,32 @@ export default function SignUpPage() {
                   </div>
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <Button type="submit" className="w-full" disabled={isLoading}>
-                    {isLoading ? "Creando cuenta..." : "Crear Cuenta"}
+                    {isLoading ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Creando cuenta...
+                      </span>
+                    ) : (
+                      "Crear Cuenta"
+                    )}
+                  </Button>
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-card px-2 text-muted-foreground">O</span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleGoogleSignUp}
+                    disabled={isLoading}
+                  >
+                    <Chrome className="mr-2 h-4 w-4" />
+                    Continuar con Google
                   </Button>
                 </div>
                 <div className="mt-4 text-center text-sm">
