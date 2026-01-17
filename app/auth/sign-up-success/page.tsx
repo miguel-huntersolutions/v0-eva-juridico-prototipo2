@@ -1,14 +1,15 @@
 "use client"
 
+import { Suspense } from "react"
 import { logger } from "@/lib/logger"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { FileText, Mail, Clock } from "lucide-react"
+import { FileText, Mail, Clock, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useEffect } from "react"
 
-export default function SignUpSuccessPage() {
+function SignUpSuccessContent() {
   const searchParams = useSearchParams()
   const isPending = searchParams.get("pending") === "true"
   
@@ -60,5 +61,22 @@ export default function SignUpSuccessPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function SignUpSuccessPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-svh w-full items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-muted-foreground">Cargando...</p>
+          </div>
+        </div>
+      }
+    >
+      <SignUpSuccessContent />
+    </Suspense>
   )
 }

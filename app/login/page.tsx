@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
   Building2,
@@ -72,7 +73,7 @@ const profileOptions: ProfileOption[] = [
   },
 ]
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [email, setEmail] = React.useState("")
@@ -94,7 +95,7 @@ export default function LoginPage() {
     return () => {
       logger.pageLoaded("/login", Date.now() - pageLoadTime.current)
     }
-  }, [searchParams])
+  }, [searchParams, mode])
 
   React.useEffect(() => {
     async function checkExistingSession() {
@@ -467,5 +468,22 @@ export default function LoginPage() {
         </div>
       </footer>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-muted-foreground">Cargando...</p>
+          </div>
+        </div>
+      }
+    >
+      <LoginPageContent />
+    </Suspense>
   )
 }
