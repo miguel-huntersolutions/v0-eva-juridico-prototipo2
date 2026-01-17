@@ -17,16 +17,66 @@ function AuthCallbackContent() {
       try {
         const supabase = createBrowserClient()
         
+        const fullHash = window.location.hash
+        console.log("[AuthCallback] Callback started:", {
+          fullUrl: window.location.href,
+          hashLength: fullHash.length,
+          hashPreview: fullHash.substring(0, 200),
+          search: window.location.search,
+          timestamp: new Date().toISOString(),
+        })
+        
         // Get the hash from the URL (Supabase puts tokens in the hash)
-        const hashParams = new URLSearchParams(window.location.hash.substring(1))
+        const hashParams = new URLSearchParams(fullHash.substring(1))
         const accessToken = hashParams.get("access_token")
         const refreshToken = hashParams.get("refresh_token")
         const errorParam = hashParams.get("error")
         const errorDescription = hashParams.get("error_description")
+        const errorCode = hashParams.get("error_code")
+        const type = hashParams.get("type")
+
+        // Log all hash params for debugging
+        const allHashParams: Record<string, string | null> = {}
+        hashParams.forEach((value, key) => {
+          allHashParams[key] = value
+        })
+
+        console.log("[AuthCallback] Hash params extracted:", {
+          hasAccessToken: !!accessToken,
+          accessTokenLength: accessToken?.length || 0,
+          hasRefreshToken: !!refreshToken,
+          refreshTokenLength: refreshToken?.length || 0,
+          errorParam: errorParam || null,
+          errorCode: errorCode || null,
+          errorDescription: errorDescription || null,
+          type: type || null,
+          allHashParams,
+          timestamp: new Date().toISOString(),
+        })
 
         // Check for errors in hash
         if (errorParam) {
-          setError(errorDescription || errorParam)
+          console.error("[AuthCallback] Error detected in hash:", {
+            error: errorParam,
+            errorCode: errorCode || "not provided",
+            errorDescription: errorDescription || "not provided",
+            type: type || "not provided",
+            fullHash: fullHash,
+            fullUrl: window.location.href,
+            allHashParams,
+            timestamp: new Date().toISOString(),
+          })
+          
+          let errorMessage = errorDescription || errorParam
+          
+          // Handle specific error cases
+          if (errorParam === "access_denied" || errorParam === "otp_expired") {
+            errorMessage = "El enlace de invitación ha expirado o es inválido. Los enlaces de invitación tienen un tiempo de expiración limitado por seguridad. Por favor, solicita una nueva invitación al administrador de tu organización."
+          } else if (errorDescription?.includes("expired") || errorDescription?.includes("invalid")) {
+            errorMessage = "El enlace de invitación ha expirado. Por favor, solicita una nueva invitación al administrador de tu organización."
+          }
+          
+          setError(errorMessage)
           setIsLoading(false)
           return
         }
@@ -41,16 +91,29 @@ function AuthCallbackContent() {
 
         // If we have tokens in the hash, set the session
         if (accessToken && refreshToken) {
+          console.log("[AuthCallback] Setting session with tokens:", {
+            accessTokenLength: accessToken.length,
+            refreshTokenLength: refreshToken.length,
+            timestamp: new Date().toISOString(),
+          })
+          
           const { error: sessionError } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           })
 
           if (sessionError) {
+            console.error("[AuthCallback] Error setting session:", {
+              error: sessionError.message,
+              code: sessionError.status,
+              timestamp: new Date().toISOString(),
+            })
             setError(sessionError.message)
             setIsLoading(false)
             return
           }
+          
+          console.log("[AuthCallback] Session set successfully")
 
           // Get user profile to determine redirect
           const {
@@ -245,17 +308,45 @@ function AuthCallbackContent() {
   }
 
   if (error) {
+    const isExpiredError = error.includes("expirado") || error.includes("expired") || error.includes("invalid")
+    
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <p className="text-destructive font-medium">Error al procesar la invitación</p>
-          <p className="text-muted-foreground">{error}</p>
-          <button
-            onClick={() => router.push("/auth/login")}
-            className="mt-4 rounded-md bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
-          >
-            Ir al login
-          </button>
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4 text-center max-w-md">
+          <div className="rounded-full bg-destructive/10 p-3">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-6 w-6 text-destructive"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+          </div>
+          <div>
+            <p className="text-destructive font-medium text-lg">Error al procesar la invitación</p>
+            <p className="text-muted-foreground mt-2">{error}</p>
+          </div>
+          {isExpiredError && (
+            <div className="mt-2 p-3 bg-muted rounded-md text-sm text-muted-foreground">
+              <p>Los enlaces de invitación tienen un tiempo de expiración limitado por seguridad.</p>
+              <p className="mt-1">Contacta al administrador de tu organización para solicitar una nueva invitación.</p>
+            </div>
+          )}
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => router.push("/auth/login")}
+              className="rounded-md bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+            >
+              Ir al login
+            </button>
+          </div>
         </div>
       </div>
     )

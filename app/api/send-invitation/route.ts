@@ -100,39 +100,60 @@ export async function POST(request: NextRequest) {
     
     if (existingAuthUser) {
       // User already exists in auth
-      // Send password reset email (magic link) which allows setting/resetting password
-      console.log(`[send-invitation] User ${member.email} already exists, sending password reset email`)
+      // Try to generate invite link first (longer expiration) instead of recovery
+      console.log(`[send-invitation] User ${member.email} already exists, generating invite link`)
+      console.log("[send-invitation] Link generation params:", {
+        type: "invite",
+        email: member.email,
+        redirectTo,
+        timestamp: new Date().toISOString(),
+      })
       
-      // Create a regular client (not service role) to send password reset email
-      // resetPasswordForEmail requires a non-admin client and sends email automatically
-      const regularClient = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false,
+      const { data: linkData, error: linkError } = await serviceRoleClient.auth.admin.generateLink({
+        type: "invite",
+        email: member.email,
+        options: {
+          redirectTo,
+          data: {
+            name: member.name,
+            organization_id: organizationId,
           },
         },
-      )
-
-      const { error: resetError } = await regularClient.auth.resetPasswordForEmail(member.email, {
-        redirectTo,
       })
-
-      if (resetError) {
-        console.error("[send-invitation] Error sending password reset:", resetError)
-        
-        // Fallback: generate link manually (won't send email automatically)
-        const { data: linkData, error: linkError } = await serviceRoleClient.auth.admin.generateLink({
-          type: "recovery",
-          email: member.email,
-          options: {
-            redirectTo,
-          },
+      
+      if (linkData?.properties?.action_link) {
+        const actionLink = linkData.properties.action_link
+        console.log("[send-invitation] Invite link generated successfully:", {
+          linkType: "invite",
+          linkUrl: actionLink,
+          hashedToken: new URL(actionLink).searchParams.get("token")?.substring(0, 20) + "...",
+          redirectTo,
+          timestamp: new Date().toISOString(),
+          properties: linkData?.properties ? Object.keys(linkData.properties) : [],
         })
+      }
 
-        if (linkError) {
+      if (linkError) {
+        console.error("[send-invitation] Error generating invite link:", linkError)
+        console.log("[send-invitation] Fallback: trying resetPasswordForEmail (recovery type)")
+        
+        // Fallback: use resetPasswordForEmail (but this uses recovery type with shorter expiration)
+        const regularClient = createClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          {
+            auth: {
+              autoRefreshToken: false,
+              persistSession: false,
+            },
+          },
+        )
+        
+        const { error: resetError } = await regularClient.auth.resetPasswordForEmail(member.email, {
+          redirectTo,
+        })
+        
+        if (resetError) {
           return NextResponse.json(
             {
               error: "Failed to send access link",
@@ -141,11 +162,11 @@ export async function POST(request: NextRequest) {
             { status: 400 },
           )
         }
-
+        
+        console.log(`[send-invitation] Password reset email sent successfully to ${member.email} (using recovery type as fallback)`)
         return NextResponse.json({
-          success: false,
-          error: "Email not sent automatically",
-          message: `El usuario ${member.email} ya está registrado. Se generó un enlace de recuperación, pero el email no se pudo enviar automáticamente. Configura SMTP personalizado en Supabase para habilitar el envío automático de emails.`,
+          success: true,
+          message: `Se envió un enlace de recuperación de contraseña a ${member.email}. El usuario puede usar este enlace para establecer su contraseña y acceder al sistema.`,
           member: {
             id: member.id,
             email: member.email,
@@ -155,15 +176,15 @@ export async function POST(request: NextRequest) {
             id: organization.id,
             name: organization.name,
           },
-          recoveryLink: linkData?.properties?.action_link,
         })
       }
-
-      console.log(`[send-invitation] Password reset email sent successfully to ${member.email}`)
-
+      
+      // Note: generateLink doesn't send email automatically
+      // You would need to send the email manually or configure SMTP in Supabase
+      // For now, return the link so it can be sent manually if needed
       return NextResponse.json({
         success: true,
-        message: `Se envió un enlace de recuperación de contraseña a ${member.email}. El usuario puede usar este enlace para establecer su contraseña y acceder al sistema.`,
+        message: `Se generó un enlace de invitación para ${member.email}. Nota: El email no se envió automáticamente. Configura SMTP personalizado en Supabase para habilitar el envío automático de emails.`,
         member: {
           id: member.id,
           email: member.email,
@@ -173,11 +194,18 @@ export async function POST(request: NextRequest) {
           id: organization.id,
           name: organization.name,
         },
+        inviteLink: linkData?.properties?.action_link,
       })
     }
 
     // User doesn't exist in auth, send invitation
     console.log(`[send-invitation] User ${member.email} doesn't exist, sending invitation`)
+    console.log("[send-invitation] Invitation params:", {
+      email: member.email,
+      redirectTo,
+      organizationId,
+      timestamp: new Date().toISOString(),
+    })
     
     const { data: inviteData, error: inviteError } = await serviceRoleClient.auth.admin.inviteUserByEmail(
       member.email,
@@ -190,6 +218,15 @@ export async function POST(request: NextRequest) {
         redirectTo,
       },
     )
+    
+    if (inviteData?.user) {
+      console.log("[send-invitation] Invitation sent successfully:", {
+        userId: inviteData.user.id,
+        email: inviteData.user.email,
+        timestamp: new Date().toISOString(),
+        // Note: inviteUserByEmail doesn't return the link directly, it sends it via email
+      })
+    }
 
     if (inviteError) {
       console.error("[send-invitation] Error sending invitation:", inviteError)
@@ -198,11 +235,16 @@ export async function POST(request: NextRequest) {
       if (inviteError.message?.includes("already registered") || inviteError.message?.includes("already exists")) {
         console.log(`[send-invitation] User exists (race condition), generating recovery link instead`)
         
+        // Use invite instead of recovery for longer expiration time
         const { data: linkData, error: linkError } = await serviceRoleClient.auth.admin.generateLink({
-          type: "recovery",
+          type: "invite",
           email: member.email,
           options: {
             redirectTo,
+            data: {
+              name: member.name,
+              organization_id: organizationId,
+            },
           },
         })
 

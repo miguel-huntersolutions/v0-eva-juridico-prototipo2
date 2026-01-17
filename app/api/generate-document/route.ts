@@ -11,8 +11,6 @@ import { hasValidTokens } from "@/lib/google/oauth"
  */
 export async function POST(request: NextRequest) {
   try {
-    console.log("[generate-document] Request received")
-    
     // Get authenticated user
     const supabase = await createServerClient()
     const {
@@ -51,10 +49,11 @@ export async function POST(request: NextRequest) {
       createdBy, // User ID who created the document
     } = body
 
-    console.log("[generate-document] Request received:", {
-      processCode,
+    console.log("[generate-document] Request received", {
+      processCode: processCode || "MISSING",
       processId: processId || "EMPTY",
-      documentName,
+      documentName: documentName || "MISSING",
+      hasProcessCode: !!processCode,
       hasReplacements: !!replacements,
     })
 
@@ -144,6 +143,15 @@ export async function POST(request: NextRequest) {
     const generatedBuffer = await replaceTagsInDocx(templateBuffer, allReplacements, entityLogoUrl)
 
     // Upload the generated document to Google Drive
+    if (!processCode) {
+      console.error("[generate-document] ERROR: processCode is missing or empty!")
+      return NextResponse.json(
+        { error: "Process code is required for folder organization" },
+        { status: 400 },
+      )
+    }
+    
+    console.log("[generate-document] Uploading document with processCode:", processCode)
     const uploadResult = await uploadDocumentToDrive(
       user.id,
       generatedBuffer,

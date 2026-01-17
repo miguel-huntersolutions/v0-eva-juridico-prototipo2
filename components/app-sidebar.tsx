@@ -65,8 +65,8 @@ const navItems: NavItem[] = [
   { title: "Panel Principal", href: "/dashboard", icon: LayoutDashboard, roles: ["admin"] },
   { title: "Entidades", href: "/admin/entities", icon: Building, roles: ["admin"] },
   { title: "Procesos", href: "/admin/processes", icon: FolderKanban, roles: ["admin"] },
-  { title: "Miembros", href: "/admin/members", icon: Users, roles: ["admin"] },
   { title: "Documentos", href: "/admin/documents", icon: FileText, roles: ["admin"] },
+  { title: "Miembros", href: "/admin/members", icon: Users, roles: ["admin"] },
 
   // Member items
   { title: "Seleccionar Entidad", href: "/dashboard", icon: Building, roles: ["member"] },

@@ -152,7 +152,7 @@ export async function createOrganization(data: {
   name: string
   nit: string
   status?: string
-}) {
+}): Promise<OrganizationMapped> {
   const supabase = createBrowserClient()
 
   const { data: newOrg, error } = await supabase
@@ -166,7 +166,17 @@ export async function createOrganization(data: {
     .single()
 
   if (error) throw error
-  return newOrg as Organization
+  
+  return {
+    id: newOrg.id,
+    name: newOrg.name,
+    nit: newOrg.nit,
+    status: newOrg.status,
+    createdAt: newOrg.created_at,
+    updatedAt: newOrg.updated_at,
+    membersCount: 0,
+    entitiesCount: 0,
+  } as OrganizationMapped
 }
 
 export async function updateOrganization(
@@ -488,21 +498,75 @@ export async function deleteProcessType(id: string) {
 export async function getTemplates(processTypeId?: string) {
   const supabase = createBrowserClient()
 
+  console.log("[getTemplates] Called with processTypeId:", processTypeId)
+
   if (processTypeId) {
     // Use the many-to-many relationship table to get templates
     // This allows templates to be associated with multiple process types
+    console.log("[getTemplates] Querying template_process_types for processTypeId:", processTypeId)
     const { data: relationData, error: relationError } = await supabase
       .from("template_process_types")
       .select("template_id")
       .eq("process_type_id", processTypeId)
 
-    if (relationError) throw relationError
+    if (relationError) {
+      console.error("[getTemplates] Error querying template_process_types:", relationError)
+      throw relationError
+    }
+
+    console.log("[getTemplates] Found relations:", relationData?.length || 0, relationData)
 
     const templateIds = (relationData || []).map((row) => row.template_id)
 
+    // If no relations found, fallback to direct process_type_id lookup
+    // This handles templates that were created before the many-to-many relationship was implemented
     if (templateIds.length === 0) {
-      return [] as Template[]
+      console.log("[getTemplates] No relations found, falling back to direct process_type_id lookup")
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from("templates")
+        .select("*")
+        .eq("process_type_id", processTypeId)
+        .order("name")
+
+      if (fallbackError) {
+        console.error("[getTemplates] Error in fallback query:", fallbackError)
+        throw fallbackError
+      }
+
+      console.log("[getTemplates] Fallback found templates:", fallbackData?.length || 0, fallbackData?.map(t => ({ id: t.id, name: t.name })))
+
+      // If we found templates via fallback, create the relations for future use
+      if (fallbackData && fallbackData.length > 0) {
+        console.log("[getTemplates] Creating missing relations for", fallbackData.length, "templates")
+        const relationsToCreate = fallbackData.map((t) => ({
+          template_id: t.id,
+          process_type_id: processTypeId,
+        }))
+
+        // Insert relations (ignore conflicts if they already exist)
+        const { error: insertError } = await supabase
+          .from("template_process_types")
+          .upsert(relationsToCreate, { onConflict: "template_id,process_type_id", ignoreDuplicates: true })
+
+        if (insertError) {
+          console.error("[getTemplates] Error creating relations (non-critical):", insertError)
+          // Don't throw, just log - the templates are still valid
+        } else {
+          console.log("[getTemplates] Relations created successfully")
+        }
+      }
+
+      return (fallbackData || []).map((t) => ({
+        id: t.id,
+        name: t.name,
+        processTypeId: t.process_type_id,
+        fileUrl: t.file_url,
+        variables: t.variables || [],
+        createdAt: t.created_at?.split("T")[0] || "",
+      })) as Template[]
     }
+
+    console.log("[getTemplates] Template IDs to fetch:", templateIds)
 
     // Get templates by IDs
     const { data, error } = await supabase
@@ -511,7 +575,12 @@ export async function getTemplates(processTypeId?: string) {
       .in("id", templateIds)
       .order("name")
 
-    if (error) throw error
+    if (error) {
+      console.error("[getTemplates] Error fetching templates:", error)
+      throw error
+    }
+
+    console.log("[getTemplates] Fetched templates:", data?.length || 0, data?.map(t => ({ id: t.id, name: t.name })))
 
     return (data || []).map((t) => ({
       id: t.id,
@@ -558,6 +627,21 @@ export async function createTemplate(data: {
     .single()
 
   if (error) throw error
+
+  // Create the relationship in template_process_types table
+  // This ensures the many-to-many relationship is maintained
+  const { error: relationError } = await supabase
+    .from("template_process_types")
+    .insert({
+      template_id: newTemplate.id,
+      process_type_id: data.processTypeId,
+    })
+
+  if (relationError) {
+    // Log but don't throw - the template was created successfully
+    // The relation might already exist or there might be a constraint issue
+    console.error("[createTemplate] Error creating relation (non-critical):", relationError)
+  }
 
   return {
     id: newTemplate.id,

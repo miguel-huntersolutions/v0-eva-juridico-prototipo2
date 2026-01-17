@@ -65,15 +65,81 @@ export function SuperadminDashboard() {
   const [organizations, setOrganizations] = React.useState<OrganizationWithCounts[]>([])
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [templates, setTemplates] = React.useState<Template[]>([])
+  const [orgsThisMonth, setOrgsThisMonth] = React.useState(0)
+  const [orgsLastMonth, setOrgsLastMonth] = React.useState(0)
 
   React.useEffect(() => {
     async function loadData() {
       try {
         setIsLoading(true)
-        const [orgsData, ptData, tplData] = await Promise.all([getOrganizations(), getProcessTypes(), getTemplates()])
-        setOrganizations(orgsData)
+        // For superadmin, we need to get ALL organizations, not just active ones
+        // So we'll fetch directly from Supabase
+        const { createBrowserClient } = await import("@/lib/supabase/client")
+        const supabase = createBrowserClient()
+        
+        const { data: orgsData, error: orgsError } = await supabase
+          .from("organizations")
+          .select("*")
+          .order("name")
+        
+        if (orgsError) {
+          console.error("[SuperadminDashboard] Error fetching organizations:", orgsError)
+          throw orgsError
+        }
+        
+        // Get counts for all organizations
+        const organizationsWithCounts = await Promise.all(
+          (orgsData || []).map(async (org) => {
+            const { count: membersCount } = await supabase
+              .from("profiles")
+              .select("*", { count: "exact", head: true })
+              .eq("organization_id", org.id)
+            
+            const { count: entitiesCount } = await supabase
+              .from("entities")
+              .select("*", { count: "exact", head: true })
+              .eq("organization_id", org.id)
+            
+            return {
+              id: org.id,
+              name: org.name,
+              nit: org.nit,
+              status: org.status,
+              createdAt: org.created_at,
+              updatedAt: org.updated_at,
+              membersCount: membersCount || 0,
+              entitiesCount: entitiesCount || 0,
+            } as OrganizationMapped
+          })
+        )
+        
+        const [ptData, tplData] = await Promise.all([getProcessTypes(), getTemplates()])
+        setOrganizations(organizationsWithCounts)
         setProcessTypes(ptData)
         setTemplates(tplData)
+        
+        // Calculate organizations created this month and last month
+        const now = new Date()
+        const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+        const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+        
+        const orgsThisMonthCount = organizationsWithCounts.filter(
+          (org) => new Date(org.createdAt) >= startOfThisMonth
+        ).length
+        
+        const orgsLastMonthCount = organizationsWithCounts.filter(
+          (org) => {
+            const createdAt = new Date(org.createdAt)
+            return createdAt >= startOfLastMonth && createdAt < startOfCurrentMonth
+          }
+        ).length
+        
+        setOrgsThisMonth(orgsThisMonthCount)
+        setOrgsLastMonth(orgsLastMonthCount)
+        
+        console.log("[SuperadminDashboard] Organizations loaded:", organizationsWithCounts.length)
+        console.log("[SuperadminDashboard] This month:", orgsThisMonthCount, "Last month:", orgsLastMonthCount)
       } catch (error) {
         console.error("Error loading data:", error)
       } finally {
@@ -215,7 +281,16 @@ export function SuperadminDashboard() {
           value={stats.totalOrgs}
           description={`${stats.activeOrgs} activas`}
           icon={Building2}
-          trend={{ value: 12, isPositive: true }}
+          trend={
+            orgsLastMonth > 0
+              ? {
+                  value: Math.round(((orgsThisMonth - orgsLastMonth) / orgsLastMonth) * 100),
+                  isPositive: orgsThisMonth >= orgsLastMonth,
+                }
+              : orgsThisMonth > 0
+                ? { value: 100, isPositive: true }
+                : undefined
+          }
         />
         <StatsCard
           title="Total Miembros"

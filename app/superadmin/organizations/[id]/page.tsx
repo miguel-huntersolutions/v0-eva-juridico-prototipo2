@@ -121,8 +121,8 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
   const [entityToDelete, setEntityToDelete] = React.useState<EntityMapped | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
 
-  // Secretaries dialog state
-  const [isSecretariesOpen, setIsSecretariesOpen] = React.useState(false)
+  // Secretaries inline state
+  const [expandedEntityId, setExpandedEntityId] = React.useState<string | null>(null) // Track which entity has secretaries expanded
   const [secretaryForm, setSecretaryForm] = React.useState<Array<{
     id?: string
     name: string
@@ -458,8 +458,17 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
     }
   }
 
-  const openSecretariesDialog = async (entity: EntityMapped) => {
+  const toggleSecretariesView = async (entity: EntityMapped) => {
+    // If clicking the same entity, toggle it closed
+    if (expandedEntityId === entity.id) {
+      setExpandedEntityId(null)
+      setSelectedEntity(null)
+      return
+    }
+
+    // Otherwise, expand this entity
     setSelectedEntity(entity)
+    setExpandedEntityId(entity.id)
     
     // Load secretaries from database
     try {
@@ -485,7 +494,6 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
       setSecretariesError("Error al cargar las secretarías")
       setSecretaryForm([{ name: "", secretaryName: "", email: "", phone: "" }])
     }
-    setIsSecretariesOpen(true)
     setSecretariesError(null)
   }
 
@@ -574,7 +582,20 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
         deleted: secretariesToDelete.length,
       })
 
-      setIsSecretariesOpen(false)
+      // Reload secretaries after saving
+      if (selectedEntity) {
+        const updatedSecretaries = await getSecretaries(selectedEntity.id)
+        const secretaryForms = updatedSecretaries.map((s) => ({
+          id: s.id,
+          name: s.name,
+          secretaryName: s.secretary_name || "",
+          email: s.email || "",
+          phone: s.phone || "",
+        }))
+        setSecretaryForm(
+          secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }]
+        )
+      }
       await loadData()
     } catch (err) {
       console.error("Error saving secretaries:", err)
@@ -736,7 +757,7 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-6 min-h-0">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => router.push("/superadmin/organizations")}>
@@ -890,12 +911,12 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
 
         {/* Entities Tab */}
         <TabsContent value="entities" className="mt-4">
-          <Card>
-            <CardHeader>
+          <Card className="flex flex-col max-h-[calc(100vh-300px)]">
+            <CardHeader className="flex-shrink-0">
               <CardTitle>Entidades de la Organización</CardTitle>
               <CardDescription>Gestiona las entidades asociadas a esta organización</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1 overflow-y-auto min-h-0">
               {entities.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
                   <Building2 className="h-12 w-12 text-muted-foreground/50" />
@@ -908,49 +929,181 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
               ) : (
                 <div className="space-y-4">
                   {entities.map((entity) => (
-                    <div key={entity.id} className="flex items-center justify-between rounded-lg border p-4">
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                          <Building2 className="h-5 w-5 text-primary" />
+                    <div key={entity.id} className="rounded-lg border">
+                      <div className="flex items-center justify-between p-4">
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                            <Building2 className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{entity.name}</p>
+                            <p className="text-sm text-muted-foreground">NIT: {entity.nit}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium">{entity.name}</p>
-                          <p className="text-sm text-muted-foreground">NIT: {entity.nit}</p>
+                        <div className="flex items-center gap-4">
+                          <Badge variant={entity.status === "active" ? "default" : "secondary"}>
+                            {entity.status === "active" ? "Activa" : "Inactiva"}
+                          </Badge>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openEditEntity(entity)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Editar
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => toggleSecretariesView(entity)}>
+                                <FileText className="mr-2 h-4 w-4" />
+                                {expandedEntityId === entity.id ? "Ocultar Secretarías" : "Gestionar Secretarías"}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => {
+                                  setEntityToDelete(entity)
+                                  setIsDeleteEntityOpen(true)
+                                }}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Eliminar
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <Badge variant={entity.status === "active" ? "default" : "secondary"}>
-                          {entity.status === "active" ? "Activa" : "Inactiva"}
-                        </Badge>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
+                      
+                      {/* Secretaries Section - Inline */}
+                      {expandedEntityId === entity.id && (
+                        <div className="border-t p-4 space-y-4 bg-muted/30">
+                          <div className="flex items-center justify-between flex-shrink-0">
+                            <div>
+                              <h4 className="text-sm font-medium flex items-center gap-2">
+                                <FileText className="h-4 w-4" />
+                                Secretarías
+                              </h4>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Gestiona las secretarías de esta entidad
+                              </p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={addSecretaryField}>
+                              <Plus className="mr-2 h-3 w-3" />
+                              Agregar
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEditEntity(entity)}>
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Editar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openSecretariesDialog(entity)}>
-                              <FileText className="mr-2 h-4 w-4" />
-                              Gestionar Secretarías
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive"
+                          </div>
+
+                          <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2">
+                            {secretaryForm.map((secretary, index) => (
+                              <Card key={index} className="relative">
+                                <CardHeader className="pb-3">
+                                  <div className="flex items-center justify-between">
+                                    <CardTitle className="text-sm flex items-center gap-2">
+                                      <Building className="h-4 w-4 text-primary" />
+                                      Secretaría {index + 1}
+                                    </CardTitle>
+                                    {secretaryForm.length > 1 && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive hover:text-destructive"
+                                        onClick={() => removeSecretaryField(index)}
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                  <div className="grid gap-2">
+                                    <Label htmlFor={`sec-name-${entity.id}-${index}`} className="text-xs">
+                                      Nombre de la Secretaría *
+                                    </Label>
+                                    <Input
+                                      id={`sec-name-${entity.id}-${index}`}
+                                      placeholder="Ej: Secretaría de Hacienda"
+                                      value={secretary.name}
+                                      onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
+                                      className="h-9"
+                                    />
+                                  </div>
+                                  <div className="grid gap-2">
+                                    <Label htmlFor={`sec-person-${entity.id}-${index}`} className="text-xs">
+                                      Nombre del Secretario *
+                                    </Label>
+                                    <Input
+                                      id={`sec-person-${entity.id}-${index}`}
+                                      placeholder="Ej: Juan Pérez"
+                                      value={secretary.secretaryName}
+                                      onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
+                                      className="h-9"
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid gap-2">
+                                      <Label htmlFor={`sec-email-${entity.id}-${index}`} className="text-xs">
+                                        Correo *
+                                      </Label>
+                                      <Input
+                                        id={`sec-email-${entity.id}-${index}`}
+                                        type="email"
+                                        placeholder="secretario@entidad.gov.co"
+                                        value={secretary.email}
+                                        onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
+                                        className="h-9"
+                                      />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label htmlFor={`sec-phone-${entity.id}-${index}`} className="text-xs">
+                                        Teléfono
+                                      </Label>
+                                      <Input
+                                        id={`sec-phone-${entity.id}-${index}`}
+                                        placeholder="+57 1 234 5678"
+                                        value={secretary.phone}
+                                        onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
+                                        className="h-9"
+                                      />
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+
+                          {secretariesError && (
+                            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive flex-shrink-0">
+                              {secretariesError}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-end gap-2 pt-2 flex-shrink-0 border-t bg-muted/30 pb-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => {
-                                setEntityToDelete(entity)
-                                setIsDeleteEntityOpen(true)
+                                setExpandedEntityId(null)
+                                setSelectedEntity(null)
                               }}
                             >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Eliminar
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
+                              Cancelar
+                            </Button>
+                            <Button size="sm" onClick={handleSaveSecretaries} disabled={savingSecretaries}>
+                              {savingSecretaries ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Guardando...
+                                </>
+                              ) : (
+                                <>
+                                  Guardar
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1486,128 +1639,6 @@ export default function OrganizationDetailPage({ params }: { params: Promise<{ i
         </DialogContent>
       </Dialog>
 
-      {/* Manage Secretaries Dialog */}
-      <Dialog open={isSecretariesOpen} onOpenChange={setIsSecretariesOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-          <DialogHeader>
-            <DialogTitle>Gestionar Secretarías</DialogTitle>
-            <DialogDescription>
-              Administra las secretarías de {selectedEntity?.name}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto px-1">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-base">Secretarías de la Entidad</Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Agrega o edita las secretarías y la información de contacto de cada secretario
-                  </p>
-                </div>
-                <Button variant="outline" size="sm" onClick={addSecretaryField}>
-                  <Plus className="mr-2 h-3 w-3" />
-                  Agregar
-                </Button>
-              </div>
-
-              <div className="space-y-4">
-                {secretaryForm.map((secretary, index) => (
-                  <Card key={index} className="relative">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <Building className="h-4 w-4 text-primary" />
-                          Secretaría {index + 1}
-                        </CardTitle>
-                        {secretaryForm.length > 1 && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => removeSecretaryField(index)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor={`sec-name-${index}`} className="flex items-center gap-2">
-                          <Building className="h-3 w-3" />
-                          Nombre de la Secretaría *
-                        </Label>
-                        <Input
-                          id={`sec-name-${index}`}
-                          placeholder="Ej: Secretaría de Hacienda"
-                          value={secretary.name}
-                          onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor={`sec-person-${index}`} className="flex items-center gap-2">
-                          <User className="h-3 w-3" />
-                          Nombre del Secretario *
-                        </Label>
-                        <Input
-                          id={`sec-person-${index}`}
-                          placeholder="Ej: Juan Pérez"
-                          value={secretary.secretaryName}
-                          onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor={`sec-email-${index}`} className="flex items-center gap-2">
-                            <Mail className="h-3 w-3" />
-                            Correo Electrónico *
-                          </Label>
-                          <Input
-                            id={`sec-email-${index}`}
-                            type="email"
-                            placeholder="secretario@entidad.gov.co"
-                            value={secretary.email}
-                            onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor={`sec-phone-${index}`} className="flex items-center gap-2">
-                            <Phone className="h-3 w-3" />
-                            Teléfono
-                          </Label>
-                          <Input
-                            id={`sec-phone-${index}`}
-                            placeholder="+57 1 234 5678"
-                            value={secretary.phone}
-                            onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {secretariesError && (
-            <div className="px-4 py-2 text-sm text-destructive bg-destructive/10 rounded-md">
-              {secretariesError}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsSecretariesOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleSaveSecretaries} disabled={savingSecretaries}>
-              {savingSecretaries && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {savingSecretaries ? "Guardando..." : "Guardar Cambios"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

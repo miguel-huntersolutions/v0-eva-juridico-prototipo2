@@ -111,6 +111,8 @@ export function OrganizationsPage() {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = React.useState(false)
   const [orgToDelete, setOrgToDelete] = React.useState<Organization | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+  const [activeOrgsThisMonth, setActiveOrgsThisMonth] = React.useState(0)
+  const [activeOrgsLastMonth, setActiveOrgsLastMonth] = React.useState(0)
 
   // Edit organization states
   const [isEditOrgOpen, setIsEditOrgOpen] = React.useState(false)
@@ -131,9 +133,71 @@ export function OrganizationsPage() {
   const loadOrganizations = React.useCallback(async () => {
     try {
       setIsLoading(true)
-      const data = await getOrganizations()
-      setOrganizations(data)
+      // For superadmin, we need to get ALL organizations, not just active ones
+      const { createBrowserClient } = await import("@/lib/supabase/client")
+      const supabase = createBrowserClient()
+      
+      const { data: orgsData, error: orgsError } = await supabase
+        .from("organizations")
+        .select("*")
+        .order("name")
+      
+      if (orgsError) {
+        console.error("[OrganizationsPage] Error fetching organizations:", orgsError)
+        throw orgsError
+      }
+      
+      // Get counts for all organizations
+      const organizationsWithCounts = await Promise.all(
+        (orgsData || []).map(async (org) => {
+          const { count: membersCount } = await supabase
+            .from("profiles")
+            .select("*", { count: "exact", head: true })
+            .eq("organization_id", org.id)
+          
+          const { count: entitiesCount } = await supabase
+            .from("entities")
+            .select("*", { count: "exact", head: true })
+            .eq("organization_id", org.id)
+          
+          return {
+            id: org.id,
+            name: org.name,
+            nit: org.nit,
+            status: org.status,
+            createdAt: org.created_at,
+            updatedAt: org.updated_at,
+            membersCount: membersCount || 0,
+            entitiesCount: entitiesCount || 0,
+          } as OrganizationMapped
+        })
+      )
+      
+      setOrganizations(organizationsWithCounts)
       setError(null)
+      
+      // Calculate active organizations created this month and last month
+      const now = new Date()
+      const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+      
+      const activeThisMonth = organizationsWithCounts.filter(
+        (org) => org.status === "active" && new Date(org.createdAt) >= startOfThisMonth
+      ).length
+      
+      const activeLastMonth = organizationsWithCounts.filter(
+        (org) => {
+          const createdAt = new Date(org.createdAt)
+          return org.status === "active" && createdAt >= startOfLastMonth && createdAt < startOfCurrentMonth
+        }
+      ).length
+      
+      setActiveOrgsThisMonth(activeThisMonth)
+      setActiveOrgsLastMonth(activeLastMonth)
+      
+      console.log("[OrganizationsPage] Organizations loaded:", organizationsWithCounts.length)
+      console.log("[OrganizationsPage] Active this month:", activeThisMonth, "Active last month:", activeLastMonth)
     } catch (err) {
       console.error("[v0] Error loading organizations:", err)
       setError("Error al cargar las organizaciones")
@@ -168,24 +232,69 @@ export function OrganizationsPage() {
       setFormError("El NIT es requerido")
       return
     }
+    if (!formData.adminName.trim()) {
+      setFormError("El nombre del administrador es requerido")
+      return
+    }
+    if (!formData.adminEmail.trim()) {
+      setFormError("El email del administrador es requerido")
+      return
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(formData.adminEmail)) {
+      setFormError("El email del administrador no es válido")
+      return
+    }
 
     try {
       setIsSaving(true)
       setFormError(null)
 
-      await createOrganization({
+      // Create the organization
+      const newOrg = await createOrganization({
         name: formData.name.trim(),
         nit: formData.nit.trim(),
         status: "active",
       })
 
+      console.log("[OrganizationsPage] Organization created:", newOrg)
+
+      // Create the admin member (this will send the invitation email automatically)
+      if (newOrg && newOrg.id) {
+        try {
+          await createMember({
+            email: formData.adminEmail.trim(),
+            name: formData.adminName.trim(),
+            role: "admin",
+            organizationId: newOrg.id,
+          })
+          console.log("[OrganizationsPage] Admin member created and invitation sent")
+        } catch (memberError) {
+          console.error("[OrganizationsPage] Error creating admin member:", memberError)
+          // Don't fail the whole operation if member creation fails
+          // The organization was created successfully
+          setFormError(
+            "La organización se creó exitosamente, pero hubo un error al crear el administrador. Puedes invitarlo manualmente más tarde."
+          )
+        }
+      }
+
       await loadOrganizations()
 
       setIsCreateOrgOpen(false)
       resetForm()
+      
+      // Show success message
+      alert(`Organización "${formData.name}" creada exitosamente. Se ha enviado una invitación a ${formData.adminEmail}`)
     } catch (err) {
       console.error("[v0] Error creating organization:", err)
-      setFormError("Error al crear la organización. Verifica que el NIT no esté duplicado.")
+      setFormError(
+        err instanceof Error
+          ? err.message
+          : "Error al crear la organización. Verifica que el NIT no esté duplicado."
+      )
     } finally {
       setIsSaving(false)
     }
@@ -439,7 +548,16 @@ export function OrganizationsPage() {
           value={stats.active}
           description="Organizaciones operando"
           icon={CheckCircle2}
-          trend={{ value: 8, isPositive: true }}
+          trend={
+            activeOrgsLastMonth > 0
+              ? {
+                  value: Math.round(((activeOrgsThisMonth - activeOrgsLastMonth) / activeOrgsLastMonth) * 100),
+                  isPositive: activeOrgsThisMonth >= activeOrgsLastMonth,
+                }
+              : activeOrgsThisMonth > 0
+                ? { value: 100, isPositive: true }
+                : undefined
+          }
         />
         <StatsCard title="Inactivas" value={stats.inactive} description="Organizaciones suspendidas" icon={XCircle} />
         <StatsCard

@@ -21,6 +21,8 @@ import {
   Mail,
   Phone,
   Loader2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -105,7 +107,7 @@ export function EntitiesPage() {
   // Added isDeleteOpen state
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
   const [isAssignMembersOpen, setIsAssignMembersOpen] = React.useState(false)
-  const [isSecretariesOpen, setIsSecretariesOpen] = React.useState(false)
+  const [expandedEntityId, setExpandedEntityId] = React.useState<string | null>(null) // Track which entity has secretaries expanded
   const [selectedEntity, setSelectedEntity] = React.useState<EntityMapped | null>(null)
   const [currentStep, setCurrentStep] = React.useState(1)
 
@@ -357,7 +359,23 @@ export function EntitiesPage() {
         deleted: secretariesToDelete.length,
       })
 
-      setIsSecretariesOpen(false)
+      // Reload secretaries after saving
+      if (selectedEntity) {
+        const updatedSecretaries = await getSecretaries(selectedEntity.id)
+        setSecretaries(updatedSecretaries)
+        const secretaryForms = updatedSecretaries.map((s) => ({
+          id: s.id,
+          name: s.name || "",
+          secretaryName: s.secretary_name || "",
+          email: s.email || "",
+          phone: s.phone || "",
+        }))
+        setFormData({
+          ...formData,
+          secretaries:
+            secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }],
+        })
+      }
       // Reload entities to refresh any counts
       if (effectiveOrganizationId) {
         const entitiesData = await getEntities(effectiveOrganizationId)
@@ -463,33 +481,42 @@ export function EntitiesPage() {
     setIsEditOpen(true)
   }
 
-  const openSecretariesDialog = async (entity: EntityMapped) => {
-    setSelectedEntity(entity)
+  const toggleSecretariesView = async (entity: EntityMapped) => {
+    // If clicking the same entity, toggle it closed
+    if (expandedEntityId === entity.id) {
+      setExpandedEntityId(null)
+      setSelectedEntity(null)
+      return
+    }
 
+    // Otherwise, expand this entity
+    setSelectedEntity(entity)
+    setExpandedEntityId(entity.id)
+    
     // Load secretaries from database
     try {
       const entitySecretaries = await getSecretaries(entity.id)
       const secretaryForms = entitySecretaries.map((s) => ({
-        id: s.id, // Store the ID for later matching
-        name: s.name,
+        id: s.id,
+        name: s.name || "",
         secretaryName: s.secretary_name || "",
         email: s.email || "",
         phone: s.phone || "",
       }))
-
       setFormData({
         ...formData,
         secretaries:
           secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }],
       })
+      setSecretaries(entitySecretaries)
     } catch (err) {
       console.error("Error loading secretaries:", err)
       setFormData({
         ...formData,
         secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
       })
+      setSecretaries([])
     }
-    setIsSecretariesOpen(true)
   }
 
   const openDetailDialog = async (entity: EntityMapped) => {
@@ -767,9 +794,9 @@ export function EntitiesPage() {
                               <Users className="mr-2 h-4 w-4" />
                               Asignar Miembros
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openSecretariesDialog(entity)}>
+                            <DropdownMenuItem onClick={() => toggleSecretariesView(entity)}>
                               <FileText className="mr-2 h-4 w-4" />
-                              Gestionar Secretarías
+                              {expandedEntityId === entity.id ? "Ocultar Secretarías" : "Gestionar Secretarías"}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(entity)}>
@@ -792,6 +819,137 @@ export function EntitiesPage() {
                         </Badge>
                         <StatusBadge status={entity.status} />
                       </div>
+                      
+                      {/* Secretaries Section - Inline */}
+                      {expandedEntityId === entity.id && (
+                        <div className="mt-4 border-t pt-4 space-y-4">
+                          <div className="flex items-center justify-between flex-shrink-0">
+                            <div>
+                              <h4 className="text-sm font-medium flex items-center gap-2">
+                                <FileText className="h-4 w-4" />
+                                Secretarías
+                              </h4>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Gestiona las secretarías de esta entidad
+                              </p>
+                            </div>
+                            <Button variant="outline" size="sm" onClick={addSecretaryField}>
+                              <Plus className="mr-2 h-3 w-3" />
+                              Agregar
+                            </Button>
+                          </div>
+
+                          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                            {formData.secretaries.map((secretary, index) => (
+                              <Card key={index} className="relative">
+                                <CardHeader className="pb-3">
+                                  <div className="flex items-center justify-between">
+                                    <CardTitle className="text-sm flex items-center gap-2">
+                                      <Building className="h-4 w-4 text-primary" />
+                                      Secretaría {index + 1}
+                                    </CardTitle>
+                                    {formData.secretaries.length > 1 && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-destructive hover:text-destructive"
+                                        onClick={() => removeSecretaryField(index)}
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                  <div className="grid gap-2">
+                                    <Label htmlFor={`sec-name-${entity.id}-${index}`} className="text-xs">
+                                      Nombre de la Secretaría *
+                                    </Label>
+                                    <Input
+                                      id={`sec-name-${entity.id}-${index}`}
+                                      placeholder="Ej: Secretaría de Hacienda"
+                                      value={secretary.name}
+                                      onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
+                                      className="h-9"
+                                    />
+                                  </div>
+                                  <div className="grid gap-2">
+                                    <Label htmlFor={`sec-person-${entity.id}-${index}`} className="text-xs">
+                                      Nombre del Secretario *
+                                    </Label>
+                                    <Input
+                                      id={`sec-person-${entity.id}-${index}`}
+                                      placeholder="Ej: Juan Pérez"
+                                      value={secretary.secretaryName}
+                                      onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
+                                      className="h-9"
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid gap-2">
+                                      <Label htmlFor={`sec-email-${entity.id}-${index}`} className="text-xs">
+                                        Correo *
+                                      </Label>
+                                      <Input
+                                        id={`sec-email-${entity.id}-${index}`}
+                                        type="email"
+                                        placeholder="secretario@entidad.gov.co"
+                                        value={secretary.email}
+                                        onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
+                                        className="h-9"
+                                      />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label htmlFor={`sec-phone-${entity.id}-${index}`} className="text-xs">
+                                        Teléfono
+                                      </Label>
+                                      <Input
+                                        id={`sec-phone-${entity.id}-${index}`}
+                                        placeholder="+57 1 234 5678"
+                                        value={secretary.phone}
+                                        onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
+                                        className="h-9"
+                                      />
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            ))}
+                          </div>
+
+                          {error && (
+                            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive flex-shrink-0">
+                              {error}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-end gap-2 pt-2 flex-shrink-0 border-t bg-background pb-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setExpandedEntityId(null)
+                                setSelectedEntity(null)
+                              }}
+                            >
+                              Cancelar
+                            </Button>
+                            <Button size="sm" onClick={handleSaveSecretaries} disabled={saving}>
+                              {saving ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Guardando...
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="mr-2 h-4 w-4" />
+                                  Guardar
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
@@ -1433,124 +1591,32 @@ export function EntitiesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Manage Secretaries Dialog */}
-      <Dialog open={isSecretariesOpen} onOpenChange={setIsSecretariesOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+
+      {/* Delete Entity Dialog */}
+      <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Gestionar Secretarías</DialogTitle>
+            <DialogTitle>Eliminar Entidad</DialogTitle>
             <DialogDescription>
-              Administra las secretarías de {selectedEntity?.name}
+              ¿Estás seguro de que deseas eliminar la entidad "{selectedEntity?.name}"? Esta acción no se puede deshacer.
             </DialogDescription>
           </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto px-1">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-base">Secretarías de la Entidad</Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Agrega o edita las secretarías y la información de contacto de cada secretario
-                  </p>
-                </div>
-                <Button variant="outline" size="sm" onClick={addSecretaryField}>
-                  <Plus className="mr-2 h-3 w-3" />
-                  Agregar
-                </Button>
-              </div>
-
-              <div className="space-y-4">
-                {formData.secretaries.map((secretary, index) => (
-                  <Card key={index} className="relative">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <Building className="h-4 w-4 text-primary" />
-                          Secretaría {index + 1}
-                        </CardTitle>
-                        {formData.secretaries.length > 1 && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => removeSecretaryField(index)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor={`sec-name-${index}`} className="flex items-center gap-2">
-                          <Building className="h-3 w-3" />
-                          Nombre de la Secretaría *
-                        </Label>
-                        <Input
-                          id={`sec-name-${index}`}
-                          placeholder="Ej: Secretaría de Hacienda"
-                          value={secretary.name}
-                          onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor={`sec-person-${index}`} className="flex items-center gap-2">
-                          <User className="h-3 w-3" />
-                          Nombre del Secretario *
-                        </Label>
-                        <Input
-                          id={`sec-person-${index}`}
-                          placeholder="Ej: Juan Pérez"
-                          value={secretary.secretaryName}
-                          onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor={`sec-email-${index}`} className="flex items-center gap-2">
-                            <Mail className="h-3 w-3" />
-                            Correo Electrónico *
-                          </Label>
-                          <Input
-                            id={`sec-email-${index}`}
-                            type="email"
-                            placeholder="secretario@entidad.gov.co"
-                            value={secretary.email}
-                            onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor={`sec-phone-${index}`} className="flex items-center gap-2">
-                            <Phone className="h-3 w-3" />
-                            Teléfono
-                          </Label>
-                          <Input
-                            id={`sec-phone-${index}`}
-                            placeholder="+57 1 234 5678"
-                            value={secretary.phone}
-                            onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {error && (
-            <div className="px-4 py-2 text-sm text-destructive bg-destructive/10 rounded-md">
-              {error}
-            </div>
-          )}
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsSecretariesOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDeleteOpen(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button onClick={handleSaveSecretaries} disabled={saving}>
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {saving ? "Guardando..." : "Guardar Cambios"}
+            <Button variant="destructive" onClick={handleDeleteDB} disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Eliminar
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

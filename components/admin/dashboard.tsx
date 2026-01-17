@@ -68,6 +68,8 @@ export function AdminDashboard() {
   const [members, setMembers] = React.useState<Profile[]>([])
   const [memberAssignments, setMemberAssignments] = React.useState<Record<string, string[]>>({})
   const [totalProcesses, setTotalProcesses] = React.useState(0)
+  const [documentsThisMonth, setDocumentsThisMonth] = React.useState(0)
+  const [documentsLastMonth, setDocumentsLastMonth] = React.useState(0)
   const [organizationName, setOrganizationName] = React.useState("")
   
   // Entity form state
@@ -138,6 +140,46 @@ export function AdminDashboard() {
 
         setEntities(entitiesWithCount)
         setTotalProcesses(entitiesWithCount.reduce((acc, e) => acc + (e.processesCount || 0), 0))
+
+        // Calculate documents for this month and last month
+        const entityIds = entitiesWithCount.map((e) => e.id)
+        
+        // Get all processes for these entities
+        const { data: processes } = await supabase
+          .from("processes")
+          .select("id")
+          .in("entity_id", entityIds)
+        
+        const processIds = processes?.map((p) => p.id) || []
+        
+        if (processIds.length > 0) {
+          // Get current date range (this month)
+          const now = new Date()
+          const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+          const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+          const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+          
+          // Count documents this month
+          const { count: docsThisMonth } = await supabase
+            .from("documents")
+            .select("*", { count: "exact", head: true })
+            .in("process_id", processIds)
+            .gte("created_at", startOfThisMonth.toISOString())
+          
+          // Count documents last month
+          const { count: docsLastMonth } = await supabase
+            .from("documents")
+            .select("*", { count: "exact", head: true })
+            .in("process_id", processIds)
+            .gte("created_at", startOfLastMonth.toISOString())
+            .lt("created_at", startOfCurrentMonth.toISOString())
+          
+          setDocumentsThisMonth(docsThisMonth || 0)
+          setDocumentsLastMonth(docsLastMonth || 0)
+        } else {
+          setDocumentsThisMonth(0)
+          setDocumentsLastMonth(0)
+        }
 
         // Use getOrganizationMembers to bypass RLS
         const { getOrganizationMembers, getMemberAssignedEntities } = await import("@/lib/supabase/client-data-access")
@@ -564,10 +606,19 @@ export function AdminDashboard() {
         />
         <StatsCard
           title="Documentos"
-          value={87}
+          value={documentsThisMonth}
           description="Generados este mes"
           icon={FileText}
-          trend={{ value: 23, isPositive: true }}
+          trend={
+            documentsLastMonth > 0
+              ? {
+                  value: Math.round(((documentsThisMonth - documentsLastMonth) / documentsLastMonth) * 100),
+                  isPositive: documentsThisMonth >= documentsLastMonth,
+                }
+              : documentsThisMonth > 0
+                ? { value: 100, isPositive: true }
+                : undefined
+          }
         />
       </div>
 

@@ -40,22 +40,30 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Ensure role is 'member' (not 'admin') when creating from admin panel
-    const finalRole = role === "member" ? "member" : "member"
-    console.log("[create-member] Final role to use:", finalRole)
+    // Determine final role based on requester's permissions
+    // Superadmins can create admins or members, admins can only create members
+    let finalRole: "admin" | "member" = "member"
+    
+    if (profile.role === "superadmin") {
+      // Superadmins can create admins or members
+      finalRole = role === "admin" ? "admin" : "member"
+    } else if (profile.role === "admin") {
+      // Admins can only create members (not other admins)
+      if (role === "admin") {
+        return NextResponse.json(
+          { error: "Forbidden: Admins can only create members, not other admins" },
+          { status: 403 },
+        )
+      }
+      finalRole = "member"
+    }
+    
+    console.log("[create-member] Final role to use:", finalRole, "Requested role:", role, "Requester role:", profile.role)
 
     // If user is admin (not superadmin), verify they can only create members in their own organization
     if (profile.role === "admin" && profile.organization_id !== organizationId) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only create members in their own organization" },
-        { status: 403 },
-      )
-    }
-
-    // Verify that admins can only create members (not other admins)
-    if (profile.role === "admin" && role === "admin") {
-      return NextResponse.json(
-        { error: "Forbidden: Admins can only create members, not other admins" },
         { status: 403 },
       )
     }
@@ -80,29 +88,131 @@ export async function POST(request: NextRequest) {
     // Generate invitation link
     const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/callback?invite=true&org=${organizationId}`
     
-    // Use inviteUserByEmail instead of createUser to automatically send invitation email
-    // Note: The 'data' field goes to user_metadata, but the trigger reads from raw_user_meta_data
-    // We need to ensure the role is explicitly set in the profile after creation
-    console.log("[create-member] Inviting user with role:", finalRole)
-    console.log("[create-member] Inviting user with metadata:", { name, role: finalRole, organization_id: organizationId })
-    const { data: inviteData, error: inviteError } = await serviceRoleClient.auth.admin.inviteUserByEmail(
-      email,
-      {
-        data: {
+    // First, check if user already exists
+    let existingUser = null
+    try {
+      const { data: users } = await serviceRoleClient.auth.admin.listUsers()
+      existingUser = users.users.find((u) => u.email === email)
+    } catch (err) {
+      console.log("[create-member] Could not list users, will proceed with invitation")
+    }
+
+    let inviteData: any = null
+    let inviteError: any = null
+
+    if (existingUser) {
+      // User exists, generate an invite link (longer expiration than recovery)
+      console.log("[create-member] User already exists, generating invite link")
+      console.log("[create-member] Link generation params:", {
+        type: "invite",
+        email,
+        redirectTo,
+        timestamp: new Date().toISOString(),
+      })
+      
+      const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
+        type: "invite",
+        email: email,
+        options: {
+          redirectTo,
+          data: {
+            name,
+            role: finalRole,
+            organization_id: organizationId,
+          },
+        },
+      })
+      
+      if (linkErr) {
+        console.error("[create-member] Error generating invite link:", linkErr)
+        inviteError = linkErr
+      } else {
+        const actionLink = linkData?.properties?.action_link
+        console.log("[create-member] Invite link generated successfully:", {
+          linkType: "invite",
+          linkUrl: actionLink,
+          hashedToken: actionLink ? new URL(actionLink).searchParams.get("token")?.substring(0, 20) + "..." : "N/A",
+          redirectTo,
+          timestamp: new Date().toISOString(),
+          properties: linkData?.properties ? Object.keys(linkData.properties) : [],
+        })
+        
+        // Create a mock response structure for existing users
+        inviteData = {
+          user: existingUser,
+          properties: linkData?.properties,
+        }
+      }
+    } else {
+      // User doesn't exist, create user first then generate invite link
+      console.log("[create-member] Creating new user and generating invite link")
+      
+      // Create the user first
+      const { data: newUser, error: createError } = await serviceRoleClient.auth.admin.createUser({
+        email,
+        email_confirm: false, // User needs to confirm via invitation
+        user_metadata: {
           name,
-          role: finalRole, // Use finalRole to ensure it's 'member'
+          role: finalRole,
           organization_id: organizationId,
         },
-        redirectTo,
-      },
-    )
+      })
+
+      if (createError) {
+        console.error("[create-member] Error creating user:", createError)
+        inviteError = createError
+      } else if (newUser.user) {
+        // Generate invitation link for the new user
+        console.log("[create-member] Generating invite link for new user")
+        console.log("[create-member] Link generation params:", {
+          type: "invite",
+          email,
+          redirectTo,
+          userId: newUser.user.id,
+          timestamp: new Date().toISOString(),
+        })
+        
+        const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
+          type: "invite",
+          email: email,
+          options: {
+            redirectTo,
+            data: {
+              name,
+              role: finalRole,
+              organization_id: organizationId,
+            },
+          },
+        })
+
+        if (linkErr) {
+          console.error("[create-member] Error generating invite link:", linkErr)
+          inviteError = linkErr
+        } else {
+          const actionLink = linkData?.properties?.action_link
+          console.log("[create-member] Invite link generated successfully:", {
+            linkType: "invite",
+            linkUrl: actionLink,
+            hashedToken: actionLink ? new URL(actionLink).searchParams.get("token")?.substring(0, 20) + "..." : "N/A",
+            redirectTo,
+            timestamp: new Date().toISOString(),
+            properties: linkData?.properties ? Object.keys(linkData.properties) : [],
+            userId: newUser.user.id,
+          })
+          
+          inviteData = {
+            user: newUser.user,
+            properties: linkData?.properties,
+          }
+        }
+      }
+    }
     
     if (inviteData?.user) {
-      console.log("[create-member] User created, checking raw_user_meta_data:", inviteData.user.user_metadata)
+      console.log("[create-member] User created, checking user_metadata:", inviteData.user.user_metadata)
       // Also check if we can read the user's metadata directly
       const { data: userData } = await serviceRoleClient.auth.admin.getUserById(inviteData.user.id)
       console.log("[create-member] User metadata from getUserById:", userData?.user?.user_metadata)
-      console.log("[create-member] User raw_user_meta_data from getUserById:", userData?.user?.raw_user_meta_data)
     }
 
     if (inviteError) {

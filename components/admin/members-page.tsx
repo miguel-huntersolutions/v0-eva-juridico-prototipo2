@@ -275,10 +275,12 @@ export function MembersPage() {
 
   const openEditDialog = (member: MemberExtended) => {
     setSelectedMember(member)
+    // Map member status (pending/approved/rejected) to form status (active/inactive)
+    const formStatus: "active" | "inactive" = member.status === "approved" ? "active" : "inactive"
     setEditFormData({
       name: member.name,
       email: member.email,
-      status: member.status,
+      status: formStatus,
     })
     setIsEditOpen(true)
   }
@@ -364,17 +366,44 @@ export function MembersPage() {
 
     try {
       setIsSaving(true)
-      // Update member using updateMember function
-      // Note: email and status are not directly editable via updateMember
-      // For now, we'll only update the name
+      
+      // Update member name
       await updateMember(selectedMember.id, {
         name: editFormData.name,
       })
+      
+      // Update status if it changed
+      // Map form status (active/inactive) to member status (approved/rejected)
+      const currentFormStatus: "active" | "inactive" = selectedMember.status === "approved" ? "active" : "inactive"
+      if (editFormData.status !== currentFormStatus) {
+        const newStatus = editFormData.status === "active" ? "approved" : "rejected"
+        
+        // Only update status if member is not pending (can't change status of pending users via edit)
+        if (selectedMember.status !== "pending") {
+          const response = await fetch("/api/update-user-status", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              userId: selectedMember.id,
+              status: newStatus,
+              organizationId: effectiveOrganizationId,
+            }),
+          })
+
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.message || errorData.error || "Error al actualizar el estado")
+          }
+        }
+      }
       
       // Reload members to reflect changes
       await loadData()
       
       setIsEditOpen(false)
+      alert("Miembro actualizado exitosamente")
     } catch (error) {
       console.error("Error updating member:", error)
       alert(error instanceof Error ? error.message : "Error al actualizar el miembro")
@@ -781,19 +810,21 @@ export function MembersPage() {
                       </DropdownMenuItem>
                       {member.status === "pending" && (
                         <>
-                          <DropdownMenuItem onSelect={() => handleApproveUser(member.id)}>
+                          <DropdownMenuItem 
+                            onClick={() => handleApproveUser(member.id)}
+                          >
                             <CheckCircle2 className="mr-2 h-4 w-4" />
                             Aprobar Usuario
                           </DropdownMenuItem>
                           <DropdownMenuItem 
                             className="text-destructive"
-                            onSelect={() => handleRejectUser(member.id)}
+                            onClick={() => handleRejectUser(member.id)}
                           >
                             <XCircle className="mr-2 h-4 w-4" />
                             Rechazar Usuario
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onSelect={() => {
+                          <DropdownMenuItem onClick={() => {
                             // TODO: Implement resend invitation
                             console.log("Reenviar invitación para:", member.email)
                           }}>
@@ -805,7 +836,9 @@ export function MembersPage() {
                       )}
                       {member.status === "rejected" && (
                         <>
-                          <DropdownMenuItem onSelect={() => handleApproveUser(member.id)}>
+                          <DropdownMenuItem 
+                            onClick={() => handleApproveUser(member.id)}
+                          >
                             <CheckCircle2 className="mr-2 h-4 w-4" />
                             Aprobar Usuario
                           </DropdownMenuItem>

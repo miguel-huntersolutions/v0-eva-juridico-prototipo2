@@ -111,14 +111,30 @@ export function GenerateDocumentsDialog({
   React.useEffect(() => {
     async function loadTemplates() {
       const processTypeId = process?.processTypeId || processData?.processTypeId
+      
+      console.log("[GenerateDocumentsDialog] Loading templates:", {
+        open,
+        processTypeId,
+        hasProcess: !!process,
+        hasProcessData: !!processData,
+        processProcessTypeId: process?.processTypeId,
+        processDataProcessTypeId: processData?.processTypeId,
+      })
+      
       if (!open || !processTypeId) {
+        console.log("[GenerateDocumentsDialog] Skipping template load:", { open, processTypeId })
         setTemplates([])
         return
       }
 
       try {
         setIsLoadingTemplates(true)
+        console.log("[GenerateDocumentsDialog] Calling getTemplates with processTypeId:", processTypeId)
         const data = await getTemplates(processTypeId)
+        console.log("[GenerateDocumentsDialog] Templates loaded:", {
+          count: data.length,
+          templates: data.map(t => ({ id: t.id, name: t.name, processTypeId: t.processTypeId })),
+        })
         setTemplates(data)
         
         // Initialize form data with empty values for all tags
@@ -340,7 +356,20 @@ export function GenerateDocumentsDialog({
 
   const handleGenerateDocument = async (template: Template, retryCount = 0, overrideProcessId?: string): Promise<any> => {
     const processCode = process?.code || processData?.code
-    if (!processCode) return
+    
+    console.log("[handleGenerateDocument] Process code check:", {
+      processCode,
+      hasProcess: !!process,
+      hasProcessData: !!processData,
+      processCodeFromProcess: process?.code,
+      processCodeFromProcessData: processData?.code,
+    })
+    
+    if (!processCode) {
+      console.error("[handleGenerateDocument] ERROR: No process code available!")
+      setError("No se pudo obtener el código del proceso. Por favor, intente de nuevo.")
+      return
+    }
 
     try {
       setIsGenerating(true)
