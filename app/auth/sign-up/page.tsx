@@ -121,10 +121,12 @@ export default function SignUpPage() {
     sessionStorage.setItem("signup_organization_id", selectedOrganizationId)
 
     try {
+      // Use environment variable if available, otherwise use window.location.origin
+      const redirectUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?org=${selectedOrganizationId}`,
+          redirectTo: `${redirectUrl}/auth/callback?org=${selectedOrganizationId}`,
           queryParams: {
             access_type: "offline",
             prompt: "consent",
