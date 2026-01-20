@@ -123,10 +123,20 @@ export default function SignUpPage() {
     try {
       // Use environment variable if available, otherwise use window.location.origin
       const redirectUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
+      const finalRedirectTo = `${redirectUrl}/auth/callback?org=${selectedOrganizationId}`
+      
+      console.log("[handleGoogleSignUp] OAuth redirect configuration:", {
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+        windowLocationOrigin: window.location.origin,
+        redirectUrl,
+        finalRedirectTo,
+        organizationId: selectedOrganizationId,
+      })
+      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${redirectUrl}/auth/callback?org=${selectedOrganizationId}`,
+          redirectTo: finalRedirectTo,
           queryParams: {
             access_type: "offline",
             prompt: "consent",

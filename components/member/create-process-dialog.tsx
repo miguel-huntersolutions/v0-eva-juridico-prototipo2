@@ -20,6 +20,7 @@ import {
   getProcessTypes,
   getSecretaries,
   getEntities,
+  getMemberAssignedEntities,
   createProcess,
   generateProcessCode,
   getProcessesMapped,
@@ -94,24 +95,36 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
 
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id || !open) {
+      if (!profile?.organization_id || !profile?.id || !open) {
         setEntities([])
         return
       }
       try {
         setIsLoadingEntities(true)
-        const data = await getEntities(profile.organization_id)
-        setEntities(data.filter((e) => e.status === "active"))
+        // Get assigned entity IDs for this member
+        const assignedEntityIds = await getMemberAssignedEntities(profile.id)
+        console.log("[CreateProcessDialog] Assigned entity IDs:", assignedEntityIds)
+        
+        // Get all entities from organization
+        const allEntities = await getEntities(profile.organization_id)
+        
+        // Filter to only assigned entities that are active
+        const assigned = allEntities.filter(
+          (e) => assignedEntityIds.includes(e.id) && e.status === "active"
+        )
+        
+        console.log("[CreateProcessDialog] All entities:", allEntities.length, "Assigned entities:", assigned.length)
+        setEntities(assigned)
       } catch (error) {
         console.error("Error loading entities:", error)
       } finally {
         setIsLoadingEntities(false)
       }
     }
-    if (open && profile?.organization_id) {
+    if (open && profile?.organization_id && profile?.id) {
       loadEntities()
     }
-  }, [open, profile?.organization_id])
+  }, [open, profile?.organization_id, profile?.id])
 
   React.useEffect(() => {
     async function loadSecretaries() {

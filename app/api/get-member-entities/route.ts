@@ -18,14 +18,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Verify user is superadmin or admin
+    // Get user profile
     const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single()
 
-    if (!profile || (profile.role !== "superadmin" && profile.role !== "admin")) {
-      return NextResponse.json(
-        { error: "Forbidden: Only superadmins and admins can view entity assignments" },
-        { status: 403 },
-      )
+    if (!profile) {
+      return NextResponse.json({ error: "User profile not found" }, { status: 404 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -35,6 +32,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         { error: "Missing required parameter: memberId" },
         { status: 400 },
+      )
+    }
+
+    // If user is a member (not admin or superadmin), they can only view their own entities
+    if (profile.role === "member" && user.id !== memberId) {
+      return NextResponse.json(
+        { error: "Forbidden: Members can only view their own entity assignments" },
+        { status: 403 },
+      )
+    }
+
+    // If user is superadmin or admin, they can view any member's entities (with organization check for admins)
+    if (profile.role !== "superadmin" && profile.role !== "admin" && profile.role !== "member") {
+      return NextResponse.json(
+        { error: "Forbidden: Invalid user role" },
+        { status: 403 },
       )
     }
 

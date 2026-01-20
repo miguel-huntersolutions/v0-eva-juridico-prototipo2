@@ -132,10 +132,19 @@ function LoginContent() {
     try {
       // Use environment variable if available, otherwise use window.location.origin
       const redirectUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
+      const finalRedirectTo = `${redirectUrl}/auth/callback`
+      
+      console.log("[handleGoogleLogin] OAuth redirect configuration:", {
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+        windowLocationOrigin: window.location.origin,
+        redirectUrl,
+        finalRedirectTo,
+      })
+      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${redirectUrl}/auth/callback`,
+          redirectTo: finalRedirectTo,
           queryParams: {
             access_type: "offline",
             prompt: "consent",

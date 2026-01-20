@@ -18,11 +18,11 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Verify user is superadmin
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    // Verify user is superadmin or admin
+    const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single()
 
-    if (!profile || profile.role !== "superadmin") {
-      return NextResponse.json({ error: "Forbidden: Only superadmins can delete members" }, { status: 403 })
+    if (!profile || (profile.role !== "superadmin" && profile.role !== "admin")) {
+      return NextResponse.json({ error: "Forbidden: Only superadmins and admins can delete members" }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -52,12 +52,20 @@ export async function DELETE(request: NextRequest) {
     // Get member details before deletion
     const { data: memberProfile } = await serviceRoleClient
       .from("profiles")
-      .select("id, email, name")
+      .select("id, email, name, organization_id")
       .eq("id", memberId)
       .single()
 
     if (!memberProfile) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 })
+    }
+
+    // If user is admin (not superadmin), verify they can only delete members from their own organization
+    if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
+      return NextResponse.json(
+        { error: "Forbidden: Admins can only delete members from their own organization" },
+        { status: 403 },
+      )
     }
 
     // Delete the profile first (this will cascade if configured)

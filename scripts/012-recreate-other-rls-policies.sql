@@ -73,10 +73,16 @@ END;
 $$;
 
 -- ORGANIZATIONS POLICIES
+-- Allow anonymous users to view active organizations (for signup)
+-- Also allow authenticated users based on their role
 CREATE POLICY "organizations_select" ON organizations
     FOR SELECT USING (
-        get_user_role(auth.uid()) = 'superadmin' OR
-        id = get_user_org(auth.uid())
+        -- Allow anonymous users to see active organizations
+        (auth.uid() IS NULL AND status = 'active') OR
+        -- Allow authenticated superadmins to see all organizations
+        (auth.uid() IS NOT NULL AND get_user_role(auth.uid()) = 'superadmin') OR
+        -- Allow authenticated users to see their own organization
+        (auth.uid() IS NOT NULL AND id = get_user_org(auth.uid()))
     );
 
 CREATE POLICY "organizations_insert" ON organizations

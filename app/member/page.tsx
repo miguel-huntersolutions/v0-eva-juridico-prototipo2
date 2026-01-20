@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { getEntities, getProcessesMapped, type Entity } from "@/lib/supabase/client-data-access"
+import { getEntities, getProcessesMapped, getMemberAssignedEntities, type Entity } from "@/lib/supabase/client-data-access"
 import type { Process } from "@/lib/mock-data"
 import { useProfile } from "@/hooks/use-profile"
 import { logger } from "@/lib/logger"
@@ -82,14 +82,26 @@ export default function MemberPage() {
 
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id) {
+      if (!profile?.organization_id || !profile?.id) {
         setLoading(false)
         return
       }
       const startTime = Date.now()
       try {
-        const entities = await getEntities(profile.organization_id)
-        setAssignedEntities(entities.filter((e) => e.status === "active"))
+        // Get assigned entity IDs for this member
+        const assignedEntityIds = await getMemberAssignedEntities(profile.id)
+        console.log("[MemberPage] Assigned entity IDs:", assignedEntityIds)
+        
+        // Get all entities from organization
+        const allEntities = await getEntities(profile.organization_id)
+        
+        // Filter to only assigned entities that are active
+        const assigned = allEntities.filter(
+          (e) => assignedEntityIds.includes(e.id) && e.status === "active"
+        )
+        
+        console.log("[MemberPage] All entities:", allEntities.length, "Assigned entities:", assigned.length)
+        setAssignedEntities(assigned)
         logger.fetch("/member", "Entities", true, Date.now() - startTime)
       } catch (err) {
         logger.error("/member", "Error loading entities", err)
@@ -97,10 +109,10 @@ export default function MemberPage() {
         setLoading(false)
       }
     }
-    if (!profileLoading && profile?.organization_id) {
+    if (!profileLoading && profile?.organization_id && profile?.id) {
       loadEntities()
     }
-  }, [profile?.organization_id, profileLoading])
+  }, [profile?.organization_id, profile?.id, profileLoading])
 
   React.useEffect(() => {
     async function loadProcesses() {

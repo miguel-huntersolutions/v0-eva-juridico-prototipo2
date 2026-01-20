@@ -126,6 +126,30 @@ function AuthCallbackContent() {
             return
           }
 
+          // Check if user authenticated with Google OAuth
+          // If so, they don't need to set a password
+          const provider = hashParams.get("provider")
+          const isGoogleAuth = provider === "google" || user.app_metadata?.provider === "google"
+          
+          // If user comes from Google and this is an invitation, they can proceed directly
+          // Google OAuth users don't need passwords
+          if (isGoogleAuth) {
+            console.log("[AuthCallback] User authenticated with Google OAuth, skipping password setup")
+          }
+
+          // Get organization_id from query params (for Google OAuth) or user metadata
+          const orgIdFromQuery = searchParams.get("org")
+          const orgIdFromMetadata = user.user_metadata?.organization_id || user.app_metadata?.organization_id
+          const organizationId = orgIdFromQuery || orgIdFromMetadata || null
+          
+          console.log("[AuthCallback] Organization ID from sources:", {
+            orgIdFromQuery,
+            orgIdFromMetadata,
+            userMetadata: user.user_metadata,
+            appMetadata: user.app_metadata,
+            finalOrganizationId: organizationId,
+          })
+
           // Get user profile to check role and status
           // Wait a bit for the trigger to create the profile if it's a new user
           let profile = null
@@ -133,7 +157,7 @@ function AuthCallbackContent() {
           while (!profile && attempts < 5) {
             const { data: profileData } = await supabase
               .from("profiles")
-              .select("role, status")
+              .select("id, role, status, organization_id")
               .eq("id", user.id)
               .single()
             
@@ -151,10 +175,6 @@ function AuthCallbackContent() {
           if (!profile) {
             console.log("[AuthCallback] Profile not found, creating manually for user:", user.id)
             const userName = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario"
-            // Get organization_id from query params (for Google OAuth) or user metadata
-            const orgIdFromQuery = searchParams.get("org")
-            const orgIdFromMetadata = user.user_metadata?.organization_id
-            const organizationId = orgIdFromQuery || orgIdFromMetadata || null
             
             const { data: newProfile, error: createError } = await supabase
               .from("profiles")
@@ -166,7 +186,7 @@ function AuthCallbackContent() {
                 status: "pending", // New users must be approved
                 organization_id: organizationId, // Associate with selected organization
               })
-              .select("role, status")
+              .select("id, role, status, organization_id")
               .single()
 
             if (createError) {
@@ -177,6 +197,28 @@ function AuthCallbackContent() {
             }
 
             profile = newProfile
+          } else if (organizationId && !profile.organization_id) {
+            // Profile exists but doesn't have organization_id, update it
+            console.log("[AuthCallback] Profile exists but missing organization_id, updating:", {
+              profileId: profile.id,
+              currentOrgId: profile.organization_id,
+              newOrgId: organizationId,
+            })
+            
+            const { data: updatedProfile, error: updateError } = await supabase
+              .from("profiles")
+              .update({ organization_id: organizationId })
+              .eq("id", user.id)
+              .select("id, role, status, organization_id")
+              .single()
+
+            if (updateError) {
+              console.error("[AuthCallback] Error updating profile organization_id:", updateError)
+              // Don't fail the flow, just log the error
+            } else {
+              profile = updatedProfile
+              console.log("[AuthCallback] Profile organization_id updated successfully:", updatedProfile)
+            }
           }
 
           // Check if user is approved
@@ -188,22 +230,19 @@ function AuthCallbackContent() {
           }
 
           const role = profile?.role || "member"
-          const isInvite = searchParams.get("invite") === "true"
-          const orgId = searchParams.get("org")
-
+          const type = hashParams.get("type")
+          
+          // If this is an invite or recovery type and user might need to set password, check if password is set
+          // For now, if user is authenticated, redirect based on role
+          // The update-password page will handle password setup
+          
           // Redirect based on role
           if (role === "superadmin") {
             router.push("/superadmin")
           } else if (role === "admin") {
             router.push("/admin")
           } else {
-            // For members, check if this is an invitation
-            if (isInvite && orgId) {
-              // Redirect to member dashboard
-              router.push("/member")
-            } else {
-              router.push("/member")
-            }
+            router.push("/member")
           }
         } else {
           // No tokens, check if we're already authenticated
@@ -213,13 +252,26 @@ function AuthCallbackContent() {
 
           if (user) {
             // Already authenticated, redirect based on role
+            // Get organization_id from query params (for Google OAuth) or user metadata
+            const orgIdFromQuery = searchParams.get("org")
+            const orgIdFromMetadata = user.user_metadata?.organization_id || user.app_metadata?.organization_id
+            const organizationId = orgIdFromQuery || orgIdFromMetadata || null
+            
+            console.log("[AuthCallback] Already authenticated - Organization ID from sources:", {
+              orgIdFromQuery,
+              orgIdFromMetadata,
+              userMetadata: user.user_metadata,
+              appMetadata: user.app_metadata,
+              finalOrganizationId: organizationId,
+            })
+            
             // Wait a bit for the trigger to create the profile if it's a new user
             let profile = null
             let attempts = 0
             while (!profile && attempts < 5) {
               const { data: profileData } = await supabase
                 .from("profiles")
-                .select("role, status")
+                .select("id, role, status, organization_id")
                 .eq("id", user.id)
                 .single()
               
@@ -237,10 +289,6 @@ function AuthCallbackContent() {
             if (!profile) {
               console.log("[AuthCallback] Profile not found, creating manually for user:", user.id)
               const userName = user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario"
-              // Get organization_id from query params (for Google OAuth) or user metadata
-              const orgIdFromQuery = searchParams.get("org")
-              const orgIdFromMetadata = user.user_metadata?.organization_id
-              const organizationId = orgIdFromQuery || orgIdFromMetadata || null
               
               const { data: newProfile, error: createError } = await supabase
                 .from("profiles")
@@ -252,7 +300,7 @@ function AuthCallbackContent() {
                   status: "pending", // New users must be approved
                   organization_id: organizationId, // Associate with selected organization
                 })
-                .select("role, status")
+                .select("role, status, organization_id")
                 .single()
 
               if (createError) {
@@ -263,6 +311,28 @@ function AuthCallbackContent() {
               }
 
               profile = newProfile
+            } else if (organizationId && !profile.organization_id) {
+              // Profile exists but doesn't have organization_id, update it
+              console.log("[AuthCallback] Profile exists but missing organization_id, updating:", {
+                profileId: profile.id,
+                currentOrgId: profile.organization_id,
+                newOrgId: organizationId,
+              })
+              
+              const { data: updatedProfile, error: updateError } = await supabase
+                .from("profiles")
+                .update({ organization_id: organizationId })
+                .eq("id", user.id)
+                .select("role, status, organization_id")
+                .single()
+
+              if (updateError) {
+                console.error("[AuthCallback] Error updating profile organization_id:", updateError)
+                // Don't fail the flow, just log the error
+              } else {
+                profile = updatedProfile
+                console.log("[AuthCallback] Profile organization_id updated successfully:", updatedProfile)
+              }
             }
 
             // Check if user is approved

@@ -29,9 +29,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { email, name, role, organizationId, avatarUrl } = body
+    const { email, name, role, organizationId, avatarUrl, entityIds, isInvitation } = body
 
-    console.log("[create-member] Request body:", { email, name, role, organizationId })
+    console.log("[create-member] Request body:", { email, name, role, organizationId, entityIds, isInvitation })
 
     if (!email || !name || !role || !organizationId) {
       return NextResponse.json(
@@ -85,8 +85,16 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Generate invitation link
-    const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/callback?invite=true&org=${organizationId}`
+    // Generate invitation link - redirect to password setup page for new users
+    // IMPORTANT: This URL must be in the Redirect URLs list in Supabase Dashboard
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    const redirectTo = `${baseUrl}/auth/update-password?invite=true&org=${organizationId}`
+    
+    console.log("[create-member] Redirect URL configured:", {
+      baseUrl,
+      redirectTo,
+      hasNextPublicAppUrl: !!process.env.NEXT_PUBLIC_APP_URL,
+    })
     
     // First, check if user already exists
     let existingUser = null
@@ -144,65 +152,104 @@ export async function POST(request: NextRequest) {
         }
       }
     } else {
-      // User doesn't exist, create user first then generate invite link
-      console.log("[create-member] Creating new user and generating invite link")
-      
-      // Create the user first
-      const { data: newUser, error: createError } = await serviceRoleClient.auth.admin.createUser({
-        email,
-        email_confirm: false, // User needs to confirm via invitation
-        user_metadata: {
-          name,
-          role: finalRole,
-          organization_id: organizationId,
-        },
-      })
-
-      if (createError) {
-        console.error("[create-member] Error creating user:", createError)
-        inviteError = createError
-      } else if (newUser.user) {
-        // Generate invitation link for the new user
-        console.log("[create-member] Generating invite link for new user")
-        console.log("[create-member] Link generation params:", {
-          type: "invite",
+      // User doesn't exist
+      if (isInvitation) {
+        // For invitations, use inviteUserByEmail which automatically sends the email
+        console.log("[create-member] Sending invitation email via inviteUserByEmail")
+        console.log("[create-member] Invitation parameters:", {
           email,
           redirectTo,
-          userId: newUser.user.id,
+          organizationId,
+          finalRole,
           timestamp: new Date().toISOString(),
         })
         
-        const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
-          type: "invite",
-          email: email,
-          options: {
-            redirectTo,
+        const { data: inviteResult, error: inviteErr } = await serviceRoleClient.auth.admin.inviteUserByEmail(
+          email,
+          {
             data: {
               name,
               role: finalRole,
               organization_id: organizationId,
             },
+            redirectTo: redirectTo, // Explicitly set redirectTo
+          },
+        )
+
+        if (inviteErr) {
+          console.error("[create-member] Error sending invitation:", inviteErr)
+          inviteError = inviteErr
+        } else if (inviteResult?.user) {
+          console.log("[create-member] Invitation email sent successfully:", {
+            userId: inviteResult.user.id,
+            email: inviteResult.user.email,
+            timestamp: new Date().toISOString(),
+          })
+          inviteData = {
+            user: inviteResult.user,
+          }
+        }
+      } else {
+        // For non-invitations, create user first then generate invite link
+        console.log("[create-member] Creating new user and generating invite link")
+        
+        // Create the user first
+        const { data: newUser, error: createError } = await serviceRoleClient.auth.admin.createUser({
+          email,
+          email_confirm: false, // User needs to confirm via invitation
+          user_metadata: {
+            name,
+            role: finalRole,
+            organization_id: organizationId,
           },
         })
 
-        if (linkErr) {
-          console.error("[create-member] Error generating invite link:", linkErr)
-          inviteError = linkErr
-        } else {
-          const actionLink = linkData?.properties?.action_link
-          console.log("[create-member] Invite link generated successfully:", {
-            linkType: "invite",
-            linkUrl: actionLink,
-            hashedToken: actionLink ? new URL(actionLink).searchParams.get("token")?.substring(0, 20) + "..." : "N/A",
+        if (createError) {
+          console.error("[create-member] Error creating user:", createError)
+          inviteError = createError
+        } else if (newUser.user) {
+          // Generate invitation link for the new user
+          console.log("[create-member] Generating invite link for new user")
+          console.log("[create-member] Link generation params:", {
+            type: "invite",
+            email,
             redirectTo,
-            timestamp: new Date().toISOString(),
-            properties: linkData?.properties ? Object.keys(linkData.properties) : [],
             userId: newUser.user.id,
+            timestamp: new Date().toISOString(),
           })
           
-          inviteData = {
-            user: newUser.user,
-            properties: linkData?.properties,
+          const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
+            type: "invite",
+            email: email,
+            options: {
+              redirectTo,
+              data: {
+                name,
+                role: finalRole,
+                organization_id: organizationId,
+              },
+            },
+          })
+
+          if (linkErr) {
+            console.error("[create-member] Error generating invite link:", linkErr)
+            inviteError = linkErr
+          } else {
+            const actionLink = linkData?.properties?.action_link
+            console.log("[create-member] Invite link generated successfully:", {
+              linkType: "invite",
+              linkUrl: actionLink,
+              hashedToken: actionLink ? new URL(actionLink).searchParams.get("token")?.substring(0, 20) + "..." : "N/A",
+              redirectTo,
+              timestamp: new Date().toISOString(),
+              properties: linkData?.properties ? Object.keys(linkData.properties) : [],
+              userId: newUser.user.id,
+            })
+            
+            inviteData = {
+              user: newUser.user,
+              properties: linkData?.properties,
+            }
           }
         }
       }
@@ -248,7 +295,7 @@ export async function POST(request: NextRequest) {
                 email,
                 name,
                 role: finalRole, // Use finalRole to ensure it's 'member'
-                status: "pending", // Ensure new invited users are pending approval
+                status: isInvitation ? "approved" : "pending", // Invitations are approved, others need approval
                 organization_id: organizationId,
                 avatar_url: avatarUrl || null,
               })
@@ -287,6 +334,34 @@ export async function POST(request: NextRequest) {
             }
 
             newProfile = createdProfile
+          }
+
+          // Associate entities if provided
+          if (entityIds && entityIds.length > 0) {
+            try {
+              console.log("[create-member] Associating entities to existing member:", { memberId: newProfile.id, entityIds })
+              
+              // Delete existing associations
+              await serviceRoleClient.from("member_entities").delete().eq("member_id", newProfile.id)
+              
+              // Insert new associations
+              const associations = entityIds.map((entityId: string) => ({
+                member_id: newProfile.id,
+                entity_id: entityId,
+              }))
+              
+              const { error: assignError } = await serviceRoleClient
+                .from("member_entities")
+                .insert(associations)
+              
+              if (assignError) {
+                console.error("[create-member] Error associating entities:", assignError)
+              } else {
+                console.log("[create-member] Successfully associated entities to existing member")
+              }
+            } catch (err) {
+              console.error("[create-member] Error in entity association:", err)
+            }
           }
 
           return NextResponse.json({
@@ -351,9 +426,9 @@ export async function POST(request: NextRequest) {
       console.log("[create-member] Updating with role:", finalRole, "organizationId:", organizationId)
       
       // Update existing profile with correct data - ensure role is set correctly
-      // Preserve status 'pending' for new users, or set it if not set
+      // For invitations, set status to 'approved', otherwise preserve or set to 'pending'
       const currentStatus = existingProfile.status || "pending"
-      const statusToSet = currentStatus === "approved" ? currentStatus : "pending"
+      const statusToSet = isInvitation ? "approved" : (currentStatus === "approved" ? currentStatus : "pending")
       
       const { data: updatedProfile, error: updateError } = await serviceRoleClient
         .from("profiles")
@@ -442,8 +517,8 @@ export async function POST(request: NextRequest) {
           id: userId,
           email,
           name,
-          role: finalRole, // Use finalRole to ensure it's 'member'
-          status: "pending", // New users must be approved by admin
+            role: finalRole, // Use finalRole to ensure it's 'member'
+          status: isInvitation ? "approved" : "pending", // Invitations are approved, others need approval
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
         })
@@ -526,6 +601,38 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("[create-member] Returning profile with role:", newProfile.role)
+    
+    // Associate entities if provided
+    if (entityIds && entityIds.length > 0) {
+      try {
+        console.log("[create-member] Associating entities to member:", { memberId: newProfile.id, entityIds })
+        
+        // Delete existing associations
+        await serviceRoleClient.from("member_entities").delete().eq("member_id", newProfile.id)
+        
+        // Insert new associations
+        if (entityIds.length > 0) {
+          const associations = entityIds.map((entityId: string) => ({
+            member_id: newProfile.id,
+            entity_id: entityId,
+          }))
+          
+          const { error: assignError } = await serviceRoleClient
+            .from("member_entities")
+            .insert(associations)
+          
+          if (assignError) {
+            console.error("[create-member] Error associating entities:", assignError)
+            // Don't fail the request, just log the error
+          } else {
+            console.log("[create-member] Successfully associated entities to member")
+          }
+        }
+      } catch (err) {
+        console.error("[create-member] Error in entity association:", err)
+        // Don't fail the request, just log the error
+      }
+    }
     
     return NextResponse.json({
       success: true,

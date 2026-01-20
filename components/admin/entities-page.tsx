@@ -183,23 +183,23 @@ export function EntitiesPage() {
     loadOrganizations()
   }, [isSuperadmin, isSimulatingAdmin, effectiveOrganizationId, orgLoaded])
 
-  React.useEffect(() => {
-    async function loadEntities() {
-      if (!effectiveOrganizationId) return
+  const loadEntities = React.useCallback(async () => {
+    if (!effectiveOrganizationId) return
 
-      try {
-        setLoading(true)
-        setError(null)
-        const data = await getEntities(effectiveOrganizationId)
-        setEntities(data)
-      } catch (err) {
-        console.error("Error loading entities:", err)
-        setError("Error al cargar las entidades")
-      } finally {
-        setLoading(false)
-      }
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await getEntities(effectiveOrganizationId)
+      setEntities(data)
+    } catch (err) {
+      console.error("Error loading entities:", err)
+      setError("Error al cargar las entidades")
+    } finally {
+      setLoading(false)
     }
+  }, [effectiveOrganizationId])
 
+  React.useEffect(() => {
     if (!profileLoading && orgLoaded && effectiveOrganizationId) {
       loadEntities()
     } else if (!profileLoading && orgLoaded && !effectiveOrganizationId) {
@@ -207,7 +207,7 @@ export function EntitiesPage() {
       setLoading(false)
       setError("No hay organización seleccionada")
     }
-  }, [effectiveOrganizationId, profileLoading, orgLoaded])
+  }, [effectiveOrganizationId, profileLoading, orgLoaded, loadEntities])
 
   const filteredEntities = entities.filter((entity) => {
     const matchesSearch =
@@ -250,6 +250,7 @@ export function EntitiesPage() {
       setSaving(true)
       setError(null)
 
+      // Create the entity first
       const newEntity = await createEntity({
         name: formData.name,
         nit: formData.nit,
@@ -259,7 +260,29 @@ export function EntitiesPage() {
         status: "active", // Default status
       })
 
-      setEntities([newEntity, ...entities])
+      // Create secretaries for the new entity
+      for (const secretaryForm of formData.secretaries) {
+        // Skip empty secretaries
+        if (!secretaryForm.name && !secretaryForm.secretaryName && !secretaryForm.email) {
+          continue
+        }
+
+        try {
+          await createSecretary({
+            name: secretaryForm.name,
+            secretaryName: secretaryForm.secretaryName,
+            email: secretaryForm.email,
+            phone: secretaryForm.phone,
+            entityId: newEntity.id,
+          })
+        } catch (secretaryErr) {
+          console.error("Error creating secretary:", secretaryErr)
+          // Continue with other secretaries even if one fails
+        }
+      }
+
+      // Reload entities to get updated data
+      await loadEntities()
       setIsCreateOpen(false)
       resetForm()
     } catch (err) {
@@ -621,7 +644,7 @@ export function EntitiesPage() {
 
   const renderStepIndicator = () => (
     <div className="flex items-center justify-center gap-2 pb-6">
-      {[1, 2, 3].map((step) => (
+      {[1, 2].map((step) => (
         <React.Fragment key={step}>
           <div className="flex items-center gap-2">
             <div
@@ -636,10 +659,10 @@ export function EntitiesPage() {
               {currentStep > step ? <Check className="h-4 w-4" /> : step}
             </div>
             <span className="text-sm font-medium hidden sm:inline">
-              {step === 1 ? "Información" : step === 2 ? "Documentos" : "Secretarías"}
+              {step === 1 ? "Información" : "Secretarías"}
             </span>
           </div>
-          {step < 3 && <div className="h-[2px] w-8 bg-border" />}
+          {step < 2 && <div className="h-[2px] w-8 bg-border" />}
         </React.Fragment>
       ))}
     </div>
@@ -1037,115 +1060,8 @@ export function EntitiesPage() {
               </div>
             )}
 
-            {/* Step 2: Documents */}
+            {/* Step 2: Secretaries */}
             {currentStep === 2 && (
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <div className="grid gap-2">
-                    <Label>Logo de la Entidad</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => handleFileUpload("logoFile", e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="logo-upload"
-                      />
-                      <Button
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={() => document.getElementById("logo-upload")?.click()}
-                      >
-                        <Upload className="mr-2 h-4 w-4" />
-                        {formData.logoFile ? formData.logoFile.name : "Seleccionar archivo"}
-                      </Button>
-                      {formData.logoFile && (
-                        <Button variant="ghost" size="icon" onClick={() => handleFileUpload("logoFile", null)}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Se usará en los documentos generados (PNG, JPG max 2MB)
-                    </p>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Plan Anual de Adquisiciones (PAA)</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept=".pdf,.doc,.docx"
-                        onChange={(e) => handleFileUpload("paaFile", e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="paa-upload"
-                      />
-                      <Button
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={() => document.getElementById("paa-upload")?.click()}
-                      >
-                        <FileText className="mr-2 h-4 w-4" />
-                        {formData.paaFile ? formData.paaFile.name : "Seleccionar PAA"}
-                      </Button>
-                      {formData.paaFile && (
-                        <Button variant="ghost" size="icon" onClick={() => handleFileUpload("paaFile", null)}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      La IA usará este documento para contexto (PDF, Word)
-                    </p>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Plan de Desarrollo</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="file"
-                        accept=".pdf,.doc,.docx"
-                        onChange={(e) => handleFileUpload("planFile", e.target.files?.[0] || null)}
-                        className="hidden"
-                        id="plan-upload"
-                      />
-                      <Button
-                        variant="outline"
-                        className="w-full bg-transparent"
-                        onClick={() => document.getElementById("plan-upload")?.click()}
-                      >
-                        <FileStack className="mr-2 h-4 w-4" />
-                        {formData.planFile ? formData.planFile.name : "Seleccionar Plan"}
-                      </Button>
-                      {formData.planFile && (
-                        <Button variant="ghost" size="icon" onClick={() => handleFileUpload("planFile", null)}>
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Para alinear justificaciones con objetivos (PDF, Word)
-                    </p>
-                  </div>
-                </div>
-
-                <Card className="bg-muted/50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-primary" />
-                      Documentos de Contexto
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="text-xs text-muted-foreground space-y-1">
-                    <p>El logo se incluirá automáticamente en los documentos generados</p>
-                    <p>El PAA y Plan de Desarrollo ayudan a la IA a generar justificaciones alineadas</p>
-                    <p>Puedes actualizar estos documentos en cualquier momento</p>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {currentStep === 3 && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -1253,7 +1169,7 @@ export function EntitiesPage() {
                 Anterior
               </Button>
             )}
-            {currentStep < 3 ? (
+            {currentStep < 2 ? (
               <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
             ) : (
               <Button onClick={handleCreateDB} disabled={saving}>
@@ -1339,7 +1255,7 @@ export function EntitiesPage() {
 
       {/* Detail Dialog */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
@@ -1349,8 +1265,8 @@ export function EntitiesPage() {
             </DialogTitle>
             <DialogDescription>Información detallada de la entidad</DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 px-1">
-            <div className="space-y-6 pr-4">
+          <div className="flex-1 overflow-y-auto pr-4 -mr-4">
+            <div className="space-y-6 py-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Card>
                   <CardHeader className="pb-3">
@@ -1503,8 +1419,8 @@ export function EntitiesPage() {
                 </CardContent>
               </Card>
             </div>
-          </ScrollArea>
-          <DialogFooter className="pt-4 border-t">
+          </div>
+          <DialogFooter className="border-t pt-4">
             <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
               Cerrar
             </Button>

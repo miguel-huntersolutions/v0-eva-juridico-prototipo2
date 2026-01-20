@@ -1,3 +1,8 @@
+"use client"
+
+import * as React from "react"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -5,7 +10,33 @@ import { Scale, Shield, Sparkles } from "lucide-react"
 import { logger } from "@/lib/logger"
 
 export default function Home() {
-  logger.pageView("/", undefined, undefined, { type: "landing" })
+  const router = useRouter()
+
+  useEffect(() => {
+    logger.pageView("/", undefined, undefined, { type: "landing" })
+
+    // Check if this is an invitation redirect (tokens in hash with type=invite)
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash.substring(1)
+      if (hash) {
+        const hashParams = new URLSearchParams(hash)
+        const type = hashParams.get("type")
+        const accessToken = hashParams.get("access_token")
+        
+        // If this is an invitation with tokens, redirect to update-password page
+        if (type === "invite" && accessToken) {
+          console.log("[Home] Detected invitation tokens in hash, redirecting to update-password")
+          // Get organization ID from user metadata if available, or from query params
+          const orgId = new URLSearchParams(window.location.search).get("org")
+          const redirectUrl = orgId 
+            ? `/auth/update-password?invite=true&org=${orgId}${window.location.hash}`
+            : `/auth/update-password?invite=true${window.location.hash}`
+          router.push(redirectUrl)
+          return
+        }
+      }
+    }
+  }, [router])
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">

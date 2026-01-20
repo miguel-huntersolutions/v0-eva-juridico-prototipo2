@@ -74,8 +74,16 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Generate invitation link
-    const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/callback?invite=true&org=${organizationId}`
+    // Generate invitation link - redirect to password setup page for new users
+    // IMPORTANT: This URL must be in the Redirect URLs list in Supabase Dashboard
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    const redirectTo = `${baseUrl}/auth/update-password?invite=true&org=${organizationId}`
+    
+    console.log("[send-invitation] Redirect URL configured:", {
+      baseUrl,
+      redirectTo,
+      hasNextPublicAppUrl: !!process.env.NEXT_PUBLIC_APP_URL,
+    })
     
     // First, check if user already exists in auth
     let existingAuthUser

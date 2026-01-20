@@ -59,6 +59,7 @@ import {
   updateMember,
   getMemberAssignedEntities,
   assignMemberEntities,
+  deleteMember,
   type EntityMapped,
   type Profile,
 } from "@/lib/supabase/client-data-access"
@@ -114,6 +115,7 @@ export function MembersPage() {
     email: "",
     name: "",
     message: "",
+    entityIds: [] as string[],
   })
   const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
   const [isSending, setIsSending] = React.useState(false)
@@ -423,6 +425,24 @@ export function MembersPage() {
     setIsDeleteOpen(true)
   }
 
+  const handleDeleteMember = async () => {
+    if (!selectedMember) return
+
+    try {
+      setIsSaving(true)
+      await deleteMember(selectedMember.id)
+      setIsDeleteOpen(false)
+      setSelectedMember(null)
+      await loadData()
+      alert("Miembro eliminado exitosamente")
+    } catch (err) {
+      console.error("Error deleting member:", err)
+      alert(err instanceof Error ? err.message : "Error al eliminar el miembro")
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const handleInvite = async () => {
     if (!effectiveOrganizationId || !inviteData.email) return
 
@@ -436,6 +456,8 @@ export function MembersPage() {
           name: inviteData.name || inviteData.email.split("@")[0],
           role: "member",
           organizationId: effectiveOrganizationId,
+          entityIds: inviteData.entityIds, // Include selected entities
+          isInvitation: true, // Flag to indicate this is an invitation
         }),
       })
 
@@ -448,7 +470,7 @@ export function MembersPage() {
       console.log("[MembersPage] Member created successfully:", result)
       
       setIsInviteOpen(false)
-      setInviteData({ email: "", name: "", message: "" })
+      setInviteData({ email: "", name: "", message: "", entityIds: [] })
       
       // Wait a bit for the database trigger to create the profile
       await new Promise(resolve => setTimeout(resolve, 1000))
@@ -457,8 +479,8 @@ export function MembersPage() {
       console.log("[MembersPage] Reloading members data...")
       await loadData()
       
-      // Switch to "pending" tab to show the newly invited member
-      setStatusFilter("pending")
+      // Switch to "approved" tab to show the newly invited member (invitations are approved)
+      setStatusFilter("approved")
     } catch (err) {
       console.error("Error sending invitation:", err)
       alert(err instanceof Error ? err.message : "Error al enviar la invitación")
@@ -920,6 +942,45 @@ export function MembersPage() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="invite-entities">Entidades a Asociar *</Label>
+              {entities.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay entidades disponibles. Crea una entidad primero.</p>
+              ) : (
+                <div className="space-y-2 max-h-[200px] overflow-y-auto border rounded-md p-3">
+                  {entities.map((entity) => (
+                    <div key={entity.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id={`entity-${entity.id}`}
+                        checked={inviteData.entityIds.includes(entity.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setInviteData({
+                              ...inviteData,
+                              entityIds: [...inviteData.entityIds, entity.id],
+                            })
+                          } else {
+                            setInviteData({
+                              ...inviteData,
+                              entityIds: inviteData.entityIds.filter((id) => id !== entity.id),
+                            })
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      <Label htmlFor={`entity-${entity.id}`} className="text-sm font-normal cursor-pointer">
+                        {entity.name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Selecciona las entidades a las que el miembro tendrá acceso
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="invite-message">Mensaje Personalizado (Opcional)</Label>
               <Textarea
                 id="invite-message"
@@ -950,7 +1011,7 @@ export function MembersPage() {
             <Button variant="outline" onClick={() => setIsInviteOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleInvite} disabled={!inviteData.email || isSending}>
+            <Button onClick={handleInvite} disabled={!inviteData.email || inviteData.entityIds.length === 0 || isSending}>
               {isSending ? (
                 <>
                   <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -1254,12 +1315,21 @@ export function MembersPage() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDeleteOpen(false)} disabled={isSaving}>
               Cancelar
             </Button>
-            <Button variant="destructive" onClick={() => setIsDeleteOpen(false)}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Eliminar
+            <Button variant="destructive" onClick={handleDeleteMember} disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Eliminar
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
