@@ -1152,6 +1152,8 @@ export async function createMember(data: {
   role: "admin" | "member"
   organizationId: string
   avatarUrl?: string
+  isInvitation?: boolean
+  entityIds?: string[]
 }) {
   // Use API route to create member (bypasses RLS using service role)
   const response = await fetch("/api/create-member", {

@@ -269,6 +269,7 @@ export function OrganizationsPage() {
             name: formData.adminName.trim(),
             role: "admin",
             organizationId: newOrg.id,
+            isInvitation: true, // Mark as invitation to send email and set status to approved
           })
           console.log("[OrganizationsPage] Admin member created and invitation sent")
         } catch (memberError) {
@@ -358,6 +359,7 @@ export function OrganizationsPage() {
         name: inviteAdminForm.name,
         role: "admin",
         organizationId: selectedOrg.id,
+        isInvitation: true, // Mark as invitation to send email and set status to approved
       })
 
       // Reload organizations to update counts
