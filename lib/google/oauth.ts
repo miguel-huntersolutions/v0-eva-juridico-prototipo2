@@ -90,16 +90,69 @@ export async function saveTokens(userId: string, tokens: any) {
     scope: tokens.scope || GOOGLE_SCOPES.join(" "),
   }
 
-  const { error } = await supabase
+  console.log("[saveTokens] Attempting to save tokens:", {
+    userId,
+    hasAccessToken: !!tokenData.access_token,
+    hasRefreshToken: !!tokenData.refresh_token,
+    expiryDate: tokenData.expiry_date,
+  })
+
+  const { data, error } = await supabase
     .from("google_oauth_tokens")
     .upsert(tokenData, {
       onConflict: "user_id",
     })
+    .select()
 
   if (error) {
-    console.error("Error saving tokens:", error)
+    console.error("[saveTokens] Error saving tokens:", {
+      error: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      userId,
+    })
+    
+    // If RLS error, try with service role as fallback
+    if (error.code === "42501" || error.message.includes("permission denied") || error.message.includes("RLS")) {
+      console.log("[saveTokens] RLS error detected, trying with service role client...")
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+      if (serviceRoleKey) {
+        const { createClient } = await import("@supabase/supabase-js")
+        const serviceRoleClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+          },
+        })
+        
+        const { data: serviceData, error: serviceError } = await serviceRoleClient
+          .from("google_oauth_tokens")
+          .upsert(tokenData, {
+            onConflict: "user_id",
+          })
+          .select()
+        
+        if (serviceError) {
+          console.error("[saveTokens] Service role client also failed:", serviceError)
+          throw new Error(`Failed to save tokens: ${serviceError.message}`)
+        }
+        
+        console.log("[saveTokens] Tokens saved successfully using service role:", {
+          userId,
+          recordId: serviceData?.[0]?.id,
+        })
+        return
+      }
+    }
+    
     throw new Error(`Failed to save tokens: ${error.message}`)
   }
+
+  console.log("[saveTokens] Tokens saved successfully:", {
+    userId,
+    recordId: data?.[0]?.id,
+  })
 }
 
 /**

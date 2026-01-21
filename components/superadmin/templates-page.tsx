@@ -303,7 +303,7 @@ export function TemplatesPage() {
     }
   }
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (retryCount: number = 0) => {
     if (!selectedTemplate || !editTemplateName || !editProcessTypeId) return
 
     try {
@@ -353,11 +353,45 @@ export function TemplatesPage() {
         const uploadResponse = await fetch("/api/upload-template", {
           method: "POST",
           body: formData,
+          credentials: "include", // Include cookies for authentication
         })
 
         if (!uploadResponse.ok) {
-          const errorData = await uploadResponse.json()
-          throw new Error(errorData.message || "Error al subir el archivo a Google Drive")
+          let errorData
+          try {
+            errorData = await uploadResponse.json()
+          } catch {
+            throw new Error(`Error ${uploadResponse.status}: ${uploadResponse.statusText}`)
+          }
+          
+          // Check if Google authentication is required
+          if (errorData.needsAuth && retryCount === 0) {
+            // Try to authenticate with Google
+            try {
+              const authSuccess = await handleGoogleAuth()
+              if (authSuccess) {
+                // Wait a bit to ensure tokens are saved
+                await new Promise(resolve => setTimeout(resolve, 1000))
+                // Retry the upload after authentication
+                return handleSaveEdit(retryCount + 1)
+              }
+            } catch (authError) {
+              throw new Error(
+                authError instanceof Error 
+                  ? authError.message 
+                  : "Error al autenticar con Google. Por favor, intenta de nuevo."
+              )
+            }
+          }
+          
+          // If retry failed or not an auth error, throw the error
+          if (errorData.needsAuth) {
+            throw new Error(
+              "Autenticación con Google requerida. Por favor, autentícate con Google primero."
+            )
+          }
+          
+          throw new Error(errorData.message || errorData.error || "Error al subir el archivo a Google Drive")
         }
 
         const uploadData = await uploadResponse.json()
@@ -544,7 +578,123 @@ SECCIONES SUGERIDAS:
   const canProceedStep2 = uploadedFile !== null
   const selectedProcessType = processTypes.find((pt) => pt.id === selectedProcessTypeId)
 
-  const handleCreateTemplate = async () => {
+  // Helper function to handle Google OAuth2 authentication
+  const handleGoogleAuth = async (): Promise<boolean> => {
+    try {
+      // Get the authorization URL
+      const authResponse = await fetch("/api/google/auth")
+      if (!authResponse.ok) {
+        throw new Error("Error al obtener la URL de autorización")
+      }
+
+      const { authUrl } = await authResponse.json()
+
+      // Open popup window for OAuth2
+      const width = 500
+      const height = 600
+      const left = window.screen.width / 2 - width / 2
+      const top = window.screen.height / 2 - height / 2
+
+      const popup = window.open(
+        authUrl,
+        "Google Auth",
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no`,
+      )
+
+      if (!popup) {
+        throw new Error("No se pudo abrir la ventana de autenticación. Por favor, permite ventanas emergentes.")
+      }
+
+      // Wait for the popup to complete authentication
+      return new Promise((resolve, reject) => {
+        const checkInterval = setInterval(() => {
+          try {
+            // Check if popup was closed manually
+            if (popup.closed) {
+              clearInterval(checkInterval)
+              clearInterval(directCheckInterval)
+              clearTimeout(timeout)
+              window.removeEventListener("storage", storageHandler)
+              // Check if auth was successful before closing
+              const authSuccess = localStorage.getItem("google_auth_success")
+              const authError = localStorage.getItem("google_auth_error")
+              if (authSuccess === "true") {
+                localStorage.removeItem("google_auth_success")
+                resolve(true)
+              } else if (authError) {
+                localStorage.removeItem("google_auth_error")
+                reject(new Error(authError))
+              } else {
+                reject(new Error("Autenticación cancelada"))
+              }
+              return
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        }, 500)
+
+        // Listen for storage events (when callback sets success flag)
+        const storageHandler = (e: StorageEvent) => {
+          if (e.key === "google_auth_success" && e.newValue === "true") {
+            clearInterval(checkInterval)
+            clearTimeout(timeout)
+            window.removeEventListener("storage", storageHandler)
+            localStorage.removeItem("google_auth_success")
+            if (popup && !popup.closed) {
+              popup.close()
+            }
+            resolve(true)
+          }
+        }
+
+        window.addEventListener("storage", storageHandler)
+
+        // Also check localStorage directly (for same-window scenarios)
+        const directCheckInterval = setInterval(() => {
+          const authSuccess = localStorage.getItem("google_auth_success")
+          const authError = localStorage.getItem("google_auth_error")
+          if (authSuccess === "true") {
+            clearInterval(checkInterval)
+            clearInterval(directCheckInterval)
+            clearTimeout(timeout)
+            window.removeEventListener("storage", storageHandler)
+            localStorage.removeItem("google_auth_success")
+            if (popup && !popup.closed) {
+              popup.close()
+            }
+            resolve(true)
+          } else if (authError) {
+            clearInterval(checkInterval)
+            clearInterval(directCheckInterval)
+            clearTimeout(timeout)
+            window.removeEventListener("storage", storageHandler)
+            localStorage.removeItem("google_auth_error")
+            if (popup && !popup.closed) {
+              popup.close()
+            }
+            reject(new Error(authError))
+          }
+        }, 500)
+
+        // Timeout after 5 minutes
+        const timeout = setTimeout(() => {
+          clearInterval(checkInterval)
+          clearInterval(directCheckInterval)
+          window.removeEventListener("storage", storageHandler)
+          if (popup && !popup.closed) {
+            popup.close()
+          }
+          reject(new Error("Tiempo de autenticación agotado"))
+        }, 5 * 60 * 1000)
+      })
+    } catch (error) {
+      console.error("Error in Google authentication:", error)
+      throw error
+    }
+  }
+
+  const handleCreateTemplate = async (retryCount = 0) => {
     if (!templateName || !selectedProcessTypeId || !uploadedFile || !uploadedFile.file) return
 
     try {
@@ -564,11 +714,45 @@ SECCIONES SUGERIDAS:
       const uploadResponse = await fetch("/api/upload-template", {
         method: "POST",
         body: formData,
+        credentials: "include", // Include cookies for authentication
       })
 
       if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json()
-        throw new Error(errorData.message || "Error al subir el archivo a Google Drive")
+        let errorData
+        try {
+          errorData = await uploadResponse.json()
+        } catch {
+          throw new Error(`Error ${uploadResponse.status}: ${uploadResponse.statusText}`)
+        }
+        
+        // Check if Google authentication is required
+        if (errorData.needsAuth && retryCount === 0) {
+          // Try to authenticate with Google
+          try {
+            const authSuccess = await handleGoogleAuth()
+            if (authSuccess) {
+              // Wait a bit to ensure tokens are saved
+              await new Promise(resolve => setTimeout(resolve, 1000))
+              // Retry the upload after authentication
+              return handleCreateTemplate(retryCount + 1)
+            }
+          } catch (authError) {
+            throw new Error(
+              authError instanceof Error 
+                ? authError.message 
+                : "Error al autenticar con Google. Por favor, intenta de nuevo."
+            )
+          }
+        }
+        
+        // If retry failed or not an auth error, throw the error
+        if (errorData.needsAuth) {
+          throw new Error(
+            "Autenticación con Google requerida. Por favor, autentícate con Google primero."
+          )
+        }
+        
+        throw new Error(errorData.message || errorData.error || "Error al subir el archivo a Google Drive")
       }
 
       const uploadData = await uploadResponse.json()
@@ -1141,7 +1325,7 @@ SECCIONES SUGERIDAS:
                   Siguiente
                 </Button>
               ) : (
-                <Button onClick={handleCreateTemplate} disabled={isSaving}>
+                <Button onClick={() => handleCreateTemplate()} disabled={isSaving}>
                   {isSaving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1388,7 +1572,7 @@ SECCIONES SUGERIDAS:
             <Button variant="outline" onClick={handleCloseEdit} disabled={isSavingEdit}>
               Cancelar
             </Button>
-            <Button onClick={handleSaveEdit} disabled={isSavingEdit || !editTemplateName || !editProcessTypeId}>
+            <Button onClick={() => handleSaveEdit()} disabled={isSavingEdit || !editTemplateName || !editProcessTypeId}>
               {isSavingEdit ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -88,6 +88,28 @@ http://localhost:3000/auth/update-password?invite=true&org=*
    - O crear un nuevo OAuth Client específico para producción
    - Actualizar el Client ID y Secret en Supabase Dashboard
 
+### 3.1. ⚠️ AGREGAR USUARIOS DE PRUEBA EN GOOGLE CLOUD CONSOLE (IMPORTANTE)
+
+**Si recibes el error "Access blocked: [app] has not completed the Google verification process":**
+
+Esto significa que tu aplicación está en modo de prueba y solo los usuarios agregados como testers pueden acceder.
+
+**Solución: Agregar usuarios como testers**
+
+1. Ve a [Google Cloud Console](https://console.cloud.google.com)
+2. Selecciona tu proyecto
+3. Ve a **APIs & Services** > **OAuth consent screen** (Pantalla de consentimiento OAuth)
+4. En la sección **"Test users"** (Usuarios de prueba), haz clic en **"+ ADD USERS"** (Agregar usuarios)
+5. Agrega los emails de los usuarios que necesitan acceder (ej: `clgingeniero@gmail.com`)
+6. Haz clic en **"ADD"** (Agregar)
+7. Los usuarios agregados ahora podrán autenticarse con Google
+
+**Nota:** Puedes agregar hasta 100 usuarios de prueba. Si necesitas más usuarios o quieres que cualquier persona pueda usar la aplicación, necesitarás:
+- Completar el proceso de verificación de Google (requiere revisión de Google)
+- O cambiar la aplicación a modo de producción (solo recomendado si has completado la verificación)
+
+**Para desarrollo/pruebas:** Agregar usuarios como testers es la solución más rápida.
+
 ### 4. Verificar Configuración de Google OAuth Directo (Opcional)
 
 Si también usas Google OAuth directamente (no solo a través de Supabase), asegúrate de configurar:
@@ -180,6 +202,20 @@ Para tu proyecto específico (`v0-eva-juridico-project.vercel.app`):
   - La URL de Supabase esté en Google Cloud Console
   - El Client ID y Secret en Supabase Dashboard sean correctos
   - Las Redirect URLs en Supabase incluyan tu dominio de producción
+
+### Error: "Access blocked: [app] has not completed the Google verification process"
+**Este error significa que la aplicación está en modo de prueba y el usuario no está agregado como tester.**
+
+**Solución rápida:**
+1. Ve a [Google Cloud Console](https://console.cloud.google.com)
+2. Selecciona tu proyecto
+3. Ve a **APIs & Services** > **OAuth consent screen** (Pantalla de consentimiento OAuth)
+4. En la sección **"Test users"** (Usuarios de prueba), haz clic en **"+ ADD USERS"** (Agregar usuarios)
+5. Agrega el email del usuario que está intentando acceder (ej: `clgingeniero@gmail.com`)
+6. Haz clic en **"ADD"** (Agregar)
+7. El usuario ahora podrá autenticarse con Google
+
+**Nota:** Puedes agregar hasta 100 usuarios de prueba. Si necesitas más usuarios o quieres que cualquier persona pueda usar la aplicación, necesitarás completar el proceso de verificación de Google (requiere revisión de Google).
 
 ### Verificar configuración actual
 Para verificar qué URL está usando Supabase:

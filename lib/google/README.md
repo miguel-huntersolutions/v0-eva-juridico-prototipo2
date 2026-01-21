@@ -53,7 +53,12 @@ Esta integración permite almacenar los documentos de plantillas en Google Drive
      - `https://www.googleapis.com/auth/drive`
      - `https://www.googleapis.com/auth/spreadsheets`
    - Haz clic en **"Save and Continue"**
-   - En "Test users", agrega tu email de prueba (opcional para desarrollo)
+   - En "Test users", **AGREGA TODOS LOS EMAILS** que necesiten usar la aplicación:
+     - Haz clic en **"+ ADD USERS"**
+     - Agrega cada email (uno por uno o separados por comas)
+     - Ejemplo: `usuario1@gmail.com`, `usuario2@gmail.com`, `clgingeniero@gmail.com`
+     - **⚠️ IMPORTANTE:** Si no agregas un usuario aquí, recibirás el error "Access blocked: [app] has not completed the Google verification process"
+     - Puedes agregar hasta 100 usuarios de prueba
    - Haz clic en **"Save and Continue"**
 5. Crea el OAuth client ID:
    - **Application type**: Selecciona **"Web application"**

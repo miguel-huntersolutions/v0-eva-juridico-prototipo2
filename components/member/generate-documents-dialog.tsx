@@ -447,14 +447,35 @@ export function GenerateDocumentsDialog({
       const result = await response.json()
 
       // Add to generated documents list
-      setGeneratedDocuments((prev) => [
-        ...prev,
+      const updatedGeneratedDocuments = [
+        ...generatedDocuments,
         {
           templateId: template.id,
           documentName: result.documentName,
           drivePath: result.drivePath,
         },
-      ])
+      ]
+      setGeneratedDocuments(updatedGeneratedDocuments)
+
+      // Reset generating state
+      setIsGenerating(false)
+
+      // Check if all documents have been generated
+      const allGenerated = templates.length > 0 && templates.every((t) =>
+        updatedGeneratedDocuments.some((doc) => doc.templateId === t.id)
+      )
+
+      // If all documents are generated, close the dialog and refresh
+      if (allGenerated) {
+        // Trigger refresh of processes list to update document count
+        if (onDocumentsGenerated) {
+          onDocumentsGenerated()
+        }
+        // Close the dialog after a short delay to show success message
+        setTimeout(() => {
+          handleClose()
+        }, 1500)
+      }
 
       return result
     } catch (error) {

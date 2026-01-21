@@ -135,6 +135,25 @@ function AuthCallbackContent() {
           // Google OAuth users don't need passwords
           if (isGoogleAuth) {
             console.log("[AuthCallback] User authenticated with Google OAuth, skipping password setup")
+            
+            // Check if user already has Google Drive tokens
+            // If not, we could automatically initiate the Drive OAuth flow
+            // But for now, we'll let them do it manually when needed
+            try {
+              const { data: existingTokens } = await supabase
+                .from("google_oauth_tokens")
+                .select("id")
+                .eq("user_id", user.id)
+                .single()
+              
+              if (!existingTokens) {
+                console.log("[AuthCallback] User logged in with Google but doesn't have Drive tokens yet")
+                // User will need to authenticate with Drive separately when they try to upload files
+              }
+            } catch (tokenCheckError) {
+              // No tokens found, which is fine - user will authenticate when needed
+              console.log("[AuthCallback] No Drive tokens found for user")
+            }
           }
 
           // Get organization_id from query params (for Google OAuth) or user metadata
@@ -169,6 +188,30 @@ function AuthCallbackContent() {
             // Wait 200ms before retrying
             await new Promise((resolve) => setTimeout(resolve, 200))
             attempts++
+          }
+
+          // Always update organization_id if it's missing and we have it from metadata or query params
+          if (profile && organizationId && !profile.organization_id) {
+            console.log("[AuthCallback] Profile exists but missing organization_id, updating:", {
+              profileId: profile.id,
+              currentOrgId: profile.organization_id,
+              newOrgId: organizationId,
+            })
+            
+            const { data: updatedProfile, error: updateError } = await supabase
+              .from("profiles")
+              .update({ organization_id: organizationId })
+              .eq("id", user.id)
+              .select("id, role, status, organization_id")
+              .single()
+
+            if (updateError) {
+              console.error("[AuthCallback] Error updating profile organization_id:", updateError)
+              // Don't fail the flow, just log the error
+            } else {
+              profile = updatedProfile
+              console.log("[AuthCallback] Profile organization_id updated successfully:", updatedProfile)
+            }
           }
 
           // If profile still doesn't exist, create it manually (trigger might have failed)
@@ -300,7 +343,7 @@ function AuthCallbackContent() {
                   status: "pending", // New users must be approved
                   organization_id: organizationId, // Associate with selected organization
                 })
-                .select("role, status, organization_id")
+                .select("id, role, status, organization_id")
                 .single()
 
               if (createError) {
@@ -311,8 +354,14 @@ function AuthCallbackContent() {
               }
 
               profile = newProfile
-            } else if (organizationId && !profile.organization_id) {
-              // Profile exists but doesn't have organization_id, update it
+              console.log("[AuthCallback] Profile created successfully with organization_id:", {
+                profileId: profile.id,
+                organizationId: profile.organization_id,
+              })
+            }
+
+            // Always update organization_id if it's missing and we have it from metadata or query params
+            if (profile && organizationId && !profile.organization_id) {
               console.log("[AuthCallback] Profile exists but missing organization_id, updating:", {
                 profileId: profile.id,
                 currentOrgId: profile.organization_id,
@@ -323,7 +372,7 @@ function AuthCallbackContent() {
                 .from("profiles")
                 .update({ organization_id: organizationId })
                 .eq("id", user.id)
-                .select("role, status, organization_id")
+                .select("id, role, status, organization_id")
                 .single()
 
               if (updateError) {
