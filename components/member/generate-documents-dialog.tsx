@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { getTemplates, createProcess, getProcessesMapped, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
+import { getTemplates, createProcess, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
 import { useProfile } from "@/hooks/use-profile"
 
@@ -100,6 +100,11 @@ export function GenerateDocumentsDialog({
   const [generatedDocuments, setGeneratedDocuments] = React.useState<
     Array<{ templateId: string; documentName: string; drivePath: string }>
   >([])
+  const [generatingStep, setGeneratingStep] = React.useState<{
+    current: number
+    total: number
+    templateName?: string
+  } | null>(null)
 
   // Get all unique tags from all templates
   const allTags = React.useMemo(() => {
@@ -174,7 +179,16 @@ export function GenerateDocumentsDialog({
     setError(null)
     setImprovedFields(new Set())
     setImprovingField(null)
+    setGeneratingStep(null)
     onOpenChange(false)
+  }
+
+  const isBusy = isGenerating || isSaving
+
+  const handleOpenChange = (newOpen: boolean) => {
+    if (!newOpen && isBusy) return
+    if (!newOpen) handleClose()
+    else onOpenChange(newOpen)
   }
 
   const handleFieldChange = (tag: string, value: string) => {
@@ -354,7 +368,12 @@ export function GenerateDocumentsDialog({
     }
   }
 
-  const handleGenerateDocument = async (template: Template, retryCount = 0, overrideProcessId?: string): Promise<any> => {
+  const handleGenerateDocument = async (
+    template: Template,
+    retryCount = 0,
+    overrideProcessId?: string,
+    fromGenerateAll?: boolean,
+  ): Promise<any> => {
     const processCode = process?.code || processData?.code
     
     console.log("[handleGenerateDocument] Process code check:", {
@@ -372,7 +391,11 @@ export function GenerateDocumentsDialog({
     }
 
     try {
-      setIsGenerating(true)
+      // Solo marcar paso y estado cuando NO es batch (para no pisar "X de Y" de handleGenerateAll)
+      if (!fromGenerateAll) {
+        setIsGenerating(true)
+        setGeneratingStep({ current: 1, total: 1, templateName: template.name })
+      }
       setError(null)
 
       // Prepare replacements (remove {{}} from tag names if present)
@@ -396,8 +419,13 @@ export function GenerateDocumentsDialog({
         processId: process?.id,
       })
 
+      // Timeout largo (2 min) para documentos/plantillas grandes
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 130000)
+
       const response = await fetch("/api/generate-document", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
         },
@@ -413,6 +441,8 @@ export function GenerateDocumentsDialog({
           createdBy: profile?.id,
         }),
       })
+
+      clearTimeout(timeoutId)
 
       if (!response.ok) {
         let errorData
@@ -457,24 +487,23 @@ export function GenerateDocumentsDialog({
       ]
       setGeneratedDocuments(updatedGeneratedDocuments)
 
-      // Reset generating state
-      setIsGenerating(false)
+      // No quitar indicador ni cerrar si estamos en "Generar todos"
+      if (!fromGenerateAll) {
+        setIsGenerating(false)
+        setGeneratingStep(null)
+      }
 
-      // Check if all documents have been generated
-      const allGenerated = templates.length > 0 && templates.every((t) =>
-        updatedGeneratedDocuments.some((doc) => doc.templateId === t.id)
-      )
-
-      // If all documents are generated, close the dialog and refresh
-      if (allGenerated) {
-        // Trigger refresh of processes list to update document count
-        if (onDocumentsGenerated) {
-          onDocumentsGenerated()
+      // Cerrar y refrescar solo cuando es "Generar Este" y ya están todos
+      if (!fromGenerateAll) {
+        const allGenerated =
+          templates.length > 0 &&
+          templates.every((t) =>
+            updatedGeneratedDocuments.some((doc) => doc.templateId === t.id),
+          )
+        if (allGenerated) {
+          if (onDocumentsGenerated) onDocumentsGenerated()
+          setTimeout(() => handleClose(), 1500)
         }
-        // Close the dialog after a short delay to show success message
-        setTimeout(() => {
-          handleClose()
-        }, 1500)
       }
 
       return result
@@ -482,8 +511,14 @@ export function GenerateDocumentsDialog({
       console.error("Error generating document:", error)
       // Only set error state on first attempt, not on retry
       if (retryCount === 0) {
-        setError(error instanceof Error ? error.message : "Error al generar el documento")
+        const isTimeout = error instanceof Error && error.name === "AbortError"
+        setError(
+          isTimeout
+            ? "El documento tardó demasiado (timeout). Si la plantilla es muy grande, intenta de nuevo; los documentos grandes pueden tardar 1-2 minutos."
+            : error instanceof Error ? error.message : "Error al generar el documento"
+        )
         setIsGenerating(false)
+        setGeneratingStep(null)
       }
       throw error
     }
@@ -497,25 +532,17 @@ export function GenerateDocumentsDialog({
       setIsSaving(true)
       setError(null)
 
-      // If this is a new process, create it first
-      let createdProcess: ProcessMapped | null = null
+      // If this is a new process, create it first and use the returned process id
       let currentProcessId = process?.id || ""
-      
+
       if (isNewProcess && processData) {
         try {
-          await createProcess(processData)
-          
-          // Reload processes to get the mapped version
-          const processes = await getProcessesMapped()
-          createdProcess = processes.find((p) => p.code === processData.code) || null
-          
-          if (createdProcess) {
-            currentProcessId = createdProcess.id
-            // Update local process state so handleGenerateDocument uses the correct ID
-            setCurrentProcessState(createdProcess)
-            if (onProcessCreated) {
-              onProcessCreated(createdProcess)
-            }
+          const created = await createProcess(processData)
+          currentProcessId = created.id
+          const createdAsMapped = { ...created, spreadsheetId: null, spreadsheetUrl: null, driveFolderId: null, driveFolderUrl: null } as unknown as ProcessMapped
+          setCurrentProcessState(createdAsMapped)
+          if (onProcessCreated) {
+            onProcessCreated(createdAsMapped)
           }
         } catch (createError) {
           console.error("Error creating process:", createError)
@@ -524,35 +551,32 @@ export function GenerateDocumentsDialog({
         }
       }
 
-      // Generate all documents with the correct processId
-      // Use currentProcessId which was set above, or fallback to process?.id
+      // Generate all documents with the correct processId (necesario para asociar docs y actualizar drive en BD)
       const processIdToUse = currentProcessId || process?.id || ""
       console.log("[handleGenerateAll] Using processId:", processIdToUse)
-      
-      const results = await Promise.all(
-        templates.map((template) => {
-          // Pass the processId directly to ensure it's used
-          return handleGenerateDocument(template, 0, processIdToUse)
-        }),
-      )
 
-      // All documents generated successfully
-      // The documents are already saved to Google Drive, Sheets, and Database via the API
-      
-      // Trigger refresh of processes list to update document count
+      // Generar en secuencia para poder mostrar progreso "documento X de Y"
+      for (let i = 0; i < templates.length; i++) {
+        setGeneratingStep({
+          current: i + 1,
+          total: templates.length,
+          templateName: templates[i].name,
+        })
+        await handleGenerateDocument(templates[i], 0, processIdToUse, true)
+      }
+
+      // Todos los documentos generados: refrescar lista y cerrar tras un breve delay
       if (onDocumentsGenerated) {
         onDocumentsGenerated()
       }
-      
-      // Close the dialog after successful generation
-      if (isNewProcess) {
-        handleClose()
-      }
+      setTimeout(() => handleClose(), 1500)
     } catch (error) {
       console.error("Error generating documents:", error)
       setError(error instanceof Error ? error.message : "Error al generar los documentos. Por favor intente de nuevo.")
     } finally {
       setIsSaving(false)
+      setIsGenerating(false)
+      setGeneratingStep(null)
     }
   }
 
@@ -577,8 +601,17 @@ export function GenerateDocumentsDialog({
   const currentTemplateTags = currentTemplate?.variables || []
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-w-4xl max-h-[90vh] flex flex-col"
+        showCloseButton={!isBusy}
+        onPointerDownOutside={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+        onEscapeKeyDown={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
@@ -595,6 +628,31 @@ export function GenerateDocumentsDialog({
         </DialogHeader>
 
         {error && <div className="bg-destructive/10 text-destructive px-4 py-2 rounded-md text-sm">{error}</div>}
+
+        {(isGenerating || isSaving || generatingStep) && (
+          <Card className="border-primary/40 bg-primary/10">
+            <CardContent className="flex flex-col sm:flex-row items-center gap-4 py-4">
+              <Loader2 className="h-10 w-10 shrink-0 animate-spin text-primary" />
+              <div className="flex-1 text-center sm:text-left">
+                <p className="font-medium text-foreground">
+                  {generatingStep
+                    ? generatingStep.total > 1
+                      ? `Generando documento ${generatingStep.current} de ${generatingStep.total}`
+                      : "Generando documento..."
+                    : isSaving
+                      ? "Creando proceso y generando documentos..."
+                      : "Generando documento..."}
+                </p>
+                {generatingStep?.templateName && (
+                  <p className="text-sm text-muted-foreground mt-0.5">{generatingStep.templateName}</p>
+                )}
+                <p className="text-sm text-muted-foreground mt-1">
+                  No cierres esta ventana. Los documentos grandes pueden tardar 1-2 minutos.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {isLoadingTemplates ? (
           <div className="flex items-center justify-center py-12">
@@ -779,7 +837,7 @@ export function GenerateDocumentsDialog({
                         {isGenerating ? (
                           <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Generando...
+                            Generando... (documentos grandes pueden tardar 1-2 min)
                           </>
                         ) : (
                           <>

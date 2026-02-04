@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
-import { downloadFileFromDrive, uploadDocumentToDrive, findFileByPath } from "@/lib/google/drive"
+import { createReadStream } from "fs"
+import { unlink, writeFile } from "fs/promises"
+import { tmpdir } from "os"
+import { join } from "path"
+import { downloadFileFromDrive, uploadDocumentToDrive, uploadDocumentToDriveFromStream, findFileByPath } from "@/lib/google/drive"
 import { replaceTagsInDocx } from "@/lib/utils/document-generator"
 import { getOrCreateProcessSpreadsheet, updateSheetData } from "@/lib/google/sheets"
 import { createServerClient } from "@/lib/supabase/server"
 import { hasValidTokens } from "@/lib/google/oauth"
+
+// Documentos grandes: más tiempo para descargar plantilla, generar y subir
+export const maxDuration = 120
 
 /**
  * POST /api/generate-document
@@ -150,15 +157,35 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       )
     }
-    
-    console.log("[generate-document] Uploading document with processCode:", processCode)
-    const uploadResult = await uploadDocumentToDrive(
-      user.id,
-      generatedBuffer,
-      documentName,
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      processCode,
-    )
+
+    const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024 // 5 MB: subir por stream para no duplicar pico de memoria
+
+    let uploadResult
+    if (generatedBuffer.length >= LARGE_FILE_THRESHOLD) {
+      const tmpPath = join(tmpdir(), `eva-doc-${Date.now()}-${process.pid}.docx`)
+      try {
+        await writeFile(tmpPath, new Uint8Array(generatedBuffer))
+        const stream = createReadStream(tmpPath)
+        uploadResult = await uploadDocumentToDriveFromStream(
+          user.id,
+          stream,
+          documentName,
+          mimeType,
+          processCode,
+        )
+      } finally {
+        await unlink(tmpPath).catch(() => {})
+      }
+    } else {
+      uploadResult = await uploadDocumentToDrive(
+        user.id,
+        generatedBuffer,
+        documentName,
+        mimeType,
+        processCode,
+      )
+    }
 
     console.log("[generate-document] Upload result:", {
       fileId: uploadResult.fileId,

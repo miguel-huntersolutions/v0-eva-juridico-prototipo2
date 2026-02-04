@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   Plus,
   FolderKanban,
@@ -23,6 +25,7 @@ import {
   Play,
   CheckCircle,
   RotateCcw,
+  Files,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -64,6 +67,7 @@ import { GenerateDocumentsDialog } from "./generate-documents-dialog"
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
 export function ProcessesPage() {
+  const router = useRouter()
   const [processes, setProcesses] = React.useState<ProcessMapped[]>([])
   const [isLoadingProcesses, setIsLoadingProcesses] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -163,8 +167,10 @@ export function ProcessesPage() {
   }
 
   const handleProcessCreatedFromDialog = (newProcess: ProcessMapped) => {
-    // Add the new process to the list
+    // Add the new process to the list and keep it selected so the dialog stays mounted
+    // (dialog is rendered when selectedProcess || processDataToCreate; we're about to clear processDataToCreate)
     setProcesses((prev) => [newProcess, ...prev])
+    setSelectedProcess(newProcess)
     setProcessDataToCreate(null)
   }
 
@@ -417,8 +423,15 @@ export function ProcessesPage() {
                   </TableRow>
                 ) : (
                   filteredProcesses.map((process) => (
-                    <TableRow key={process.id}>
-                      <TableCell className="font-mono text-sm font-medium">{process.code}</TableCell>
+                    <TableRow key={process.id} className="group">
+                      <TableCell className="font-mono text-sm font-medium">
+                        <Link
+                          href={`/member/documents?processId=${process.id}`}
+                          className="text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+                        >
+                          {process.code}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="font-normal">
                           {process.entityName}
@@ -453,6 +466,12 @@ export function ProcessesPage() {
                             >
                               <Eye className="mr-2 h-4 w-4" />
                               Ver detalles
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => router.push(`/member/documents?processId=${process.id}`)}
+                            >
+                              <Files className="mr-2 h-4 w-4" />
+                              Ver documentos del proceso
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {

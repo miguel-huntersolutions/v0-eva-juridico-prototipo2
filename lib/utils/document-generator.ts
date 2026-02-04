@@ -42,7 +42,10 @@ export function replaceTagsInText(text: string, replacements: Record<string, str
 
 /**
  * Replace tags in a .docx file buffer using docxtemplater
- * This preserves the original document formatting
+ * This preserves the original document formatting.
+ * Documentos muy grandes: el proceso carga todo el .docx en memoria; la ruta de generación
+ * usa maxDuration 120s, descarga con timeout 2 min y subida por stream si > 5 MB.
+ *
  * @param fileBuffer - The .docx file buffer
  * @param replacements - Object mapping tag names to replacement values (tag names should NOT include {{}})
  * @param entityLogoUrl - Optional URL of the entity logo to include when {{LOGO_ENTIDAD}} is found

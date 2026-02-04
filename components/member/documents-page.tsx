@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import {
   FileText,
   Download,
@@ -88,6 +89,7 @@ interface MappedDocument {
 }
 
 export function DocumentsPage() {
+  const searchParams = useSearchParams()
   const [selectedDocument, setSelectedDocument] = React.useState<MappedDocument | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -102,6 +104,14 @@ export function DocumentsPage() {
   const { profile } = useProfile()
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
+
+  // Aplicar filtro por proceso cuando se llega con ?processId=xxx (ej. desde lista de procesos)
+  React.useEffect(() => {
+    const processId = searchParams.get("processId")
+    if (processId) {
+      setProcessFilter(processId)
+    }
+  }, [searchParams])
 
   React.useEffect(() => {
     async function loadDocuments() {
@@ -255,16 +265,29 @@ export function DocumentsPage() {
     }
   }
 
+  const router = useRouter()
+  const pathname = usePathname()
+
   const clearFilters = () => {
     setSearchQuery("")
     setStatusFilter("all")
     setEntityFilter("all")
     setProcessFilter("all")
     setTypeFilter("all")
+    const processId = searchParams.get("processId")
+    if (processId) {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete("processId")
+      router.replace(params.toString() ? `${pathname}?${params}` : pathname)
+    }
   }
 
   const hasActiveFilters =
     statusFilter !== "all" || entityFilter !== "all" || processFilter !== "all" || typeFilter !== "all"
+
+  const filteredByProcessCode = processFilter !== "all"
+    ? allDocuments.find((d) => d.processId === processFilter)?.processCode || null
+    : null
 
   return (
     <div className="flex flex-col gap-6 p-8">
@@ -273,6 +296,20 @@ export function DocumentsPage() {
         title="Gestión de Documentos"
         description="Visualiza y administra todos los documentos generados para tus procesos"
       />
+
+      {filteredByProcessCode && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-row items-center justify-between py-3">
+            <p className="text-sm">
+              Mostrando documentos del proceso <span className="font-mono font-medium">{filteredByProcessCode}</span>
+            </p>
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              <X className="mr-1 h-4 w-4" />
+              Ver todos los documentos
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const memberId = searchParams.get("memberId")
 
+    console.log("[get-member-entities] Request:", { memberId, callerId: user.id, callerRole: profile.role })
+
     if (!memberId) {
       return NextResponse.json(
         { error: "Missing required parameter: memberId" },
@@ -75,6 +77,13 @@ export async function GET(request: NextRequest) {
       .eq("id", memberId)
       .single()
 
+    console.log("[get-member-entities] Member profile query:", {
+      memberId,
+      query: "profiles.select(id, organization_id).eq(id, memberId).single()",
+      memberProfile: memberProfile ?? null,
+      memberError: memberError ? { message: memberError.message, code: memberError.code } : null,
+    })
+
     if (memberError || !memberProfile) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 })
     }
@@ -93,6 +102,15 @@ export async function GET(request: NextRequest) {
       .select("entity_id")
       .eq("member_id", memberId)
 
+    console.log("[get-member-entities] Assignments query:", {
+      memberId,
+      table: "member_entities",
+      query: "select(entity_id).eq(member_id, memberId)",
+      rowCount: assignments?.length ?? 0,
+      assignments: assignments ?? null,
+      assignmentsError: assignmentsError ? { message: assignmentsError.message, code: assignmentsError.code } : null,
+    })
+
     if (assignmentsError) {
       console.error("[get-member-entities] Error fetching assignments:", assignmentsError)
       return NextResponse.json(
@@ -102,6 +120,8 @@ export async function GET(request: NextRequest) {
     }
 
     const entityIds = (assignments || []).map((a) => a.entity_id)
+
+    console.log("[get-member-entities] Response:", { memberId, entityIds })
 
     return NextResponse.json({
       success: true,

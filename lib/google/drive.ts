@@ -377,14 +377,80 @@ export async function downloadFileFromDrive(userId: string, fileId: string): Pro
       getOptions.supportsAllDrives = true
     }
 
+    // Timeout largo para plantillas/documentos grandes (2 min)
     const response = await drive.files.get(getOptions, {
       responseType: "arraybuffer",
+      timeout: 120000,
     })
 
     return Buffer.from(response.data as ArrayBuffer)
   } catch (error) {
     console.error("Error downloading file from Drive:", error)
     throw new Error(`Failed to download file from Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
+  }
+}
+
+/**
+ * Upload a generated document to Google Drive from a stream (optimizado para archivos grandes).
+ * Libera memoria durante la subida al no mantener el buffer completo.
+ */
+export async function uploadDocumentToDriveFromStream(
+  userId: string,
+  stream: NodeJS.ReadableStream,
+  fileName: string,
+  mimeType: string,
+  processCode: string,
+): Promise<{
+  fileId: string
+  webViewLink: string
+  directLink: string
+  drivePath: string
+  processFolderId: string
+  processFolderUrl: string
+}> {
+  const drive = await getDriveClient(userId)
+  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
+  const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId)
+  const driveId = process.env.GOOGLE_DRIVE_ID
+  const supportsAllDrives = !!driveId
+
+  const fileMetadata: { name: string; parents: string[]; driveId?: string } = {
+    name: fileName,
+    parents: [processFolderId],
+  }
+  if (supportsAllDrives && driveId) (fileMetadata as any).driveId = driveId
+
+  const createOptions: any = {
+    requestBody: fileMetadata,
+    media: { mimeType, body: stream },
+    fields: "id, name, webViewLink, webContentLink",
+  }
+  if (supportsAllDrives && driveId) {
+    createOptions.supportsAllDrives = true
+    createOptions.driveId = driveId
+  }
+
+  const response = await drive.files.create(createOptions)
+  if (!response.data.id) throw new Error("Failed to upload file: No file ID returned")
+
+  if (!driveId) {
+    await drive.permissions.create({
+      fileId: response.data.id,
+      requestBody: { role: "reader", type: "anyone" },
+    })
+  }
+
+  const directLink = `https://drive.google.com/uc?export=download&id=${response.data.id}`
+  const drivePath = `plantillas/${processCode}/${fileName}`
+  const processFolderUrl = `https://drive.google.com/drive/folders/${processFolderId}`
+
+  return {
+    fileId: response.data.id,
+    webViewLink: response.data.webViewLink || `https://drive.google.com/file/d/${response.data.id}/view`,
+    directLink,
+    drivePath,
+    processFolderId,
+    processFolderUrl,
   }
 }
 

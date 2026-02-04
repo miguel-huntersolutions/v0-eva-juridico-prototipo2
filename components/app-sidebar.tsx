@@ -57,6 +57,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   // Superadmin items
   { title: "Panel Principal", href: "/dashboard", icon: LayoutDashboard, roles: ["superadmin"] },
+  { title: "Usuarios pendientes", href: "/superadmin/pending-users", icon: Users, roles: ["superadmin"] },
   { title: "Organizaciones", href: "/superadmin/organizations", icon: Building2, roles: ["superadmin"] },
   { title: "Tipos de Proceso", href: "/superadmin/process-types", icon: FolderKanban, roles: ["superadmin"] },
   { title: "Plantillas", href: "/superadmin/templates", icon: FileStack, roles: ["superadmin"] },

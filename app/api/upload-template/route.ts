@@ -3,6 +3,9 @@ import { uploadFileToDrive, updateFileInDrive, deleteFileFromDrive, findFileByPa
 import { createServerClient } from "@/lib/supabase/server"
 import { hasValidTokens } from "@/lib/google/oauth"
 
+// Plantillas grandes: más tiempo para subir
+export const maxDuration = 120
+
 /**
  * POST /api/upload-template
  * Uploads a template file to Google Drive in the structure: plantillas/{processTypeName}/
