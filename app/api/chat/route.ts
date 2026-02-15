@@ -2,7 +2,8 @@ import { createChatRoute } from "@/lib/ai-chat/create-chat-api-route"
 import { getChatMaxDuration } from "@/lib/app-config"
 import { getOpenAIChatModelString } from "@/lib/ai-model-config"
 
-export const maxDuration = getChatMaxDuration()
+/** Segment config must be static; runtime duration can be set via AI_CHAT_MAX_DURATION / Vercel. */
+export const maxDuration = 60
 
 const SYSTEM_PROMPT = `Eres EVA, un asistente jurídico especializado en contratación pública colombiana. Tu rol es proporcionar información precisa y actualizada sobre:
 

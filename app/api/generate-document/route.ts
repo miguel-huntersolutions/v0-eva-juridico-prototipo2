@@ -8,9 +8,9 @@ import { replaceTagsInDocx } from "@/lib/utils/document-generator"
 import { getOrCreateProcessSpreadsheet, updateSheetData } from "@/lib/google/sheets"
 import { createServerClient } from "@/lib/supabase/server"
 import { hasValidTokens } from "@/lib/google/oauth"
-import { getGenerateDocumentMaxDuration } from "@/lib/app-config"
 
-export const maxDuration = getGenerateDocumentMaxDuration()
+/** Segment config must be static; runtime can use GENERATE_DOCUMENT_MAX_DURATION / Vercel. */
+export const maxDuration = 120
 
 /**
  * POST /api/generate-document

@@ -6,9 +6,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { runWorkflow } from "@/lib/ai-chat/workflow-runner"
 import { fetchConversation } from "@/lib/ai-chat/services/conversations-api"
-import { getAssistantMaxDuration } from "@/lib/app-config"
 
-export const maxDuration = getAssistantMaxDuration()
+/** Segment config must be static; runtime can use ASSISTANT_MAX_DURATION / Vercel. */
+export const maxDuration = 60
 
 // Get workflow ID from environment variable
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID
