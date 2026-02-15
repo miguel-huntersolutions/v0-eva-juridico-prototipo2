@@ -65,7 +65,6 @@ export async function PUT(request: NextRequest) {
     // Use service role client to bypass RLS
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
-      console.error("SUPABASE_SERVICE_ROLE_KEY is not configured")
       return NextResponse.json(
         { error: "Server configuration error: Service role key not configured" },
         { status: 500 },
@@ -124,21 +123,30 @@ export async function PUT(request: NextRequest) {
       .single()
 
     if (updateError) {
-      console.error("[update-document] Error updating document:", updateError)
       return NextResponse.json(
         { error: "Failed to update document", message: updateError.message },
         { status: 500 },
       )
     }
 
-    console.log(`[update-document] Document ${documentId} updated to status: ${status}`)
+    // When approved, ingest document into RAG (vector store) so the assistant can search it
+    if (status === "approved") {
+      try {
+        const { ingestDocumentToRag } = await import("@/lib/rag/ingest")
+        const result = await ingestDocumentToRag(documentId, user.id)
+        if (!result.success) {
+          // Document is still approved; ingest failure is non-fatal
+        }
+      } catch {
+        // Do not fail the request; document is already approved
+      }
+    }
 
     return NextResponse.json({
       success: true,
       document: updatedDocument,
     })
   } catch (error) {
-    console.error("Error updating document:", error)
     return NextResponse.json(
       {
         error: "Failed to update document",

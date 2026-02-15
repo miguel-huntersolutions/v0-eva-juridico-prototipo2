@@ -5,12 +5,13 @@
 
 import { convertToModelMessages, streamText, type UIMessage } from "ai"
 import { openai } from "@ai-sdk/openai"
+import { getOpenAIChatModelString, getOpenAIModel } from "@/lib/ai-model-config"
 import type { AIChatConfig } from "./types"
 
 export interface CreateChatRouteOptions {
   /** System prompt for the AI */
   systemPrompt: string
-  /** AI model to use (default: openai/gpt-4o) */
+  /** AI model to use (default from OPENAI_MODEL env, e.g. openai/gpt-4o) */
   model?: string
   /** Maximum duration in seconds (default: 30) */
   maxDuration?: number
@@ -28,14 +29,14 @@ export interface CreateChatRouteOptions {
  * 
  * export const POST = createChatRoute({
  *   systemPrompt: 'You are a helpful assistant',
- *   model: 'openai/gpt-4o'
+ *   model: getOpenAIChatModelString()  // or from OPENAI_MODEL env
  * })
  * ```
  */
 export function createChatRoute(options: CreateChatRouteOptions) {
   const {
     systemPrompt,
-    model = "openai/gpt-4o",
+    model = getOpenAIChatModelString(),
     maxDuration = 30,
   } = options
 
@@ -50,8 +51,7 @@ export function createChatRoute(options: CreateChatRouteOptions) {
         const modelName = model.replace("openai/", "")
         openaiModel = openai(modelName as any)
       } else {
-        // Default to gpt-4o
-        openaiModel = openai("gpt-4o")
+        openaiModel = openai(getOpenAIModel() as "gpt-4o")
       }
 
       const result = streamText({
@@ -62,7 +62,6 @@ export function createChatRoute(options: CreateChatRouteOptions) {
 
       return result.toUIMessageStreamResponse()
     } catch (error: any) {
-      console.error("[AI Chat API] Error:", error)
       
       // Handle specific OpenAI errors
       if (error?.error?.type === "insufficient_quota") {

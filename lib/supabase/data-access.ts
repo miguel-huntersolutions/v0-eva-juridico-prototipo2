@@ -259,6 +259,17 @@ export async function getTemplatesWithProcessType() {
   return data as (Template & { process_type: ProcessType })[]
 }
 
+export async function getTemplateById(templateId: string) {
+  const supabase = await createServerClient()
+  const { data, error } = await supabase
+    .from("templates")
+    .select("*")
+    .eq("id", templateId)
+    .single()
+  if (error) throw error
+  return data as Template
+}
+
 // Processes
 export async function getProcesses(filters?: {
   entityId?: string

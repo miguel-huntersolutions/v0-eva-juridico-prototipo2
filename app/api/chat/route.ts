@@ -1,6 +1,8 @@
 import { createChatRoute } from "@/lib/ai-chat/create-chat-api-route"
+import { getChatMaxDuration } from "@/lib/app-config"
+import { getOpenAIChatModelString } from "@/lib/ai-model-config"
 
-export const maxDuration = 60
+export const maxDuration = getChatMaxDuration()
 
 const SYSTEM_PROMPT = `Eres EVA, un asistente jurídico especializado en contratación pública colombiana. Tu rol es proporcionar información precisa y actualizada sobre:
 
@@ -74,6 +76,6 @@ Recuerda: Eres un asistente especializado, no reemplazas el consejo de un abogad
 
 export const POST = createChatRoute({
   systemPrompt: SYSTEM_PROMPT,
-  model: "openai/gpt-4o",
-  maxDuration: 60,
+  model: getOpenAIChatModelString(),
+  maxDuration: getChatMaxDuration(),
 })

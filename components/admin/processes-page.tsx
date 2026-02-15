@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import {
   FolderKanban,
   FileText,
@@ -400,7 +401,9 @@ export function ProcessesPage() {
                         <StatusBadge status={process.status} />
                       </TableCell>
                       <TableCell className="text-center">
-                        <Badge variant="secondary">{process.documentsCount}</Badge>
+                        <Link href={`/admin/documents?processId=${process.id}`}>
+                          <Badge variant="secondary" className="cursor-pointer hover:opacity-80">{process.documentsCount}</Badge>
+                        </Link>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
                       <TableCell>

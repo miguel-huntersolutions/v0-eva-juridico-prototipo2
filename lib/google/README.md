@@ -84,12 +84,18 @@ GOOGLE_CLIENT_ID=tu-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=tu-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback
 
-# Google Drive Configuration (opcional, para Shared Drives)
-GOOGLE_DRIVE_FOLDER_ID=tu-folder-id  # ID de la carpeta raíz (opcional)
-GOOGLE_DRIVE_ID=tu-drive-id          # ID del Shared Drive (opcional)
+# Google Drive: dónde se guardan plantillas y documentos (opcional)
+# Opción A – Una carpeta concreta (recomendado): pega el ID de la carpeta de la URL de Drive
+GOOGLE_DRIVE_FOLDER_ID=id-carpeta-desde-url-drive
+
+# Opción B – Shared Drive (Drive de equipo): solo el ID del Shared Drive, no de una carpeta
+# GOOGLE_DRIVE_ID=id-del-shared-drive
 ```
 
-**Nota:** `GOOGLE_DRIVE_FOLDER_ID` y `GOOGLE_DRIVE_ID` son opcionales. Si no los configuras, los archivos se crearán en el Drive personal del usuario autenticado.
+**Nota:** Si no configuras ninguna variable, todo se crea en el **Drive personal** del usuario que sube.
+- **GOOGLE_DRIVE_ID** (Shared Drive): si está definido, **tiene prioridad**. Toda la estructura `plantillas/` se crea en el Drive de equipo. Usa el ID del Shared Drive, no el de una carpeta.
+- **GOOGLE_DRIVE_FOLDER_ID** (carpeta): solo se usa si **no** hay `GOOGLE_DRIVE_ID`. ID de una carpeta (el de la URL al abrir la carpeta en Drive). La estructura `plantillas/` se crea dentro de esa carpeta.
+- Si tienes ambos definidos, se usa el **Shared Drive** (`GOOGLE_DRIVE_ID`).
 
 ### 3. Ejecutar el script SQL
 
@@ -261,6 +267,13 @@ Si un usuario intenta usar las funciones de Google sin estar autenticado, recibi
 
 2. **Tokens por usuario**: Cada usuario tiene sus propios tokens. Los archivos se crean en el Drive del usuario autenticado.
 
-3. **Shared Drives**: Si necesitas usar Shared Drives, configura `GOOGLE_DRIVE_ID` y `GOOGLE_DRIVE_FOLDER_ID`. El usuario debe tener acceso al Shared Drive.
+3. **Shared Drives**: Si necesitas usar Shared Drives, configura `GOOGLE_DRIVE_ID`. Cada usuario que genere documentos o descargue plantillas debe tener acceso a ese Shared Drive con su cuenta de Google.
 
-4. **Permisos**: Los archivos creados pertenecen al usuario autenticado. Si necesitas compartirlos, puedes usar las funciones de permisos de Google Drive API.
+4. **Dar acceso a todos en el Shared Drive**: Para que cualquier usuario de la app pueda usar las plantillas subidas por otro (ej. superadmin), hay que darles acceso al **Drive de equipo**:
+   - Abre [Google Drive](https://drive.google.com) con la cuenta que administra el equipo.
+   - En la izquierda, en **“Unidades compartidas”**, haz clic derecho sobre el Drive de equipo de la organización → **“Gestionar miembros”** (o **“Compartir”**).
+   - Añade a las personas (por correo) o a un **grupo de Google** que incluya a todos los usuarios de la app.
+   - Nivel mínimo recomendado: **“Lector”** para solo usar plantillas; **“Comentarista”** o **“Editor”** si también deben subir o editar.
+   - Cada usuario debe usar en la app la **misma cuenta de Google** con la que fue añadido al Shared Drive (la que conecta en “Conectar con Google”).
+
+5. **Permisos**: Los archivos creados en un Shared Drive heredan el acceso del Drive. En Drive personal, los archivos pertenecen al usuario autenticado.

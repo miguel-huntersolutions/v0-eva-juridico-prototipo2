@@ -4,6 +4,17 @@ import * as React from "react"
 import { useRouter } from "next/navigation"
 import type { OrganizationMapped } from "@/lib/supabase/client-data-access"
 
+function getStoredImpersonation(): OrganizationMapped | null {
+  if (typeof window === "undefined") return null
+  try {
+    const stored = localStorage.getItem("eva_impersonation")
+    if (!stored) return null
+    return JSON.parse(stored) as OrganizationMapped
+  } catch {
+    return null
+  }
+}
+
 interface ImpersonationContextType {
   isImpersonating: boolean
   impersonatedOrg: OrganizationMapped | null
@@ -15,19 +26,12 @@ const ImpersonationContext = React.createContext<ImpersonationContextType | unde
 
 export function ImpersonationProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
-  const [impersonatedOrg, setImpersonatedOrg] = React.useState<OrganizationMapped | null>(null)
+  const [impersonatedOrg, setImpersonatedOrg] = React.useState<OrganizationMapped | null>(getStoredImpersonation)
 
-  // Check localStorage on mount
+  // Sync from localStorage on mount (in case state was cleared or tab reopened)
   React.useEffect(() => {
-    const stored = localStorage.getItem("eva_impersonation")
-    if (stored) {
-      try {
-        const org = JSON.parse(stored)
-        setImpersonatedOrg(org)
-      } catch (e) {
-        localStorage.removeItem("eva_impersonation")
-      }
-    }
+    const stored = getStoredImpersonation()
+    if (stored && stored.id !== impersonatedOrg?.id) setImpersonatedOrg(stored)
   }, [])
 
   const startImpersonation = React.useCallback(

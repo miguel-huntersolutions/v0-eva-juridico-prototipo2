@@ -54,20 +54,25 @@ import {
 import {
   getProcessTypes,
   getEntities,
+  getEntitiesForImpersonation,
   getProcessesMapped,
+  getProcessesForImpersonation,
   deleteProcess as deleteProcessDB,
   type ProcessType,
-  type Entity,
+  type EntityMapped,
   type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { CreateProcessDialog } from "./create-process-dialog"
-import { GenerateDocumentsDialog } from "./generate-documents-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
 export function ProcessesPage() {
   const router = useRouter()
+  const { profile } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
   const [processes, setProcesses] = React.useState<ProcessMapped[]>([])
   const [isLoadingProcesses, setIsLoadingProcesses] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -79,28 +84,26 @@ export function ProcessesPage() {
   const [isViewDialogOpen, setIsViewDialogOpen] = React.useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
-  const [isGenerateDocumentsDialogOpen, setIsGenerateDocumentsDialogOpen] = React.useState(false)
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
 
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
-
-  const { profile } = useProfile()
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(true)
 
   const loadProcesses = React.useCallback(async () => {
-    if (!profile?.organization_id) return
+    if (!orgId) return
     try {
       setIsLoadingProcesses(true)
-      const data = await getProcessesMapped()
+      const data = isImpersonating
+        ? await getProcessesForImpersonation(orgId)
+        : await getProcessesMapped()
       setProcesses(data)
     } catch (error) {
-      console.error("Error loading processes:", error)
     } finally {
       setIsLoadingProcesses(false)
     }
-  }, [profile?.organization_id])
+  }, [orgId, isImpersonating])
 
   React.useEffect(() => {
     loadProcesses()
@@ -121,57 +124,31 @@ export function ProcessesPage() {
     loadProcessTypes()
   }, [])
 
-  // Load entities from database
+  // Load entities (use API when impersonating so RLS doesn't block)
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id) return
+      if (!orgId) return
       try {
-        const data = await getEntities(profile.organization_id)
+        const data = isImpersonating
+          ? await getEntitiesForImpersonation(orgId)
+          : await getEntities(orgId)
         setEntities(data)
       } catch (error) {
-        console.error("Error loading entities:", error)
       } finally {
         setIsLoadingEntities(false)
       }
     }
     loadEntities()
-  }, [profile?.organization_id])
+  }, [orgId, isImpersonating])
 
   const handleProcessCreated = (newProcess: ProcessMapped) => {
     setProcesses((prev) => [newProcess, ...prev])
   }
 
-  const [processDataToCreate, setProcessDataToCreate] = React.useState<{
-    processData: any
-    entity: Entity | null
-    secretaryName: string
-    processTypeName: string
-  } | null>(null)
-
-  const handleProcessCreatedAndReady = (processData: any, entity: Entity | null, secretaryName: string, processTypeName: string) => {
-    // Store the process data to create later
-    setProcessDataToCreate({
-      processData,
-      entity,
-      secretaryName,
-      processTypeName,
-    })
-    
-    // Ensure the entity is in the entities list if it's not already there
-    if (entity && !entities.find((e) => e.id === entity.id)) {
-      setEntities((prev) => [...prev, entity])
-    }
-    
-    // Open the generate documents dialog (process will be created at the end)
-    setIsGenerateDocumentsDialogOpen(true)
-  }
-
-  const handleProcessCreatedFromDialog = (newProcess: ProcessMapped) => {
-    // Add the new process to the list and keep it selected so the dialog stays mounted
-    // (dialog is rendered when selectedProcess || processDataToCreate; we're about to clear processDataToCreate)
+  const handleProcessCreatedAndGoToGenerate = (newProcess: ProcessMapped) => {
     setProcesses((prev) => [newProcess, ...prev])
-    setSelectedProcess(newProcess)
-    setProcessDataToCreate(null)
+    setIsCreateDialogOpen(false)
+    router.push(`/member/processes/${newProcess.id}/generate`)
   }
 
   const handleDeleteProcess = async () => {
@@ -221,7 +198,6 @@ export function ProcessesPage() {
         )
       )
     } catch (err) {
-      console.error("Error updating process status:", err)
       const errorMsg = err instanceof Error ? err.message : "Error al actualizar el estado del proceso"
       alert(errorMsg)
     } finally {
@@ -474,13 +450,10 @@ export function ProcessesPage() {
                               Ver documentos del proceso
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedProcess(process)
-                                setIsGenerateDocumentsDialogOpen(true)
-                              }}
+                              onClick={() => router.push(`/member/processes/${process.id}/generate`)}
                             >
-                              <FileText className="mr-2 h-4 w-4" />
-                              Generar Documentos
+                              <Play className="mr-2 h-4 w-4" />
+                              Generar documentos
                             </DropdownMenuItem>
                             {process.spreadsheetUrl && (
                               <DropdownMenuItem
@@ -541,34 +514,8 @@ export function ProcessesPage() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onProcessCreated={handleProcessCreated}
-        onProcessCreatedAndReady={handleProcessCreatedAndReady}
+        onProcessCreatedAndGoToGenerate={handleProcessCreatedAndGoToGenerate}
       />
-
-      {/* Generate Documents Dialog */}
-      {(selectedProcess || processDataToCreate) && (
-        <GenerateDocumentsDialog
-          open={isGenerateDocumentsDialogOpen}
-          onOpenChange={(open) => {
-            setIsGenerateDocumentsDialogOpen(open)
-            if (!open) {
-              // Clear process data when closing
-              setProcessDataToCreate(null)
-              if (!isCreateDialogOpen) {
-                setSelectedProcess(null)
-              }
-            }
-          }}
-          process={selectedProcess}
-          processData={processDataToCreate?.processData || null}
-          entity={selectedProcess 
-            ? entities.find((e) => e.id === selectedProcess.entityId) || null
-            : processDataToCreate?.entity || null}
-          secretaryName={selectedProcess?.secretaryName || processDataToCreate?.secretaryName || ""}
-          processTypeName={processDataToCreate?.processTypeName}
-          onProcessCreated={handleProcessCreatedFromDialog}
-          onDocumentsGenerated={loadProcesses}
-        />
-      )}
 
       {/* View Process Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>

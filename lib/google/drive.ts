@@ -5,11 +5,18 @@
 
 import { google } from "googleapis"
 import { Readable } from "stream"
-import { getAuthenticatedOAuth2Client } from "./oauth"
+import { getDriveRequestTimeoutMs } from "@/lib/app-config"
+import { getAuthenticatedOAuth2Client, getAuthenticatedOAuth2ClientForServer } from "./oauth"
 
 // Initialize Google Drive API with OAuth2
 export async function getDriveClient(userId: string) {
   const auth = await getAuthenticatedOAuth2Client(userId)
+  return google.drive({ version: "v3", auth })
+}
+
+/** Drive client using service-role token lookup (for server-side background tasks, e.g. RAG ingest). */
+export async function getDriveClientForServer(userId: string) {
+  const auth = await getAuthenticatedOAuth2ClientForServer(userId)
   return google.drive({ version: "v3", auth })
 }
 
@@ -30,32 +37,30 @@ export async function getOrCreateFolder(
   const cacheKey = `folder:${userId}:${folderName}:${parentFolderId || "root"}`
   const { getCached, setCached, getLock, setLock } = await import("./cache")
   const cached = getCached(cacheKey)
-  if (cached) {
-    console.log(`[getOrCreateFolder] Using cached folder ID: ${cached}`)
-    return cached
-  }
+  if (cached) return cached
 
-  // Check if there's a lock (another request is creating this folder)
   const existingLock = getLock(cacheKey)
-  if (existingLock) {
-    console.log(`[getOrCreateFolder] Waiting for existing creation: ${cacheKey}`)
-    return existingLock
-  }
+  if (existingLock) return existingLock
 
   // Create a promise for this creation and lock it
   const creationPromise = (async () => {
     const drive = await getDriveClient(userId)
     
-    // With OAuth2, each user has their own Drive
-    // Use "root" as default parent (user's Drive root)
-    // Only use GOOGLE_DRIVE_FOLDER_ID if explicitly passed as parentFolderId
-    // This avoids issues when GOOGLE_DRIVE_FOLDER_ID is not accessible
-    let targetParentId = parentFolderId || "root"
-    const originalTargetParentId = targetParentId
-    
-    // Determine if we're using a Shared Drive
+    // With OAuth2, each user has their own Drive unless we use Shared Drive or una carpeta (organization)
     const driveId = process.env.GOOGLE_DRIVE_ID
+    const folderIdEnv = process.env.GOOGLE_DRIVE_FOLDER_ID?.trim()
     const isSharedDrive = !!(driveId && supportsAllDrives)
+    const logicalParent = parentFolderId || "root"
+    let targetParentId = logicalParent
+    // Al estar en "root": priorizar Shared Drive (GOOGLE_DRIVE_ID); si no hay, usar carpeta (GOOGLE_DRIVE_FOLDER_ID)
+    if (targetParentId === "root") {
+      if (isSharedDrive) {
+        targetParentId = driveId
+      } else if (folderIdEnv) {
+        targetParentId = folderIdEnv
+      }
+    }
+    const originalTargetParentId = logicalParent
 
     try {
     // Escape single quotes in folder name for query
@@ -103,16 +108,13 @@ export async function getOrCreateFolder(
     // If folder exists, return its ID (take the first one if multiple exist)
     if (searchResponse.data.files && searchResponse.data.files.length > 0) {
       const folderId = searchResponse.data.files[0].id!
-      // If multiple folders found, log a warning but use the first one
-      if (searchResponse.data.files.length > 1) {
-        console.warn(`[getOrCreateFolder] Multiple folders found with name "${folderName}", using first one: ${folderId}`)
-      }
       // Cache the result
       setCached(cacheKey, folderId)
       return folderId
     }
 
     // Create folder if it doesn't exist
+    // For Shared Drive, targetParentId is already the drive ID when we're at "root", so parents: [targetParentId] puts folder in org Drive
     const folderMetadata: {
       name: string
       mimeType: string
@@ -121,12 +123,10 @@ export async function getOrCreateFolder(
     } = {
       name: folderName,
       mimeType: "application/vnd.google-apps.folder",
-      parents: targetParentId === "root" ? [] : [targetParentId], // Empty array for root
+      parents: targetParentId === "root" ? [] : [targetParentId],
     }
 
-    // Only add driveId if we're actually using a Shared Drive
-    // Don't add it for regular user Drive (root)
-    if (isSharedDrive && targetParentId !== "root") {
+    if (isSharedDrive && driveId) {
       folderMetadata.driveId = driveId
     }
 
@@ -145,25 +145,15 @@ export async function getOrCreateFolder(
     setCached(cacheKey, folderId)
     return folderId
   } catch (error) {
-    console.error("Error getting/creating folder:", error)
-    
-    // If error is about folder not found and we're using GOOGLE_DRIVE_FOLDER_ID, try with root instead
-    // But we need to use a different cacheKey for the root attempt
     if (originalTargetParentId !== "root" && originalTargetParentId === process.env.GOOGLE_DRIVE_FOLDER_ID) {
-      console.log(`[getOrCreateFolder] Folder ${originalTargetParentId} not accessible, trying with root instead`)
-      // Clear the current lock and try with root using a different cache key
       const rootCacheKey = `folder:${userId}:${folderName}:root`
       const rootCached = getCached(rootCacheKey)
       if (rootCached) {
-        console.log(`[getOrCreateFolder] Using cached root folder ID: ${rootCached}`)
-        // Also cache it with the original key for consistency
         setCached(cacheKey, rootCached)
         return rootCached
       }
-      // Try to get the root lock
       const rootLock = getLock(rootCacheKey)
       if (rootLock) {
-        console.log(`[getOrCreateFolder] Waiting for root folder creation: ${rootCacheKey}`)
         const result = await rootLock
         // Cache it with the original key too
         setCached(cacheKey, result)
@@ -283,15 +273,12 @@ export async function uploadFileToDrive(
             type: "anyone",
           },
         })
-        console.log(`[uploadFileToDrive] File ${response.data.id} made publicly accessible`)
-      } catch (permError) {
-        console.warn(`[uploadFileToDrive] Failed to set public permissions, but file was uploaded:`, permError)
+      } catch {
         // Don't fail the upload if permissions fail
       }
     } else {
       // For Shared Drives, ensure the file is accessible to organization members
       // The file should already be accessible if the user has proper permissions in the Shared Drive
-      console.log(`[uploadFileToDrive] File ${response.data.id} uploaded to Shared Drive`)
     }
 
     // Get the direct download link
@@ -307,7 +294,6 @@ export async function uploadFileToDrive(
       drivePath,
     }
   } catch (error) {
-    console.error("Error uploading file to Google Drive:", error)
     throw new Error(`Failed to upload file to Google Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -348,7 +334,6 @@ export async function findFileByPath(userId: string, drivePath: string): Promise
 
     return null
   } catch (error) {
-    console.error("Error finding file by path:", error)
     return null
   }
 }
@@ -360,32 +345,27 @@ export async function findFileByPath(userId: string, drivePath: string): Promise
  */
 export async function downloadFileFromDrive(userId: string, fileId: string): Promise<Buffer> {
   const drive = await getDriveClient(userId)
-  const driveId = process.env.GOOGLE_DRIVE_ID
-  const supportsAllDrives = !!driveId
+  return downloadFileWithDriveClient(drive, fileId)
+}
 
+/**
+ * Download a file from Drive using service-role token lookup (bypasses RLS).
+ * Use in server-side background tasks (e.g. RAG ingest) so any user's tokens can be used.
+ */
+export async function downloadFileFromDriveForServer(userId: string, fileId: string): Promise<Buffer> {
+  const drive = await getDriveClientForServer(userId)
+  return downloadFileWithDriveClient(drive, fileId)
+}
+
+async function downloadFileWithDriveClient(drive: ReturnType<typeof google.drive>, fileId: string): Promise<Buffer> {
+  const supportsAllDrives = true
   try {
-    const getOptions: {
-      fileId: string
-      alt: string
-      supportsAllDrives?: boolean
-    } = {
-      fileId,
-      alt: "media",
-    }
-
-    if (supportsAllDrives) {
-      getOptions.supportsAllDrives = true
-    }
-
-    // Timeout largo para plantillas/documentos grandes (2 min)
-    const response = await drive.files.get(getOptions, {
-      responseType: "arraybuffer",
-      timeout: 120000,
-    })
-
+    const response = await drive.files.get(
+      { fileId, alt: "media", supportsAllDrives },
+      { responseType: "arraybuffer", timeout: getDriveRequestTimeoutMs() },
+    )
     return Buffer.from(response.data as ArrayBuffer)
   } catch (error) {
-    console.error("Error downloading file from Drive:", error)
     throw new Error(`Failed to download file from Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -554,7 +534,6 @@ export async function uploadDocumentToDrive(
       processFolderUrl,
     }
   } catch (error) {
-    console.error("Error uploading document to Google Drive:", error)
     throw new Error(`Failed to upload document to Google Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -582,7 +561,6 @@ export async function deleteFileFromDrive(userId: string, fileId: string): Promi
 
     await drive.files.delete(deleteOptions)
   } catch (error) {
-    console.error("Error deleting file from Google Drive:", error)
     throw new Error(`Failed to delete file from Google Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -688,7 +666,6 @@ export async function updateFileInDrive(
       drivePath,
     }
   } catch (error) {
-    console.error("Error updating file in Google Drive:", error)
     throw new Error(`Failed to update file in Google Drive: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }

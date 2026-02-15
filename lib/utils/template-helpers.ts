@@ -5,21 +5,23 @@
 /**
  * Extracts all tags/variables from text that match the pattern {{VARIABLE_NAME}}
  * @param text - The text content to search for tags
- * @returns Array of unique variable names found (without the {{}} brackets)
+ * @returns Array of unique variable names in order of first appearance in the document (no sorting)
  */
 export function extractTemplateTags(text: string): string[] {
   // Match pattern {{VARIABLE_NAME}} - case sensitive, allows underscores and alphanumeric
   const tagPattern = /\{\{([A-Z_][A-Z0-9_]*)\}\}/g
   const matches = text.matchAll(tagPattern)
-  const tags = new Set<string>()
+  const tags: string[] = []
+  const seen = new Set<string>()
 
   for (const match of matches) {
-    if (match[1]) {
-      tags.add(match[1])
+    if (match[1] && !seen.has(match[1])) {
+      seen.add(match[1])
+      tags.push(match[1])
     }
   }
 
-  return Array.from(tags).sort()
+  return tags
 }
 
 /**

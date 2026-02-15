@@ -7,11 +7,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/status-badge"
 import { Badge } from "@/components/ui/badge"
-import { getEntities, getCurrentProfile, getProcessesMapped, getDocuments } from "@/lib/supabase/client-data-access"
+import { getEntities, getEntitiesForImpersonation, getProcessesMapped, getProcessesForImpersonation, getDocuments, getDocumentsForImpersonation, getCurrentProfile } from "@/lib/supabase/client-data-access"
 import type { Entity } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 
 export function MemberEntitySelector() {
   const router = useRouter()
+  const { profile: profileFromHook } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : (profileFromHook?.organization_id ?? null)
   const [hoveredEntity, setHoveredEntity] = React.useState<string | null>(null)
   const [entities, setEntities] = React.useState<Entity[]>([])
   const [organizationName, setOrganizationName] = React.useState<string>("")
@@ -21,64 +26,58 @@ export function MemberEntitySelector() {
 
   React.useEffect(() => {
     async function loadData() {
+      if (isImpersonating && !impersonatedOrg) {
+        setEntities([])
+        setIsLoading(false)
+        return
+      }
+      const effectiveOrgId = orgId ?? (await getCurrentProfile()).organization_id ?? null
+      if (!effectiveOrgId) {
+        setEntities([])
+        setOrganizationName("")
+        setIsLoading(false)
+        return
+      }
       try {
         setIsLoading(true)
         const profile = await getCurrentProfile()
-        console.log("[MemberEntitySelector] Profile loaded:", { 
-          id: profile?.id, 
-          organization_id: profile?.organization_id,
-          role: profile?.role 
-        })
-        
-        if (!profile?.organization_id) {
-          console.warn("[MemberEntitySelector] No organization_id found in profile")
-          setEntities([])
-          setIsLoading(false)
-          return
-        }
-        
-        console.log("[MemberEntitySelector] Loading entities for organization:", profile.organization_id)
-        const data = await getEntities(profile.organization_id)
-        console.log("[MemberEntitySelector] Entities loaded:", data.length, "total entities")
-        
-        const activeEntities = data.filter((e) => e.status === "active")
-        console.log("[MemberEntitySelector] Active entities:", activeEntities.length)
-        setEntities(activeEntities)
-        
-        // Obtener nombre de la organización del primer resultado si existe
-        if (profile.full_name) {
-          setOrganizationName(profile.full_name)
-        }
+        if (profile?.full_name && !isImpersonating) setOrganizationName(profile.full_name)
+        else if (isImpersonating && impersonatedOrg?.name) setOrganizationName(impersonatedOrg.name)
 
-          // Cargar procesos y documentos para estadísticas
-          // Filtrar por entidades de la organización
-          try {
-            const allProcessesData = await getProcessesMapped()
-            // Filtrar procesos por las entidades de la organización
-            const entityIds = activeEntities.map((e) => e.id)
-            const organizationProcesses = (allProcessesData || []).filter((p) => entityIds.includes(p.entityId))
-            setAllProcesses(organizationProcesses)
-            
-            // Filtrar documentos por los procesos de la organización
-            const allDocumentsData = await getDocuments()
-            const processIds = organizationProcesses.map((p) => p.id)
-            const organizationDocuments = (allDocumentsData || []).filter((d: any) => {
-              // getDocuments returns documents with process_id field (snake_case)
-              return processIds.includes(d.process_id)
-            })
-            setAllDocuments(organizationDocuments)
-          } catch (err) {
-            console.error("[v0] Error loading processes or documents:", err)
-          }
+        const data = isImpersonating
+          ? await getEntitiesForImpersonation(effectiveOrgId)
+          : await getEntities(effectiveOrgId)
+        const activeEntities = data.filter((e) => e.status === "active")
+        setEntities(activeEntities)
+
+        if (isImpersonating) {
+          const [processesData, documentsData] = await Promise.all([
+            getProcessesForImpersonation(effectiveOrgId),
+            getDocumentsForImpersonation(effectiveOrgId),
+          ])
+          setAllProcesses(processesData || [])
+          setAllDocuments(Array.isArray(documentsData) ? documentsData : [])
+        } else {
+          const allProcessesData = await getProcessesMapped()
+          const entityIds = activeEntities.map((e) => e.id)
+          const organizationProcesses = (allProcessesData || []).filter((p) => entityIds.includes(p.entityId))
+          setAllProcesses(organizationProcesses)
+          const allDocumentsData = await getDocuments()
+          const processIds = organizationProcesses.map((p) => p.id)
+          const organizationDocuments = (allDocumentsData || []).filter((d: any) =>
+            processIds.includes(d.process_id)
+          )
+          setAllDocuments(organizationDocuments)
+        }
       } catch (err) {
-        console.error("[v0] Error loading entities:", err)
+        console.error("[MemberEntitySelector] Error loading data:", err)
         setEntities([])
       } finally {
         setIsLoading(false)
       }
     }
     loadData()
-  }, [])
+  }, [orgId, isImpersonating, impersonatedOrg?.name])
 
   const handleEntitySelect = (entityId: string) => {
     router.push(`/member/dashboard?entity=${entityId}`)
@@ -250,11 +249,9 @@ export function MemberEntitySelector() {
                     <Badge variant="secondary" className="gap-1.5 px-3 py-1">
                       <FileText className="h-3.5 w-3.5" />
                       {allDocuments.filter((d: any) => {
-                        // Document can have process_id directly or through process relation
-                        const processId = d.process_id || (d.process?.id)
+                        const processId = d.process_id ?? d.processId ?? d.process?.id
                         const process = allProcesses.find((p) => p.id === processId)
-                        // Also check if document has process.entity relation
-                        const entityIdFromProcess = process?.entityId || (d.process?.entity?.id || d.process?.entity_id)
+                        const entityIdFromProcess = process?.entityId ?? d.process?.entity?.id ?? d.process?.entity_id ?? d.entityId
                         return entityIdFromProcess === entity.id
                       }).length} documentos
                     </Badge>

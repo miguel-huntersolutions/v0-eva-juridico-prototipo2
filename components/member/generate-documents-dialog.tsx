@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import {
   Loader2,
   FileText,
@@ -52,6 +53,8 @@ interface GenerateDocumentsDialogProps {
   processTypeName?: string
   onProcessCreated?: (process: ProcessMapped) => void
   onDocumentsGenerated?: () => void // Callback to refresh processes list
+  /** When true, render content inline (no modal); use on generate page */
+  embedded?: boolean
 }
 
 export function GenerateDocumentsDialog({
@@ -64,7 +67,9 @@ export function GenerateDocumentsDialog({
   processTypeName,
   onProcessCreated,
   onDocumentsGenerated,
+  embedded = false,
 }: GenerateDocumentsDialogProps) {
+  const router = useRouter()
   const { profile } = useProfile()
   
   // Determine if this is a new process (not yet created) or existing
@@ -502,7 +507,10 @@ export function GenerateDocumentsDialog({
           )
         if (allGenerated) {
           if (onDocumentsGenerated) onDocumentsGenerated()
-          setTimeout(() => handleClose(), 1500)
+          setTimeout(() => {
+            handleClose()
+            router.push("/member/processes")
+          }, 1500)
         }
       }
 
@@ -565,11 +573,14 @@ export function GenerateDocumentsDialog({
         await handleGenerateDocument(templates[i], 0, processIdToUse, true)
       }
 
-      // Todos los documentos generados: refrescar lista y cerrar tras un breve delay
+      // Todos los documentos generados: refrescar lista, cerrar y volver al listado de procesos
       if (onDocumentsGenerated) {
         onDocumentsGenerated()
       }
-      setTimeout(() => handleClose(), 1500)
+      setTimeout(() => {
+        handleClose()
+        router.push("/member/processes")
+      }, 1500)
     } catch (error) {
       console.error("Error generating documents:", error)
       setError(error instanceof Error ? error.message : "Error al generar los documentos. Por favor intente de nuevo.")
@@ -600,32 +611,43 @@ export function GenerateDocumentsDialog({
   const currentTemplate = templates[currentStep] || null
   const currentTemplateTags = currentTemplate?.variables || []
 
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="max-w-4xl max-h-[90vh] flex flex-col"
-        showCloseButton={!isBusy}
-        onPointerDownOutside={(e) => {
-          if (isBusy) e.preventDefault()
-        }}
-        onEscapeKeyDown={(e) => {
-          if (isBusy) e.preventDefault()
-        }}
-      >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Generar Documentos del Proceso
-          </DialogTitle>
-          <DialogDescription>
-            {currentProcess && (
-              <>
-                {isNewProcess ? "Nuevo " : ""}Proceso: <span className="font-mono text-sm">{currentProcess.code}</span> - Completa los campos para cada
-                plantilla
-              </>
-            )}
-          </DialogDescription>
-        </DialogHeader>
+  const effectiveOpen = embedded ? true : open
+
+  const headerBlock = embedded ? (
+    <div className="space-y-1.5 pb-4">
+      <h2 className="text-lg font-semibold flex items-center gap-2">
+        <FileText className="h-5 w-5" />
+        Generar Documentos del Proceso
+      </h2>
+      <p className="text-sm text-muted-foreground">
+        {currentProcess && (
+          <>
+            {isNewProcess ? "Nuevo " : ""}Proceso: <span className="font-mono text-sm">{currentProcess.code}</span> - Completa los campos para cada
+            plantilla
+          </>
+        )}
+      </p>
+    </div>
+  ) : (
+    <DialogHeader>
+      <DialogTitle className="flex items-center gap-2">
+        <FileText className="h-5 w-5" />
+        Generar Documentos del Proceso
+      </DialogTitle>
+      <DialogDescription>
+        {currentProcess && (
+          <>
+            {isNewProcess ? "Nuevo " : ""}Proceso: <span className="font-mono text-sm">{currentProcess.code}</span> - Completa los campos para cada
+            plantilla
+          </>
+        )}
+      </DialogDescription>
+    </DialogHeader>
+  )
+
+  const content = (
+    <>
+        {headerBlock}
 
         {error && <div className="bg-destructive/10 text-destructive px-4 py-2 rounded-md text-sm">{error}</div>}
 
@@ -807,8 +829,8 @@ export function GenerateDocumentsDialog({
               )}
             </div>
 
-            <DialogFooter className="border-t pt-4">
-              <div className="flex items-center justify-between w-full">
+            {embedded ? (
+              <div className="border-t pt-4 flex items-center justify-between w-full shrink-0">
                 <Button
                   variant="outline"
                   onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
@@ -817,59 +839,74 @@ export function GenerateDocumentsDialog({
                   <ChevronLeft className="mr-2 h-4 w-4" />
                   Anterior
                 </Button>
-
                 <div className="flex gap-2">
                   {currentStep < templates.length - 1 ? (
-                    <Button
-                      onClick={() => setCurrentStep(currentStep + 1)}
-                      disabled={!canProceedToNext() || isGenerating || isSaving}
-                    >
-                      Siguiente
-                      <ChevronRight className="ml-2 h-4 w-4" />
+                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
+                      Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                     </Button>
                   ) : (
                     <>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleGenerateDocument(currentTemplate)}
-                        disabled={!canGenerateCurrent() || isGenerating || isSaving}
-                      >
-                        {isGenerating ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Generando... (documentos grandes pueden tardar 1-2 min)
-                          </>
-                        ) : (
-                          <>
-                            <FileText className="mr-2 h-4 w-4" />
-                            Generar Este
-                          </>
-                        )}
+                      <Button variant="outline" onClick={() => handleGenerateDocument(currentTemplate)} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                        {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
                       </Button>
-                      <Button
-                        onClick={handleGenerateAll}
-                        disabled={isGenerating || isSaving}
-                        className="gap-2"
-                      >
-                        {isSaving ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="h-4 w-4" />
-                            {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}
-                          </>
-                        )}
+                      <Button onClick={handleGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
+                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
                       </Button>
                     </>
                   )}
                 </div>
               </div>
-            </DialogFooter>
+            ) : (
+              <DialogFooter className="border-t pt-4">
+                <div className="flex items-center justify-between w-full">
+                  <Button variant="outline" onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} disabled={currentStep === 0 || isGenerating || isSaving}>
+                    <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
+                  </Button>
+                  <div className="flex gap-2">
+                    {currentStep < templates.length - 1 ? (
+                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
+                        Siguiente <ChevronRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <>
+                        <Button variant="outline" onClick={() => handleGenerateDocument(currentTemplate)} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                          {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
+                        </Button>
+                        <Button onClick={handleGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
+                          {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </DialogFooter>
+            )}
           </>
         )}
+    </>
+  )
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col max-w-4xl w-full flex-1 min-h-0 overflow-hidden">
+        {content}
+      </div>
+    )
+  }
+
+  return (
+    <Dialog open={effectiveOpen} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-w-4xl max-h-[90vh] flex flex-col"
+        showCloseButton={!isBusy}
+        onPointerDownOutside={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+        onEscapeKeyDown={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+      >
+        {content}
       </DialogContent>
     </Dialog>
   )

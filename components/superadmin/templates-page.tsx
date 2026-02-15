@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import {
   FileText,
   Plus,
@@ -58,6 +58,7 @@ import {
 import type { ProcessType } from "@/lib/mock-data"
 import { getTemplates, createTemplate, deleteTemplate, updateTemplate, getProcessTypes, type Template } from "@/lib/supabase/client-data-access"
 import { extractTagsFromDocx } from "@/lib/utils/template-helpers"
+import { useProfile } from "@/hooks/use-profile"
 
 interface UploadedFile {
   name: string
@@ -69,6 +70,8 @@ interface UploadedFile {
 
 export function TemplatesPage() {
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const { profile } = useProfile()
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
@@ -774,6 +777,11 @@ SECCIONES SUGERIDAS:
 
       setTemplates([...templates, newTemplate])
       handleCloseCreate()
+      if (profile?.role === "superadmin") {
+        router.push("/superadmin/templates")
+      } else {
+        router.push("/member/processes")
+      }
     } catch (err) {
       console.error("Error creating template:", err)
       alert(err instanceof Error ? err.message : "Error al crear la plantilla. Por favor, intente de nuevo.")

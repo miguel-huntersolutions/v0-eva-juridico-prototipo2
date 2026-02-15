@@ -20,15 +20,17 @@ import {
   getProcessTypes,
   getSecretaries,
   getEntities,
+  getEntitiesForImpersonation,
   getMemberAssignedEntities,
   createProcess,
   generateProcessCode,
   getProcessesMapped,
   type ProcessType,
-  type Entity,
+  type EntityMapped,
   type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 
 interface ProcessData {
   code: string
@@ -45,7 +47,10 @@ interface CreateProcessDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onProcessCreated?: (process: ProcessMapped) => void
-  onProcessCreatedAndReady?: (processData: ProcessData, entity: Entity | null, secretaryName: string, processTypeName: string) => void
+  /** Opens generate dialog with process data (process not created yet). */
+  onProcessCreatedAndReady?: (processData: ProcessData, entity: EntityMapped | null, secretaryName: string, processTypeName: string) => void
+  /** Creates process and navigates to generate page (process created immediately). Always uses form mode. */
+  onProcessCreatedAndGoToGenerate?: (process: ProcessMapped) => void
 }
 
 interface FormData {
@@ -60,8 +65,10 @@ interface Secretary {
   entity_id: string
 }
 
-export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onProcessCreatedAndReady }: CreateProcessDialogProps) {
+export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onProcessCreatedAndReady, onProcessCreatedAndGoToGenerate }: CreateProcessDialogProps) {
   const { profile } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
   const [formData, setFormData] = React.useState<FormData>({
     secretaryId: "",
     processTypeId: "",
@@ -71,7 +78,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
 
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(false)
   const [secretaries, setSecretaries] = React.useState<Secretary[]>([])
   const [isLoadingSecretaries, setIsLoadingSecretaries] = React.useState(false)
@@ -83,7 +90,6 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
         const types = await getProcessTypes()
         setProcessTypes(types)
       } catch (error) {
-        console.error("Error loading process types:", error)
       } finally {
         setIsLoadingTypes(false)
       }
@@ -95,36 +101,28 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
 
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id || !profile?.id || !open) {
+      if (!orgId || !open) {
         setEntities([])
         return
       }
+      if (!isImpersonating && !profile?.id) return
       try {
         setIsLoadingEntities(true)
-        // Get assigned entity IDs for this member
-        const assignedEntityIds = await getMemberAssignedEntities(profile.id)
-        console.log("[CreateProcessDialog] Assigned entity IDs:", assignedEntityIds)
-        
-        // Get all entities from organization
-        const allEntities = await getEntities(profile.organization_id)
-        
-        // Filter to only assigned entities that are active
-        const assigned = allEntities.filter(
-          (e) => assignedEntityIds.includes(e.id) && e.status === "active"
-        )
-        
-        console.log("[CreateProcessDialog] All entities:", allEntities.length, "Assigned entities:", assigned.length)
-        setEntities(assigned)
+        const allEntities = isImpersonating
+          ? await getEntitiesForImpersonation(orgId)
+          : await getEntities(orgId)
+        const assignedEntityIds = isImpersonating ? [] : await getMemberAssignedEntities(profile!.id)
+        const toShow = isImpersonating
+          ? allEntities.filter((e) => e.status === "active")
+          : allEntities.filter((e) => assignedEntityIds.includes(e.id) && e.status === "active")
+        setEntities(toShow)
       } catch (error) {
-        console.error("Error loading entities:", error)
       } finally {
         setIsLoadingEntities(false)
       }
     }
-    if (open && profile?.organization_id && profile?.id) {
-      loadEntities()
-    }
-  }, [open, profile?.organization_id, profile?.id])
+    if (open && orgId && (isImpersonating || profile?.id)) loadEntities()
+  }, [open, orgId, isImpersonating, profile?.id])
 
   React.useEffect(() => {
     async function loadSecretaries() {
@@ -169,20 +167,15 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
     try {
       setError(null)
 
-      // Generate process code (but don't create the process yet)
       const code = await generateProcessCode(formData.processTypeId)
-
-      // Get entity and secretary info
       const selectedEntity = entities.find((e) => e.id === formData.entityId) || null
       const selectedSecretary = secretaries.find((s) => s.id === formData.secretaryId)
       const secretaryName = selectedSecretary?.name || ""
       const selectedProcessType = processTypes.find((pt) => pt.id === formData.processTypeId)
-
-      // Prepare process data (not created yet)
       const processData = {
         code,
-        object: "", // Empty object as per requirements
-        description: "", // Empty description as per requirements
+        object: "",
+        description: "",
         entityId: formData.entityId,
         secretaryId: formData.secretaryId,
         processTypeId: formData.processTypeId,
@@ -190,14 +183,18 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
         createdBy: profile.id,
       }
 
-      // Call the callback to open generate documents dialog with process data
+      if (onProcessCreatedAndGoToGenerate) {
+        const newProcess = await createProcess({ ...processData, createdBy: profile.id })
+        onProcessCreatedAndGoToGenerate(newProcess as unknown as ProcessMapped)
+        handleClose()
+        return
+      }
+
       if (onProcessCreatedAndReady) {
         onProcessCreatedAndReady(processData, selectedEntity, secretaryName, selectedProcessType?.name || "")
       }
-
       handleClose()
     } catch (err) {
-      console.error("Error preparing process:", err)
       setError("Error al preparar el proceso. Por favor intente de nuevo.")
     }
   }
@@ -317,6 +314,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
                   </CardContent>
                 </Card>
               )}
+
           </div>
         </div>
 

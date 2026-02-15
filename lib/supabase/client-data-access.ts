@@ -216,16 +216,56 @@ export async function impersonateOrganization(organizationId: string) {
 }
 
 // Entities
+const DOCUMENTS_PROCESS_IDS_CHUNK = 30
+
+/** Fetch document count for many process_ids in chunks to avoid 500/URL length limits. */
+async function documentsCountByProcessIds(
+  supabase: ReturnType<typeof createBrowserClient>,
+  processIds: string[],
+): Promise<number> {
+  if (processIds.length === 0) return 0
+  if (processIds.length <= DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const { count } = await supabase
+      .from("documents")
+      .select("*", { count: "exact", head: true })
+      .in("process_id", processIds)
+    return count ?? 0
+  }
+  let total = 0
+  for (let i = 0; i < processIds.length; i += DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const chunk = processIds.slice(i, i + DOCUMENTS_PROCESS_IDS_CHUNK)
+    const { count } = await supabase
+      .from("documents")
+      .select("*", { count: "exact", head: true })
+      .in("process_id", chunk)
+    total += count ?? 0
+  }
+  return total
+}
+
+/** Fetch process_id list for many process_ids in chunks (for document counts per process). */
+async function documentsProcessIdsInChunks(
+  supabase: ReturnType<typeof createBrowserClient>,
+  processIds: string[],
+): Promise<{ process_id: string }[]> {
+  if (processIds.length === 0) return []
+  if (processIds.length <= DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const { data } = await supabase.from("documents").select("process_id").in("process_id", processIds)
+    return (data ?? []) as { process_id: string }[]
+  }
+  const out: { process_id: string }[] = []
+  for (let i = 0; i < processIds.length; i += DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const chunk = processIds.slice(i, i + DOCUMENTS_PROCESS_IDS_CHUNK)
+    const { data } = await supabase.from("documents").select("process_id").in("process_id", chunk)
+    out.push(...((data ?? []) as { process_id: string }[]))
+  }
+  return out
+}
+
 export async function getEntities(organizationId?: string): Promise<EntityMapped[]> {
   const supabase = createBrowserClient()
-  let query = supabase.from("entities").select("*").order("name")
- 
-  console.log("organization_id", organizationId)
-  
-
-  if (organizationId) {
-    query = query.eq("organization_id", organizationId)
-  }
+  if (!organizationId) return []
+  const query = supabase.from("entities").select("*").order("name").eq("organization_id", organizationId)
 
   const { data, error } = await query
   if (error) throw error
@@ -246,14 +286,7 @@ export async function getEntities(organizationId?: string): Promise<EntityMapped
         .eq("entity_id", e.id)
 
       const processIds = processes?.map((p) => p.id) || []
-      let documentsCount = 0
-      if (processIds.length > 0) {
-        const { count } = await supabase
-          .from("documents")
-          .select("*", { count: "exact", head: true })
-          .in("process_id", processIds)
-        documentsCount = count || 0
-      }
+      const documentsCount = await documentsCountByProcessIds(supabase, processIds)
 
       return {
         id: e.id,
@@ -270,6 +303,52 @@ export async function getEntities(organizationId?: string): Promise<EntityMapped
   )
 
   return entitiesWithCounts
+}
+
+/**
+ * Fetch entities for an organization via API (service role). Use when impersonating
+ * so the admin sees the same entities as the member (RLS would otherwise block).
+ */
+export async function getEntitiesForImpersonation(organizationId: string): Promise<EntityMapped[]> {
+  const res = await fetch(`/api/entities?organizationId=${encodeURIComponent(organizationId)}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch entities")
+  }
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
+
+export async function getProcessesForImpersonation(organizationId: string): Promise<ProcessMapped[]> {
+  const res = await fetch(`/api/processes?organizationId=${encodeURIComponent(organizationId)}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch processes")
+  }
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
+
+export async function getProcessMappedForImpersonation(processId: string): Promise<ProcessMapped | null> {
+  const res = await fetch(`/api/processes/${encodeURIComponent(processId)}`)
+  if (!res.ok) {
+    if (res.status === 404) return null
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch process")
+  }
+  const data = await res.json()
+  return data
+}
+
+/** Same shape as API response: id, processId, processCode, ... (ready for member docs list) */
+export async function getDocumentsForImpersonation(organizationId: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`/api/documents?organizationId=${encodeURIComponent(organizationId)}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch documents")
+  }
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
 }
 
 export async function createEntity(data: {
@@ -825,9 +904,8 @@ export async function getProcessesMapped(filters?: {
   let documentCounts: Record<string, number> = {}
 
   if (processIds.length > 0) {
-    const { data: docs } = await supabase.from("documents").select("process_id").in("process_id", processIds)
-
-    documentCounts = (docs || []).reduce(
+    const docs = await documentsProcessIdsInChunks(supabase, processIds)
+    documentCounts = docs.reduce(
       (acc, d) => {
         acc[d.process_id] = (acc[d.process_id] || 0) + 1
         return acc
@@ -1001,13 +1079,13 @@ export async function generateProcessCode(processTypeId: string): Promise<string
     const sequenceStr = String(sequence).padStart(3, "0")
     code = `${abbrev}-${year}-${sequenceStr}`
     
-    // Check if this code already exists
+    // Check if this code already exists (.maybeSingle() avoids 406 when no row)
     const { data: existing } = await supabase
       .from("processes")
       .select("id")
       .eq("code", code)
-      .single()
-    
+      .maybeSingle()
+
     // If code doesn't exist, we can use it
     if (!existing) {
       return code
@@ -1038,6 +1116,44 @@ export async function getProcess(id: string) {
 
   if (error) throw error
   return data as ProcessWithRelations
+}
+
+export async function getProcessMapped(id: string): Promise<ProcessMapped | null> {
+  const supabase = createBrowserClient()
+  const { data: p, error } = await supabase
+    .from("processes")
+    .select(`
+      *,
+      entity:entities(id, name),
+      secretary:secretaries(id, name),
+      process_type:process_types(id, name)
+    `)
+    .eq("id", id)
+    .single()
+
+  if (error || !p) return null
+  const { count } = await supabase.from("documents").select("*", { count: "exact", head: true }).eq("process_id", id)
+  return {
+    id: p.id,
+    code: p.code || "",
+    object: p.object || "",
+    description: p.description || "",
+    status: p.status as ProcessMapped["status"],
+    entityId: p.entity_id,
+    entityName: (p as any).entity?.name || "",
+    secretaryId: p.secretary_id,
+    secretaryName: (p as any).secretary?.name || "",
+    processTypeId: p.process_type_id,
+    processTypeName: (p as any).process_type?.name || "",
+    createdAt: p.created_at?.split("T")[0] || "",
+    updatedAt: p.updated_at?.split("T")[0] || "",
+    documentsCount: count ?? 0,
+    currentVersion: p.current_version || 1,
+    spreadsheetId: (p as any).spreadsheet_id ?? null,
+    spreadsheetUrl: (p as any).spreadsheet_url ?? null,
+    driveFolderId: (p as any).drive_folder_id ?? null,
+    driveFolderUrl: (p as any).drive_folder_url ?? null,
+  }
 }
 
 // Documents

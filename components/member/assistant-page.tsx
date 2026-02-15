@@ -787,9 +787,9 @@ export function AssistantPage() {
                             )}
                           >
                             {message.role === "assistant" ? (
-                              <div className="space-y-3">
+                              <div className="space-y-3 font-normal">
                                 <div
-                                  className="prose prose-sm dark:prose-invert max-w-none"
+                                  className="prose prose-sm dark:prose-invert max-w-none font-normal [&>*]:font-normal [&_strong]:font-semibold"
                                   dangerouslySetInnerHTML={{ __html: renderContent(messageText) }}
                                 />
                                 <div className="flex items-center gap-2 pt-2 border-t border-border/50">

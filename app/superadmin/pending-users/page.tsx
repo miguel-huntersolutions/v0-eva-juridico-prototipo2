@@ -27,7 +27,7 @@ export default function SuperadminPendingUsersPage() {
   return (
     <div className="flex h-screen overflow-hidden">
       <AppSidebar profile={profile} />
-      <main className={`flex-1 overflow-y-auto ${isImpersonating ? "pt-[48px]" : ""}`}>
+      <main className={`flex-1 overflow-y-auto px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-14" : ""}`}>
         <PendingUsersPage />
       </main>
     </div>

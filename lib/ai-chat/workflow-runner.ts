@@ -9,21 +9,22 @@ import { z } from "zod"
 import { OpenAI } from "openai"
 import { runGuardrails } from "@openai/guardrails"
 import type { ChatMessage } from "./types"
+import { getOpenAIWorkflowModel } from "@/lib/ai-model-config"
 
-// Get workflow ID from environment variable
+// Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
-
-// Vector store ID for file search
 const VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID || "vs_6925fde642a481918a79478672c29e81"
 
 // Shared client for guardrails and file search
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-// Guardrails definitions
-const jailbreakGuardrailConfig = {
-  guardrails: [
-    { name: "Jailbreak", config: { model: "gpt-4o-mini", confidence_threshold: 0.7 } },
-  ],
+// Guardrails definitions (model from env via getOpenAIWorkflowModel)
+function getJailbreakGuardrailConfig() {
+  return {
+    guardrails: [
+      { name: "Jailbreak", config: { model: getOpenAIWorkflowModel(), confidence_threshold: 0.7 } },
+    ],
+  }
 }
 const context = { guardrailLlm: client }
 
@@ -185,7 +186,7 @@ const classificationAgent = new Agent({
 2. Questions about contract terms, clauses, or legal interpretation should route to "contract_consultation".
 3. Questions about laws, regulations, jurisprudence, or legal precedents should route to "legal_research".
 4. Any other general questions about public contracting should go to "general_information".`,
-  model: "gpt-4o-mini",
+  model: getOpenAIWorkflowModel(),
   outputType: ClassificationAgentSchema,
   modelSettings: {
     temperature: 1,
@@ -198,6 +199,7 @@ const classificationAgent = new Agent({
 const processGuidanceAgent = new Agent({
   name: "Process Guidance Agent",
   instructions: `You are a specialized agent for guiding users through public contracting processes in Colombia.
+  Use file search to base your answers on the documents in the knowledge base (alcaldes, contratos, procesos, plantillas).
   Provide step-by-step guidance on processes like:
   - Licitación pública
   - Selección abreviada
@@ -206,9 +208,10 @@ const processGuidanceAgent = new Agent({
   - Evaluación de ofertas
   - Adjudicación y celebración de contratos
   
-  Always cite the relevant articles from Decreto 1082 de 2015 and other applicable regulations.
-  Provide clear, actionable guidance with specific deadlines and requirements.`,
-  model: "gpt-4o-mini",
+  Always cite the relevant articles from Decreto 1082 de 2015 and other applicable regulations when available in the documents.
+  Provide clear, actionable guidance with specific deadlines and requirements.   Prefer information retrieved from the documents over general knowledge.`,
+  model: getOpenAIWorkflowModel(),
+  tools: [fileSearch],
   modelSettings: {
     temperature: 1,
     topP: 1,
@@ -220,6 +223,7 @@ const processGuidanceAgent = new Agent({
 const contractConsultationAgent = new Agent({
   name: "Contract Consultation Agent",
   instructions: `You are a specialized agent for contract consultation and interpretation.
+  Use file search to base your answers on the documents in the knowledge base (contratos, cláusulas, normativa).
   Help users understand:
   - Contract terms and clauses
   - Legal requirements for contracts
@@ -227,8 +231,9 @@ const contractConsultationAgent = new Agent({
   - Guarantees and warranties
   - Payment and execution terms
   
-  Always reference the specific legal framework (Ley 80, Decreto 1082) and provide precise citations.`,
-  model: "gpt-4o-mini",
+  Always reference the specific legal framework (Ley 80, Decreto 1082) when available in the documents and provide precise citations. Prefer information retrieved from the documents.`,
+  model: getOpenAIWorkflowModel(),
+  tools: [fileSearch],
   modelSettings: {
     temperature: 1,
     topP: 1,
@@ -247,7 +252,7 @@ const legalResearchAgent = new Agent({
   - Legal precedents and interpretations
   
   Use file search to find relevant documents and always cite your sources accurately.`,
-  model: "gpt-4o-mini",
+  model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
   modelSettings: {
     temperature: 1,
@@ -269,7 +274,7 @@ const generalInformationAgent = new Agent({
   
   Use file search when available to provide accurate, up-to-date information.
   Always respond in Spanish (Colombian) and cite relevant sources.`,
-  model: "gpt-4o-mini",
+  model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
   modelSettings: {
     temperature: 1,
@@ -281,13 +286,20 @@ const generalInformationAgent = new Agent({
 
 type WorkflowInput = { input_as_text: string }
 
+export type RunWorkflowOptions = {
+  /** Si true, no se ejecutan guardrails (evita que el prompt largo del RAG dispare jailbreak y devuelva el JSON de guardrails en vez de la respuesta del agente). */
+  skipGuardrails?: boolean
+}
+
 /**
  * Run the workflow with conversation history
  */
 export async function runWorkflow(
   inputText: string,
-  conversationHistory: ChatMessage[] = []
+  conversationHistory: ChatMessage[] = [],
+  options: RunWorkflowOptions = {}
 ): Promise<string> {
+  const { skipGuardrails = false } = options
   const workflow: WorkflowInput = {
     input_as_text: inputText,
   }
@@ -311,19 +323,20 @@ export async function runWorkflow(
       },
     })
 
-    const guardrailsInputText = workflow.input_as_text
-    const {
-      hasTripwire: guardrailsHasTripwire,
-      safeText: guardrailsAnonymizedText,
-      failOutput: guardrailsFailOutput,
-      passOutput: guardrailsPassOutput,
-    } = await runAndApplyGuardrails(guardrailsInputText, jailbreakGuardrailConfig, agentHistory, workflow)
+    if (!skipGuardrails) {
+      const guardrailsInputText = workflow.input_as_text
+      const {
+        hasTripwire: guardrailsHasTripwire,
+        safeText: guardrailsAnonymizedText,
+        failOutput: guardrailsFailOutput,
+        passOutput: guardrailsPassOutput,
+      } = await runAndApplyGuardrails(guardrailsInputText, getJailbreakGuardrailConfig(), agentHistory, workflow)
 
-    const guardrailsOutput = guardrailsHasTripwire ? guardrailsFailOutput : guardrailsPassOutput
+      const guardrailsOutput = guardrailsHasTripwire ? guardrailsFailOutput : guardrailsPassOutput
 
-    if (guardrailsHasTripwire) {
-      return JSON.stringify(guardrailsOutput)
-    } else {
+      if (guardrailsHasTripwire) {
+        return JSON.stringify(guardrailsOutput)
+      }
       // Update conversation history with safe text
       if (agentHistory.length > 0) {
         const lastMessage = agentHistory[agentHistory.length - 1]
@@ -331,7 +344,9 @@ export async function runWorkflow(
           lastMessage.content[0].text = guardrailsAnonymizedText
         }
       }
+    }
 
+    {
       const classificationAgentResultTemp = await runner.run(classificationAgent, [...agentHistory])
       agentHistory.push(...classificationAgentResultTemp.newItems.map((item: any) => item.rawItem))
 

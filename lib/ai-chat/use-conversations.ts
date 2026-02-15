@@ -108,7 +108,11 @@ export function useConversations(
       setError(null)
       try {
         const conversation = await fetchConversation(id)
-        // Update local state
+        if (!conversation) {
+          // Conversation was deleted or doesn't exist; remove from list if present
+          setConversations((prev) => prev.filter((c) => c.id !== id))
+          return null
+        }
         setConversations((prev) => {
           const exists = prev.find((c) => c.id === id)
           if (exists) {

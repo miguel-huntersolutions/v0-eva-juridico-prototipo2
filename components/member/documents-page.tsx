@@ -22,6 +22,8 @@ import {
   FolderOpen,
   Loader2,
   Send,
+  Check,
+  XCircle,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -40,8 +42,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { documentTypes } from "@/lib/mock-data"
-import { getEntities, getDocuments, type EntityMapped } from "@/lib/supabase/client-data-access"
+import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 
 type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
 
@@ -102,6 +105,8 @@ export function DocumentsPage() {
   const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
   const [isLoadingDocs, setIsLoadingDocs] = React.useState(true)
   const { profile } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
 
@@ -115,70 +120,62 @@ export function DocumentsPage() {
 
   React.useEffect(() => {
     async function loadDocuments() {
-      if (!profile?.organization_id) {
+      if (!orgId) {
         setIsLoadingDocs(false)
         return
       }
-      
       try {
-        // First, get entities for the organization
-        const orgEntities = await getEntities(profile.organization_id)
-        const entityIds = orgEntities.map((e) => e.id)
-        
-        // Get all documents
-        const allDocs = await getDocuments()
-        
-        // Filter documents to only include those from processes belonging to organization entities
-        const filteredDocs = allDocs.filter((d: any) => {
-          const processEntityId = d.process?.entity?.id
-          return processEntityId && entityIds.includes(processEntityId)
-        })
-        
-        const mapped: MappedDocument[] = filteredDocs.map((d) => ({
-          id: d.id,
-          processId: d.process_id,
-          processCode: d.process?.code || "",
-          processObject: d.process?.object || "",
-          name: d.name,
-          type: d.type,
-          version: d.version || 1,
-          status: d.status as MappedDocument["status"],
-          entityId: d.process?.entity?.id || "",
-          entityName: d.process?.entity?.name || "",
-          fileUrl: d.file_url || "",
-          fileSize: d.file_size || 0,
-          createdBy: "",
-          createdAt: d.created_at?.split("T")[0] || "",
-          updatedAt: d.updated_at?.split("T")[0] || "",
-          driveFolderUrl: (d.process as any)?.drive_folder_url || null,
-        }))
-        setAllDocuments(mapped)
-        console.log("[DocumentsPage] Total documents in DB:", allDocs.length, "Organization documents:", mapped.length)
+        if (isImpersonating) {
+          const mapped = await getDocumentsForImpersonation(orgId)
+          setAllDocuments((mapped ?? []) as unknown as MappedDocument[])
+        } else {
+          const orgEntities = await getEntities(orgId)
+          const entityIds = orgEntities.map((e) => e.id)
+          const allDocs = await getDocuments()
+          const filteredDocs = allDocs.filter((d: any) => {
+            const processEntityId = d.process?.entity?.id
+            return processEntityId && entityIds.includes(processEntityId)
+          })
+          const mapped: MappedDocument[] = filteredDocs.map((d) => ({
+            id: d.id,
+            processId: d.process_id,
+            processCode: d.process?.code || "",
+            processObject: d.process?.object || "",
+            name: d.name,
+            type: d.type,
+            version: d.version || 1,
+            status: d.status as MappedDocument["status"],
+            entityId: d.process?.entity?.id || "",
+            entityName: d.process?.entity?.name || "",
+            fileUrl: d.file_url || "",
+            fileSize: d.file_size || 0,
+            createdBy: "",
+            createdAt: d.created_at?.split("T")[0] || "",
+            updatedAt: d.updated_at?.split("T")[0] || "",
+            driveFolderUrl: (d.process as any)?.drive_folder_url || null,
+          }))
+          setAllDocuments(mapped)
+        }
       } catch (err) {
-        console.error("Error loading documents:", err)
       } finally {
         setIsLoadingDocs(false)
       }
     }
-    if (profile?.organization_id) {
-      loadDocuments()
-    }
-  }, [profile?.organization_id])
+    if (orgId) loadDocuments()
+  }, [orgId, isImpersonating])
 
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id) return
+      if (!orgId) return
       try {
-        const data = await getEntities(profile.organization_id)
+        const data = isImpersonating ? await getEntitiesForImpersonation(orgId) : await getEntities(orgId)
         setEntities(data)
       } catch (err) {
         console.error("Error loading entities:", err)
       }
     }
-    if (profile?.organization_id) {
-      loadEntities()
-    }
-  }, [profile?.organization_id])
+    if (orgId) loadEntities()
+  }, [orgId, isImpersonating])
 
   // Filter documents
   const filteredDocuments = React.useMemo(() => {
@@ -257,13 +254,45 @@ export function DocumentsPage() {
 
       alert("Documento enviado a revisión exitosamente")
     } catch (err) {
-      console.error("Error sending document to review:", err)
       const errorMsg = err instanceof Error ? err.message : "Error al enviar el documento a revisión"
       alert(errorMsg)
     } finally {
       setIsUpdatingStatus(false)
     }
   }
+
+  const handleUpdateDocumentStatus = async (doc: MappedDocument, newStatus: "approved" | "rejected") => {
+    const action = newStatus === "approved" ? "aprobar" : "rechazar"
+    if (!confirm(`¿Estás seguro de que deseas ${action} "${doc.name}"?`)) {
+      return
+    }
+
+    try {
+      setIsUpdatingStatus(true)
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, status: newStatus }),
+      })
+      const responseData = await response.json()
+
+      if (!response.ok) {
+        const errorMsg = responseData?.message || responseData?.error || `Error al ${action} el documento`
+        throw new Error(errorMsg)
+      }
+
+      setAllDocuments((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: newStatus } : d))
+      )
+      alert(newStatus === "approved" ? "Documento aprobado. Se indexará en el asistente." : "Documento rechazado.")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : `Error al ${action} el documento`)
+    } finally {
+      setIsUpdatingStatus(false)
+    }
+  }
+
+  const canApproveReject = profile?.role === "admin" || profile?.role === "superadmin"
 
   const router = useRouter()
   const pathname = usePathname()
@@ -454,34 +483,35 @@ export function DocumentsPage() {
                             className="cursor-pointer"
                             onClick={() => handleViewDocument(document)}
                           >
-                            <TableCell>
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                            <TableCell className="w-[420px] max-w-[420px] min-w-0" title={document.name}>
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                                   <FileText className="h-4 w-4 text-primary" />
                                 </div>
-                                <div>
+                                <div className="min-w-0 flex-1 overflow-hidden">
                                   {(() => {
                                     // Check if fileUrl is a valid Google Drive URL (starts with http)
                                     const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
                                     const linkUrl = isValidDriveUrl 
                                       ? document.fileUrl 
                                       : (document.driveFolderUrl || null)
-                                    
+                                    const nameClass = "font-medium block truncate"
                                     return linkUrl ? (
                                       <a
                                         href={linkUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={(e) => e.stopPropagation()}
-                                        className="font-medium text-primary hover:underline"
+                                        className={`text-primary hover:underline ${nameClass}`}
+                                        title={document.name}
                                       >
                                         {document.name}
                                       </a>
                                     ) : (
-                                      <p className="font-medium">{document.name}</p>
+                                      <p className={nameClass} title={document.name}>{document.name}</p>
                                     )
                                   })()}
-                                  <p className="text-xs text-muted-foreground">{getDocumentTypeName(document.type)}</p>
+                                  <p className="text-xs text-muted-foreground truncate">{getDocumentTypeName(document.type)}</p>
                                 </div>
                               </div>
                             </TableCell>
@@ -566,6 +596,31 @@ export function DocumentsPage() {
                                       >
                                         <Send className="mr-2 h-4 w-4" />
                                         Enviar a Revisión
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                  {document.status === "pending" && canApproveReject && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleUpdateDocumentStatus(document, "approved")
+                                        }}
+                                        disabled={isUpdatingStatus}
+                                      >
+                                        <Check className="mr-2 h-4 w-4" />
+                                        Aprobar
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleUpdateDocumentStatus(document, "rejected")
+                                        }}
+                                        disabled={isUpdatingStatus}
+                                      >
+                                        <XCircle className="mr-2 h-4 w-4" />
+                                        Rechazar
                                       </DropdownMenuItem>
                                     </>
                                   )}

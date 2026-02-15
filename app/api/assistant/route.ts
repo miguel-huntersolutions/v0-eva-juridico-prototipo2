@@ -6,17 +6,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { runWorkflow } from "@/lib/ai-chat/workflow-runner"
 import { fetchConversation } from "@/lib/ai-chat/services/conversations-api"
+import { getAssistantMaxDuration } from "@/lib/app-config"
 
-export const maxDuration = 60
+export const maxDuration = getAssistantMaxDuration()
 
 // Get workflow ID from environment variable
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID
-
-if (!WORKFLOW_ID) {
-  console.warn("[Assistant API] OPENAI_ASSISTANT_WORKFLOW_ID not set. Assistant will not work properly.")
-} else {
-  console.log(`[Assistant API] Using workflow ID: ${WORKFLOW_ID.substring(0, 10)}...`)
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -46,7 +41,6 @@ export async function POST(req: NextRequest) {
           conversationHistory = conversation.messages.slice(0, -1) // Exclude last message to avoid duplicates
         }
       } catch (error) {
-        console.error("[Assistant API] Error loading conversation history:", error)
         // Continue without history if loading fails
       }
     }
@@ -63,8 +57,6 @@ export async function POST(req: NextRequest) {
       conversationId,
     })
   } catch (error: any) {
-    console.error("[Assistant API] Error:", error)
-
     // Handle specific OpenAI errors
     if (error?.status === 401 || error?.message?.includes("API key")) {
       return NextResponse.json(

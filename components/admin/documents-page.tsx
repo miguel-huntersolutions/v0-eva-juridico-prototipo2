@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 import {
   FileText,
   Download,
@@ -22,6 +23,7 @@ import {
   Loader2,
   Check,
   XCircle,
+  Send,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -102,6 +104,7 @@ interface MappedDocument {
 }
 
 export function DocumentsPage() {
+  const searchParams = useSearchParams()
   const { profile } = useProfile()
   const { actualRole } = useRoleSwitcher(profile?.role)
   const isSuperadmin = actualRole === "superadmin"
@@ -126,6 +129,12 @@ export function DocumentsPage() {
   const [processFilter, setProcessFilter] = React.useState<string>("all")
   const [typeFilter, setTypeFilter] = React.useState<string>("all")
   const [activeTab, setActiveTab] = React.useState("pending")
+
+  // Aplicar filtro por proceso cuando se llega con ?processId=xxx (ej. desde lista de procesos)
+  React.useEffect(() => {
+    const processId = searchParams.get("processId")
+    if (processId) setProcessFilter(processId)
+  }, [searchParams])
 
   const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
   const [isLoadingDocs, setIsLoadingDocs] = React.useState(true)
@@ -355,6 +364,33 @@ export function DocumentsPage() {
     }
   }
 
+  const handleSendToReview = async (doc: MappedDocument) => {
+    if (doc.status === "pending") return
+    if (!confirm(`¿Enviar "${doc.name}" a revisión?`)) return
+    try {
+      setIsUpdating(true)
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, status: "pending" }),
+      })
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.message || err.error || "Error al enviar a revisión")
+      }
+      setAllDocuments((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "pending" as const } : d))
+      )
+      setSelectedDocument((prev) => (prev?.id === doc.id ? { ...prev, status: "pending" as const } : prev))
+      if (selectedDocument?.id === doc.id) setIsDetailOpen(false)
+    } catch (error) {
+      console.error("Error sending to review:", error)
+      alert(error instanceof Error ? error.message : "Error al enviar a revisión")
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
   const clearFilters = () => {
     setSearchQuery("")
     setStatusFilter("all")
@@ -490,17 +526,30 @@ export function DocumentsPage() {
                     const status = statusConfig[doc.status] || statusConfig.pending
                     return (
                       <TableRow key={doc.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <FileText className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">{doc.name}</span>
-                            <Badge variant="outline" className="text-xs">
+                        <TableCell className="w-[420px] max-w-[420px] min-w-0" title={doc.name}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            {doc.fileUrl && doc.fileUrl.startsWith("http") ? (
+                              <a
+                                href={doc.fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="font-medium truncate min-w-0 flex-1 text-primary hover:underline block"
+                                title={doc.name}
+                              >
+                                {doc.name}
+                              </a>
+                            ) : (
+                              <span className="font-medium truncate min-w-0 flex-1" title={doc.name}>{doc.name}</span>
+                            )}
+                            <Badge variant="outline" className="text-xs shrink-0">
                               v{doc.version}
                             </Badge>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div>
+                          <div className="max-w-xs min-w-0">
                             <p className="text-sm font-medium">{doc.processCode}</p>
                             <p className="text-xs text-muted-foreground truncate max-w-[200px]">
                               {doc.processObject}
@@ -546,6 +595,18 @@ export function DocumentsPage() {
                                   Abrir Documento
                                 </DropdownMenuItem>
                               )}
+                              {(doc.status === "draft" || doc.status === "rejected") && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onSelect={() => handleSendToReview(doc)}
+                                    disabled={isUpdating}
+                                  >
+                                    <Send className="mr-2 h-4 w-4" />
+                                    Enviar a revisión
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                               {doc.status === "pending" && (
                                 <>
                                   <DropdownMenuSeparator />
@@ -555,6 +616,7 @@ export function DocumentsPage() {
                                       setIsApproveDialogOpen(true)
                                     }}
                                     className="text-emerald-600"
+                                    disabled={isUpdating}
                                   >
                                     <Check className="mr-2 h-4 w-4" />
                                     Aprobar
@@ -565,6 +627,7 @@ export function DocumentsPage() {
                                       setIsRejectDialogOpen(true)
                                     }}
                                     className="text-destructive"
+                                    disabled={isUpdating}
                                   >
                                     <XCircle className="mr-2 h-4 w-4" />
                                     Rechazar
@@ -640,6 +703,22 @@ export function DocumentsPage() {
                   </Button>
                 </div>
               )}
+              {(selectedDocument.status === "draft" || selectedDocument.status === "rejected") && (
+                <div className="flex gap-2 pt-4">
+                  <Button
+                    onClick={() => handleSendToReview(selectedDocument)}
+                    disabled={isUpdating}
+                    className="flex-1"
+                  >
+                    {isUpdating ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="mr-2 h-4 w-4" />
+                    )}
+                    Enviar a revisión
+                  </Button>
+                </div>
+              )}
               {selectedDocument.status === "pending" && (
                 <div className="flex gap-2 pt-4">
                   <Button
@@ -648,6 +727,7 @@ export function DocumentsPage() {
                       setIsApproveDialogOpen(true)
                     }}
                     className="flex-1"
+                    disabled={isUpdating}
                   >
                     <Check className="mr-2 h-4 w-4" />
                     Aprobar
@@ -659,6 +739,7 @@ export function DocumentsPage() {
                       setIsRejectDialogOpen(true)
                     }}
                     className="flex-1"
+                    disabled={isUpdating}
                   >
                     <XCircle className="mr-2 h-4 w-4" />
                     Rechazar
