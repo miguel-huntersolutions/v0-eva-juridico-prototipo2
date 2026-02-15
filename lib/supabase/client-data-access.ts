@@ -265,44 +265,55 @@ async function documentsProcessIdsInChunks(
 export async function getEntities(organizationId?: string): Promise<EntityMapped[]> {
   const supabase = createBrowserClient()
   if (!organizationId) return []
-  const query = supabase.from("entities").select("*").order("name").eq("organization_id", organizationId)
-
-  const { data, error } = await query
+  const { data: entities, error } = await supabase
+    .from("entities")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .order("name")
   if (error) throw error
+  if (!entities?.length) return []
 
-  // Calculate processes and documents count for each entity
-  const entitiesWithCounts = await Promise.all(
-    (data || []).map(async (e) => {
-      // Get processes count
-      const { count: processesCount } = await supabase
-        .from("processes")
-        .select("*", { count: "exact", head: true })
-        .eq("entity_id", e.id)
+  const entityIds = entities.map((e) => e.id)
+  const { data: processes, error: procErr } = await supabase
+    .from("processes")
+    .select("id, entity_id")
+    .in("entity_id", entityIds)
+  if (procErr) throw procErr
 
-      // Get documents count (through processes)
-      const { data: processes } = await supabase
-        .from("processes")
-        .select("id")
-        .eq("entity_id", e.id)
+  const processIds = (processes || []).map((p) => p.id)
+  const processIdsByEntityId: Record<string, string[]> = {}
+  for (const e of entities) {
+    processIdsByEntityId[e.id] = []
+  }
+  for (const p of processes || []) {
+    const eid = (p as { id: string; entity_id: string }).entity_id
+    if (!processIdsByEntityId[eid]) processIdsByEntityId[eid] = []
+    processIdsByEntityId[eid].push(p.id)
+  }
 
-      const processIds = processes?.map((p) => p.id) || []
-      const documentsCount = await documentsCountByProcessIds(supabase, processIds)
+  let documentCountByProcessId: Record<string, number> = {}
+  if (processIds.length > 0) {
+    const docs = await documentsProcessIdsInChunks(supabase, processIds)
+    for (const d of docs) {
+      documentCountByProcessId[d.process_id] = (documentCountByProcessId[d.process_id] || 0) + 1
+    }
+  }
 
-      return {
-        id: e.id,
-        name: e.name,
-        nit: e.nit,
-        representativeName: e.representative_name,
-        organizationId: e.organization_id,
-        logoUrl: e.logo_url,
-        status: e.status,
-        processesCount: processesCount || 0,
-        documentsCount: documentsCount,
-      }
-    })
-  )
-
-  return entitiesWithCounts
+  return entities.map((e) => {
+    const pIds = processIdsByEntityId[e.id] || []
+    const documentsCount = pIds.reduce((sum, pid) => sum + (documentCountByProcessId[pid] || 0), 0)
+    return {
+      id: e.id,
+      name: e.name,
+      nit: e.nit,
+      representativeName: e.representative_name,
+      organizationId: e.organization_id,
+      logoUrl: e.logo_url,
+      status: e.status,
+      processesCount: pIds.length,
+      documentsCount,
+    }
+  })
 }
 
 /**

@@ -91,54 +91,55 @@ export function ProcessesPage() {
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(true)
 
-  const loadProcesses = React.useCallback(async () => {
-    if (!orgId) return
-    try {
-      setIsLoadingProcesses(true)
-      const data = isImpersonating
-        ? await getProcessesForImpersonation(orgId)
-        : await getProcessesMapped()
-      setProcesses(data)
-    } catch (error) {
-    } finally {
-      setIsLoadingProcesses(false)
-    }
-  }, [orgId, isImpersonating])
-
+  // Load process types once on mount (no org dependency)
   React.useEffect(() => {
-    loadProcesses()
-  }, [loadProcesses])
-
-  // Load process types from database
-  React.useEffect(() => {
-    async function loadProcessTypes() {
-      try {
-        const types = await getProcessTypes()
-        setProcessTypes(types)
-      } catch (error) {
-        console.error("Error loading process types:", error)
-      } finally {
-        setIsLoadingTypes(false)
-      }
+    let cancelled = false
+    getProcessTypes()
+      .then((types) => {
+        if (!cancelled) setProcessTypes(types)
+      })
+      .catch((error) => console.error("Error loading process types:", error))
+      .finally(() => {
+        if (!cancelled) setIsLoadingTypes(false)
+      })
+    return () => {
+      cancelled = true
     }
-    loadProcessTypes()
   }, [])
 
-  // Load entities (use API when impersonating so RLS doesn't block)
+  // Load processes and entities in parallel as soon as orgId is available
   React.useEffect(() => {
-    async function loadEntities() {
-      if (!orgId) return
-      try {
-        const data = isImpersonating
-          ? await getEntitiesForImpersonation(orgId)
-          : await getEntities(orgId)
-        setEntities(data)
-      } catch (error) {
-      } finally {
-        setIsLoadingEntities(false)
-      }
+    if (!orgId) {
+      setIsLoadingProcesses(false)
+      setIsLoadingEntities(false)
+      return
     }
-    loadEntities()
+    let cancelled = false
+    setIsLoadingProcesses(true)
+    setIsLoadingEntities(true)
+    const loadProcesses = isImpersonating
+      ? getProcessesForImpersonation(orgId)
+      : getProcessesMapped()
+    const loadEntities = isImpersonating
+      ? getEntitiesForImpersonation(orgId)
+      : getEntities(orgId)
+    Promise.all([loadProcesses, loadEntities])
+      .then(([processesData, entitiesData]) => {
+        if (!cancelled) {
+          setProcesses(processesData)
+          setEntities(entitiesData)
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingProcesses(false)
+          setIsLoadingEntities(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
   }, [orgId, isImpersonating])
 
   const handleProcessCreated = (newProcess: ProcessMapped) => {

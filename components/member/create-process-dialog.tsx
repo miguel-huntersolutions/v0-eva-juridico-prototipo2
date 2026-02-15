@@ -228,7 +228,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
                   }}
                   disabled={isLoadingEntities}
                 >
-                  <SelectTrigger id="entity">
+                  <SelectTrigger id="entity" className="w-full">
                     <SelectValue placeholder={isLoadingEntities ? "Cargando..." : "Seleccionar entidad..."} />
                   </SelectTrigger>
                   <SelectContent>
@@ -253,52 +253,51 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
                 <p className="text-xs text-muted-foreground">Selecciona la entidad para la cual se creará el proceso</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="secretary">Secretaría</Label>
-                  <Select
-                    value={formData.secretaryId}
-                    onValueChange={(v) => setFormData((prev) => ({ ...prev, secretaryId: v }))}
-                    disabled={!formData.entityId || isLoadingSecretaries}
-                  >
-                    <SelectTrigger id="secretary">
-                      <SelectValue placeholder={isLoadingSecretaries ? "Cargando..." : "Seleccionar secretaría..."} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {secretaries.map((sec) => (
-                        <SelectItem key={sec.id} value={sec.id}>
-                          {sec.name}
+              <div className="space-y-2">
+                <Label htmlFor="secretary">Secretaría</Label>
+                <Select
+                  value={formData.secretaryId}
+                  onValueChange={(v) => setFormData((prev) => ({ ...prev, secretaryId: v }))}
+                  disabled={!formData.entityId || isLoadingSecretaries}
+                >
+                  <SelectTrigger id="secretary" className="w-full">
+                    <SelectValue placeholder={isLoadingSecretaries ? "Cargando..." : "Seleccionar secretaría..."} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {secretaries.map((sec) => (
+                      <SelectItem key={sec.id} value={sec.id}>
+                        {sec.name}
+                      </SelectItem>
+                    ))}
+                    {secretaries.length === 0 && !isLoadingSecretaries && (
+                      <SelectItem value="none" disabled>
+                        No hay secretarías disponibles
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="processType">Tipo de Proceso</Label>
+                <Select value={formData.processTypeId} onValueChange={handleProcessTypeChange}>
+                  <SelectTrigger id="processType" className="w-full">
+                    <SelectValue placeholder="Seleccionar tipo..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {isLoadingTypes ? (
+                      <SelectItem value="loading" disabled>
+                        Cargando tipos de proceso...
+                      </SelectItem>
+                    ) : (
+                      processTypes.map((pt) => (
+                        <SelectItem key={pt.id} value={pt.id}>
+                          {pt.name}
                         </SelectItem>
-                      ))}
-                      {secretaries.length === 0 && !isLoadingSecretaries && (
-                        <SelectItem value="none" disabled>
-                          No hay secretarías disponibles
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="processType">Tipo de Proceso</Label>
-                  <Select value={formData.processTypeId} onValueChange={handleProcessTypeChange}>
-                    <SelectTrigger id="processType">
-                      <SelectValue placeholder="Seleccionar tipo..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {isLoadingTypes ? (
-                        <SelectItem value="loading" disabled>
-                          Cargando tipos de proceso...
-                        </SelectItem>
-                      ) : (
-                        processTypes.map((pt) => (
-                          <SelectItem key={pt.id} value={pt.id}>
-                            {pt.name}
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
 
               {selectedProcessType && (

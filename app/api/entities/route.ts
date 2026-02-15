@@ -56,32 +56,53 @@ export async function GET(request: NextRequest) {
     if (entitiesError) {
       return NextResponse.json({ error: entitiesError.message }, { status: 500 })
     }
+    if (!entities?.length) {
+      return NextResponse.json([])
+    }
 
-    const withCounts = await Promise.all(
-      (entities || []).map(async (e) => {
-        const { count: processesCount } = await service
-          .from("processes")
-          .select("*", { count: "exact", head: true })
-          .eq("entity_id", e.id)
-        const { data: processes } = await service.from("processes").select("id").eq("entity_id", e.id)
-        const processIds = processes?.map((p) => p.id) || []
-        const { count: documentsCount } =
-          processIds.length > 0
-            ? await service.from("documents").select("*", { count: "exact", head: true }).in("process_id", processIds)
-            : { count: 0 }
-        return {
-          id: e.id,
-          name: e.name,
-          nit: e.nit,
-          representativeName: e.representative_name,
-          organizationId: e.organization_id,
-          logoUrl: e.logo_url,
-          status: e.status,
-          processesCount: processesCount ?? 0,
-          documentsCount: documentsCount ?? 0,
-        }
-      })
-    )
+    const entityIds = entities.map((e) => e.id)
+    const { data: processes, error: procErr } = await service
+      .from("processes")
+      .select("id, entity_id")
+      .in("entity_id", entityIds)
+    if (procErr) {
+      return NextResponse.json({ error: procErr.message }, { status: 500 })
+    }
+
+    const processIds = (processes || []).map((p) => p.id)
+    const processIdsByEntityId: Record<string, string[]> = {}
+    for (const e of entities) {
+      processIdsByEntityId[e.id] = []
+    }
+    for (const p of processes || []) {
+      const eid = p.entity_id
+      if (!processIdsByEntityId[eid]) processIdsByEntityId[eid] = []
+      processIdsByEntityId[eid].push(p.id)
+    }
+
+    let documentCountByProcessId: Record<string, number> = {}
+    if (processIds.length > 0) {
+      const { data: docs } = await service.from("documents").select("process_id").in("process_id", processIds)
+      for (const d of docs || []) {
+        documentCountByProcessId[d.process_id] = (documentCountByProcessId[d.process_id] || 0) + 1
+      }
+    }
+
+    const withCounts = entities.map((e) => {
+      const pIds = processIdsByEntityId[e.id] || []
+      const documentsCount = pIds.reduce((sum, pid) => sum + (documentCountByProcessId[pid] || 0), 0)
+      return {
+        id: e.id,
+        name: e.name,
+        nit: e.nit,
+        representativeName: e.representative_name,
+        organizationId: e.organization_id,
+        logoUrl: e.logo_url,
+        status: e.status,
+        processesCount: pIds.length,
+        documentsCount,
+      }
+    })
 
     return NextResponse.json(withCounts)
   } catch (err) {

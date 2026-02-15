@@ -33,6 +33,17 @@ import { getTemplates, createProcess, type Template, type ProcessMapped, type En
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
 import { useProfile } from "@/hooks/use-profile"
 
+/** Converts template fileUrl (fileId:xxx|path:yyy or full Drive URL) to a viewable Google Drive link. */
+function getTemplateDriveViewUrl(fileUrl: string | null | undefined): string | null {
+  if (!fileUrl || typeof fileUrl !== "string") return null
+  if (fileUrl.startsWith("https://drive.google.com")) return fileUrl
+  if (fileUrl.startsWith("fileId:")) {
+    const m = fileUrl.match(/fileId:([^|]+)/)
+    if (m?.[1]) return `https://drive.google.com/file/d/${m[1]}/view`
+  }
+  return null
+}
+
 interface ProcessData {
   code: string
   object: string
@@ -689,8 +700,8 @@ export function GenerateDocumentsDialog({
           </div>
         ) : (
           <>
-            {/* Steps Indicator */}
-            <div className="flex items-center gap-2 py-4 overflow-x-auto">
+            {/* Steps Indicator - px-3 so ring-offset on current step isn't clipped by container */}
+            <div className="flex items-center gap-2 py-4 px-3 overflow-x-auto">
               {templates.map((template, index) => (
                 <React.Fragment key={template.id}>
                   <div
@@ -726,18 +737,22 @@ export function GenerateDocumentsDialog({
                       <CardTitle className="text-lg">{currentTemplate.name}</CardTitle>
                       <CardDescription className="flex flex-col gap-1.5">
                         <span>Completa los siguientes campos para generar este documento.</span>
-                        {currentTemplate.fileUrl && (
-                          <a
-                            href={currentTemplate.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm mt-1"
-                          >
-                            <FileText className="h-3.5 w-3.5 shrink-0" />
-                            Ver plantilla a diligenciar
-                            <ExternalLink className="h-3 w-3 shrink-0" />
-                          </a>
-                        )}
+                        {(() => {
+                          const viewUrl = getTemplateDriveViewUrl(currentTemplate.fileUrl)
+                          if (!viewUrl) return null
+                          return (
+                            <a
+                              href={viewUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm mt-1"
+                            >
+                              <FileText className="h-3.5 w-3.5 shrink-0" />
+                              Ver plantilla a diligenciar
+                              <ExternalLink className="h-3 w-3 shrink-0" />
+                            </a>
+                          )
+                        })()}
                       </CardDescription>
                     </CardHeader>
                   </Card>
