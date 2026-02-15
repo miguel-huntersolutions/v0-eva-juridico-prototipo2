@@ -293,7 +293,7 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="w-full justify-start gap-3 px-2 py-6 hover:bg-sidebar-accent">
               <Avatar className="h-9 w-9">
-                <AvatarImage src={userAvatar || "/placeholder.svg"} alt={userName} />
+                <AvatarImage src={userAvatar || undefined} alt={userName} />
                 <AvatarFallback className="bg-primary/20 text-primary text-xs">
                   {userName
                     .split(" ")

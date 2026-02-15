@@ -10,7 +10,6 @@ import {
   Trash2,
   Building,
   Mail,
-  Calendar,
   Shield,
   CheckCircle2,
   XCircle,
@@ -22,7 +21,6 @@ import {
   X,
   Briefcase,
   FileText,
-  Activity,
   Copy,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
@@ -632,21 +630,6 @@ export function MembersPage() {
     }
   }
 
-  const formatRelativeTime = (dateString: string) => {
-    if (!dateString) return "Nunca"
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffHours < 1) return "Hace menos de 1 hora"
-    if (diffHours < 24) return `Hace ${diffHours} horas`
-    if (diffDays === 1) return "Ayer"
-    if (diffDays < 7) return `Hace ${diffDays} días`
-    return formatDate(dateString)
-  }
-
   if (loading || profileLoading || !orgLoaded) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -766,7 +749,7 @@ export function MembersPage() {
                 {/* Member Info */}
                 <div className="flex items-start gap-4">
                   <Avatar className="h-14 w-14 border-2 border-primary/20">
-                    <AvatarImage src={member.avatar_url || "/placeholder.svg"} alt={member.name} />
+                    <AvatarImage src={member.avatar_url || undefined} alt={member.name} />
                     <AvatarFallback className="bg-primary/20 text-primary text-lg">
                       {member.name
                         .split(" ")
@@ -833,14 +816,6 @@ export function MembersPage() {
                     <p className="mt-1 text-xs text-muted-foreground">
                       Enviada el {formatDate(member.invitedAt || "")}
                     </p>
-                  </div>
-                )}
-
-                {/* Last Active */}
-                {member.status !== "pending" && (
-                  <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Activity className="h-3 w-3" />
-                    <span>Última actividad: {formatRelativeTime(member.lastActive)}</span>
                   </div>
                 )}
 
@@ -1085,7 +1060,7 @@ export function MembersPage() {
               {/* Header */}
               <div className="flex items-start gap-4">
                 <Avatar className="h-20 w-20 border-2 border-primary/20">
-                  <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
+                  <AvatarImage src={selectedMember.avatar_url || undefined} alt={selectedMember.name} />
                   <AvatarFallback className="bg-primary/20 text-primary text-2xl">
                     {selectedMember.name
                       .split(" ")
@@ -1105,10 +1080,6 @@ export function MembersPage() {
                     <span className="flex items-center gap-1">
                       <Shield className="h-4 w-4" />
                       Asesor Jurídico
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-4 w-4" />
-                      Última actividad: {formatRelativeTime(selectedMember.lastActive)}
                     </span>
                   </div>
                 </div>
@@ -1200,7 +1171,7 @@ export function MembersPage() {
             <div className="space-y-4 py-4">
               <div className="flex items-center gap-4 p-4 rounded-lg bg-muted/50">
                 <Avatar className="h-12 w-12">
-                  <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
+                  <AvatarImage src={selectedMember.avatar_url || undefined} alt={selectedMember.name} />
                   <AvatarFallback className="bg-primary/20 text-primary">
                     {selectedMember.name
                       .split(" ")
@@ -1344,7 +1315,7 @@ export function MembersPage() {
           {selectedMember && (
             <div className="flex items-center gap-4 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
               <Avatar className="h-12 w-12">
-                <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
+                <AvatarImage src={selectedMember.avatar_url || undefined} alt={selectedMember.name} />
                 <AvatarFallback className="bg-destructive/20 text-destructive">
                   {selectedMember.name
                     .split(" ")

@@ -385,7 +385,14 @@ export function ProcessesPage() {
                 ) : (
                   filteredProcesses.map((process) => (
                     <TableRow key={process.id}>
-                      <TableCell className="font-mono text-sm font-medium">{process.code}</TableCell>
+                      <TableCell className="font-mono text-sm font-medium">
+                        <Link
+                          href={`/admin/documents?processId=${process.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {process.code}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className="font-normal">
                           {process.entityName}

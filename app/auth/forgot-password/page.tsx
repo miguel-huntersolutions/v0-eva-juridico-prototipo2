@@ -55,8 +55,13 @@ function ForgotPasswordContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Revisa tu correo</CardTitle>
-                <CardDescription>
-                  Si existe una cuenta con <strong>{email}</strong>, recibirás un enlace para restablecer tu contraseña. Revisa también la carpeta de spam.
+                <CardDescription className="space-y-2">
+                  <span>
+                    Si existe una cuenta con <strong>{email}</strong>, recibirás un enlace para restablecer tu contraseña. Revisa también la carpeta de spam.
+                  </span>
+                  <span className="block text-xs mt-2 text-muted-foreground border-t pt-2">
+                    Importante: abre el enlace del correo en el mismo navegador donde estás ahora. Si lo abres en otro dispositivo o navegador, no funcionará.
+                  </span>
                 </CardDescription>
               </CardHeader>
               <CardContent>

@@ -494,7 +494,7 @@ export function AdminDashboard() {
       render: (user: Profile) => (
         <div className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
-            <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name} />
+            <AvatarImage src={user.avatar_url || undefined} alt={user.name} />
             <AvatarFallback className="bg-primary/20 text-primary text-xs">
               {user.name
                 .split(" ")
@@ -904,7 +904,7 @@ export function AdminDashboard() {
               >
                 <Checkbox checked={selectedMembersForEntity.includes(member.id)} />
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={member.avatar_url || "/placeholder.svg"} alt={member.name} />
+                  <AvatarImage src={member.avatar_url || undefined} alt={member.name} />
                   <AvatarFallback className="bg-primary/20 text-primary text-xs">
                     {member.name
                       .split(" ")

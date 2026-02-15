@@ -1464,7 +1464,14 @@ export function EntitiesPage() {
                 >
                   <Checkbox checked={selectedMembers.includes(member.id)} />
                   <Avatar className="h-8 w-8">
-                    <AvatarFallback>{member.name?.charAt(0)}</AvatarFallback>
+                    <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                      {member.name
+                        ?.split(" ")
+                        .map((n) => n[0])
+                        .join("")
+                        .slice(0, 2)
+                        .toUpperCase() || "?"}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
                     <p className="text-sm font-medium">{member.name}</p>

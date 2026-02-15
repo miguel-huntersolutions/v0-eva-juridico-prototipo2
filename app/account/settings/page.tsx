@@ -12,6 +12,9 @@ import { useProfile } from "@/hooks/use-profile"
 import { useTheme } from "next-themes"
 import { Loader2 } from "lucide-react"
 
+/** Ocultar sección de notificaciones hasta que sea funcional */
+const SHOW_NOTIFICATIONS = false
+
 export default function SettingsPage() {
   const router = useRouter()
   const { profile, isLoading } = useProfile()
@@ -84,56 +87,58 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Notifications */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Bell className="h-5 w-5" />
-              Notificaciones
-            </CardTitle>
-            <CardDescription>Gestiona cómo recibes las notificaciones</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label>Notificaciones por correo</Label>
-                <p className="text-sm text-muted-foreground">
-                  Recibe notificaciones importantes por correo electrónico
-                </p>
+        {/* Notifications - oculto hasta que sea funcional (SHOW_NOTIFICATIONS) */}
+        {SHOW_NOTIFICATIONS && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bell className="h-5 w-5" />
+                Notificaciones
+              </CardTitle>
+              <CardDescription>Gestiona cómo recibes las notificaciones</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Notificaciones por correo</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Recibe notificaciones importantes por correo electrónico
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.email}
+                  onCheckedChange={(checked) => setNotifications({ ...notifications, email: checked })}
+                />
               </div>
-              <Switch
-                checked={notifications.email}
-                onCheckedChange={(checked) => setNotifications({ ...notifications, email: checked })}
-              />
-            </div>
 
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label>Notificaciones push</Label>
-                <p className="text-sm text-muted-foreground">
-                  Recibe notificaciones en tiempo real en tu navegador
-                </p>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Notificaciones push</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Recibe notificaciones en tiempo real en tu navegador
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.push}
+                  onCheckedChange={(checked) => setNotifications({ ...notifications, push: checked })}
+                />
               </div>
-              <Switch
-                checked={notifications.push}
-                onCheckedChange={(checked) => setNotifications({ ...notifications, push: checked })}
-              />
-            </div>
 
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label>Actualizaciones del sistema</Label>
-                <p className="text-sm text-muted-foreground">
-                  Recibe notificaciones sobre nuevas funcionalidades
-                </p>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Actualizaciones del sistema</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Recibe notificaciones sobre nuevas funcionalidades
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.updates}
+                  onCheckedChange={(checked) => setNotifications({ ...notifications, updates: checked })}
+                />
               </div>
-              <Switch
-                checked={notifications.updates}
-                onCheckedChange={(checked) => setNotifications({ ...notifications, updates: checked })}
-              />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Security */}
         <Card>
