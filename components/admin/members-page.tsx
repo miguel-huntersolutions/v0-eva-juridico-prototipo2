@@ -65,6 +65,7 @@ import {
 import { useProfile } from "@/hooks/use-profile"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
 
@@ -83,6 +84,7 @@ export function MembersPage() {
   const isSuperadmin = actualRole === "superadmin"
   const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
 
+  const searchParams = useSearchParams()
   const {
     effectiveOrganizationId,
     isLoaded: orgLoaded,
@@ -245,6 +247,16 @@ export function MembersPage() {
       setLoading(false)
     }
   }, [profileLoading, orgLoaded, effectiveOrganizationId, loadData])
+
+  // Abrir modal de invitar cuando se llega desde dashboard (openInvite=1)
+  React.useEffect(() => {
+    if (searchParams.get("openInvite") === "1") {
+      setIsInviteOpen(true)
+      const url = new URL(window.location.href)
+      url.searchParams.delete("openInvite")
+      window.history.replaceState({}, "", url.pathname + (url.search || ""))
+    }
+  }, [searchParams])
 
   // Stats
   const stats = {

@@ -64,6 +64,28 @@ Lista de pasos y optimizaciones antes de desplegar en producción (p. ej. Vercel
 
 ---
 
+## Problemas frecuentes en producción (vs local)
+
+### Generar documento: 500 o "network timeout" / "Failed to download file from Drive"
+
+En local funciona y en producción falla suele deberse a:
+
+1. **Plantilla es un Google Document (Docs)**  
+   La app ya soporta descargar Google Docs exportándolos a .docx. Asegúrate de tener desplegada la versión que usa `files.export` para `application/vnd.google-apps.document` en `lib/google/drive.ts`.
+
+2. **Timeout de la petición a Drive**  
+   En producción la red puede ser más lenta o el documento más pesado. En **Vercel → Project → Settings → Environment Variables** añade (o sube) en Production:
+   - `GOOGLE_DRIVE_TIMEOUT_MS=180000`  
+   (3 minutos; por defecto son 120000 ms). Vuelve a desplegar tras cambiar variables.
+
+3. **Límite de duración de la función en Vercel**  
+   La ruta `generate-document` usa `maxDuration = 120`. En Vercel el plan limita la duración (p. ej. Hobby 60 s por defecto). En **Vercel → Project → Settings → Functions** revisa **Max Duration** y, si hace falta, súbela para que la función no se corte antes de que termine la descarga/export y la subida.
+
+4. **Token de Google en producción**  
+   El usuario debe haber hecho “Conectar con Google” en la **misma** app desplegada (producción). Si solo conectó en local, en producción no tendrá tokens; que haga login y vincule Google de nuevo en la URL de producción.
+
+---
+
 ## Resumen rápido
 
 | Área        | Acción principal                                                                 |

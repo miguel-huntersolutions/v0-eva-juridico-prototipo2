@@ -123,63 +123,25 @@ export async function POST(request: NextRequest) {
         }
       }
     } else {
-      // User doesn't exist
-      if (isInvitation) {
-        const { data: inviteResult, error: inviteErr } = await serviceRoleClient.auth.admin.inviteUserByEmail(
-          email,
-          {
-            data: {
-              name,
-              role: finalRole,
-              organization_id: organizationId,
-            },
-            redirectTo: redirectTo, // Explicitly set redirectTo
-          },
-        )
-
-        if (inviteErr) {
-          inviteError = inviteErr
-        } else if (inviteResult?.user) {
-          inviteData = {
-            user: inviteResult.user,
-          }
-        }
-      } else {
-        // Create the user first
-        const { data: newUser, error: createError } = await serviceRoleClient.auth.admin.createUser({
-          email,
-          email_confirm: false, // User needs to confirm via invitation
-          user_metadata: {
+      // User doesn't exist: always use inviteUserByEmail so Supabase sends the invite email
+      // (tanto para invitaciones como para creación de administradores desde superadmin)
+      const { data: inviteResult, error: inviteErr } = await serviceRoleClient.auth.admin.inviteUserByEmail(
+        email,
+        {
+          data: {
             name,
             role: finalRole,
             organization_id: organizationId,
           },
-        })
+          redirectTo,
+        },
+      )
 
-        if (createError) {
-          inviteError = createError
-        } else if (newUser.user) {
-          const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
-            type: "invite",
-            email: email,
-            options: {
-              redirectTo,
-              data: {
-                name,
-                role: finalRole,
-                organization_id: organizationId,
-              },
-            },
-          })
-
-          if (linkErr) {
-            inviteError = linkErr
-          } else {
-            inviteData = {
-              user: newUser.user,
-              properties: linkData?.properties,
-            }
-          }
+      if (inviteErr) {
+        inviteError = inviteErr
+      } else if (inviteResult?.user) {
+        inviteData = {
+          user: inviteResult.user,
         }
       }
     }
@@ -396,7 +358,7 @@ export async function POST(request: NextRequest) {
           email,
           name,
             role: finalRole, // Use finalRole to ensure it's 'member'
-          status: isInvitation ? "approved" : "pending", // Invitations are approved, others need approval
+          status: "approved", // New users are created via invite (email sent); approved so they can log in
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
         })
