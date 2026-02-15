@@ -311,7 +311,15 @@ function LoginPageContent() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password">Contraseña</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Contraseña</Label>
+                    <a
+                      href="/auth/forgot-password"
+                      className="text-xs text-muted-foreground hover:text-primary underline-offset-4 hover:underline"
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </a>
+                  </div>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input

@@ -23,6 +23,7 @@ import {
   Briefcase,
   FileText,
   Activity,
+  Copy,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -108,6 +109,11 @@ export function MembersPage() {
   const [isEditOpen, setIsEditOpen] = React.useState(false)
   const [isAssignEntitiesOpen, setIsAssignEntitiesOpen] = React.useState(false)
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
+  const [invitationResult, setInvitationResult] = React.useState<{
+    message: string
+    inviteLink: string | null
+  } | null>(null)
+  const [linkCopied, setLinkCopied] = React.useState(false)
   const [selectedMember, setSelectedMember] = React.useState<MemberExtended | null>(null)
 
   // Form states
@@ -127,6 +133,7 @@ export function MembersPage() {
     status: "active" as "active" | "inactive",
   })
   const [isSaving, setIsSaving] = React.useState(false)
+  const [resendingMemberId, setResendingMemberId] = React.useState<string | null>(null)
 
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
 
@@ -489,6 +496,40 @@ export function MembersPage() {
     }
   }
 
+  const handleResendInvitation = async (member: MemberExtended) => {
+    if (!effectiveOrganizationId) return
+    try {
+      setResendingMemberId(member.id)
+      const response = await fetch("/api/send-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: member.id,
+          organizationId: effectiveOrganizationId,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const msg = data.error || data.message || "Error al reenviar la invitación"
+        throw new Error(msg)
+      }
+      const link = data.inviteLink ?? data.link ?? null
+      if (link) {
+        setInvitationResult({
+          message: data.message || `Invitación generada para ${member.email}`,
+          inviteLink: link,
+        })
+      } else {
+        alert(data.message || `Invitación reenviada a ${member.email}`)
+      }
+    } catch (err) {
+      console.error("Error resending invitation:", err)
+      alert(err instanceof Error ? err.message : "Error al reenviar la invitación")
+    } finally {
+      setResendingMemberId(null)
+    }
+  }
+
   const toggleEntity = (entityId: string) => {
     if (selectedEntities.includes(entityId)) {
       setSelectedEntities(selectedEntities.filter((id) => id !== entityId))
@@ -846,12 +887,16 @@ export function MembersPage() {
                             Rechazar Usuario
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => {
-                            // TODO: Implement resend invitation
-                            console.log("Reenviar invitación para:", member.email)
-                          }}>
-                            <Send className="mr-2 h-4 w-4" />
-                            Reenviar Invitación
+                          <DropdownMenuItem
+                            onClick={() => handleResendInvitation(member)}
+                            disabled={resendingMemberId === member.id}
+                          >
+                            {resendingMemberId === member.id ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <Send className="mr-2 h-4 w-4" />
+                            )}
+                            {resendingMemberId === member.id ? "Enviando…" : "Reenviar Invitación"}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                         </>
@@ -1331,6 +1376,58 @@ export function MembersPage() {
                 </>
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invitation link result (when email is not sent automatically) */}
+      <Dialog
+        open={!!invitationResult}
+        onOpenChange={(open) => {
+          if (!open) {
+            setInvitationResult(null)
+            setLinkCopied(false)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-5 w-5 text-primary" />
+              Enlace de invitación
+            </DialogTitle>
+            <DialogDescription>{invitationResult?.message}</DialogDescription>
+          </DialogHeader>
+          {invitationResult?.inviteLink && (
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Copia y envía este enlace al invitado:</Label>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={invitationResult.inviteLink}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(invitationResult.inviteLink!)
+                    setLinkCopied(true)
+                    setTimeout(() => setLinkCopied(false), 2000)
+                  }}
+                >
+                  {linkCopied ? (
+                    <span className="text-xs">Copiado</span>
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setInvitationResult(null)}>Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -19,15 +19,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Verify user is superadmin
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    // Verify user is superadmin or org admin (admin can only resend for their own org)
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, organization_id")
+      .eq("id", user.id)
+      .single()
 
-    if (!profile || profile.role !== "superadmin") {
-      return NextResponse.json({ error: "Forbidden: Only superadmins can send invitations" }, { status: 403 })
+    if (!profile) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
     const body = await request.json()
     const { memberId, organizationId } = body
+
+    const isSuperadmin = profile.role === "superadmin"
+    const isOrgAdmin =
+      profile.role === "admin" &&
+      profile.organization_id != null &&
+      profile.organization_id === organizationId
+    if (!isSuperadmin && !isOrgAdmin) {
+      return NextResponse.json(
+        { error: "Forbidden: Only superadmins or organization admins can send invitations" },
+        { status: 403 },
+      )
+    }
 
     if (!memberId || !organizationId) {
       return NextResponse.json(
@@ -36,29 +52,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get member details
-    const { data: member, error: memberError } = await supabase
-      .from("profiles")
-      .select("id, email, name")
-      .eq("id", memberId)
-      .single()
-
-    if (memberError || !member) {
-      return NextResponse.json({ error: "Member not found" }, { status: 404 })
-    }
-
-    // Get organization details
-    const { data: organization, error: orgError } = await supabase
-      .from("organizations")
-      .select("id, name")
-      .eq("id", organizationId)
-      .single()
-
-    if (orgError || !organization) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 404 })
-    }
-
-    // Use service role to send invitation email via Supabase Auth
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
       return NextResponse.json(
@@ -73,6 +66,31 @@ export async function POST(request: NextRequest) {
         persistSession: false,
       },
     })
+
+    // Get member and organization with service role so RLS does not block (admin may not have SELECT on other profiles)
+    const { data: member, error: memberError } = await serviceRoleClient
+      .from("profiles")
+      .select("id, email, name, organization_id")
+      .eq("id", memberId)
+      .single()
+
+    if (memberError || !member) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 })
+    }
+
+    if (isOrgAdmin && member.organization_id !== organizationId) {
+      return NextResponse.json({ error: "Forbidden: Member does not belong to your organization" }, { status: 403 })
+    }
+
+    const { data: organization, error: orgError } = await serviceRoleClient
+      .from("organizations")
+      .select("id, name")
+      .eq("id", organizationId)
+      .single()
+
+    if (orgError || !organization) {
+      return NextResponse.json({ error: "Organization not found" }, { status: 404 })
+    }
 
     // Generate invitation link - redirect to password setup page for new users
     // IMPORTANT: This URL must be in the Redirect URLs list in Supabase Dashboard
@@ -157,7 +175,7 @@ export async function POST(request: NextRequest) {
       // For now, return the link so it can be sent manually if needed
       return NextResponse.json({
         success: true,
-        message: `Se generó un enlace de invitación para ${member.email}. Nota: El email no se envió automáticamente. Configura SMTP personalizado en Supabase para habilitar el envío automático de emails.`,
+        message: `Enlace de invitación generado para ${member.email}. Si el correo no llegó, copia el enlace y envíalo manualmente.`,
         member: {
           id: member.id,
           email: member.email,

@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   Sparkles,
   Upload,
+  ExternalLink,
 } from "lucide-react"
 import {
   Dialog,
@@ -723,8 +724,20 @@ export function GenerateDocumentsDialog({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-lg">{currentTemplate.name}</CardTitle>
-                      <CardDescription>
-                        Completa los siguientes campos para generar este documento
+                      <CardDescription className="flex flex-col gap-1.5">
+                        <span>Completa los siguientes campos para generar este documento.</span>
+                        {currentTemplate.fileUrl && (
+                          <a
+                            href={currentTemplate.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm mt-1"
+                          >
+                            <FileText className="h-3.5 w-3.5 shrink-0" />
+                            Ver plantilla a diligenciar
+                            <ExternalLink className="h-3 w-3 shrink-0" />
+                          </a>
+                        )}
                       </CardDescription>
                     </CardHeader>
                   </Card>

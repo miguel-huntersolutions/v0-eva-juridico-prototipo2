@@ -145,7 +145,7 @@ export default function SettingsPage() {
             <CardDescription>Gestiona la seguridad de tu cuenta</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button variant="outline" className="w-full" onClick={() => router.push("/auth/reset-password")}>
+            <Button variant="outline" className="w-full" onClick={() => router.push("/auth/forgot-password")}>
               <Lock className="mr-2 h-4 w-4" />
               Cambiar Contraseña
             </Button>

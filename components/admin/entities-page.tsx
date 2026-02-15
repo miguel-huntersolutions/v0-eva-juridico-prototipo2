@@ -154,7 +154,8 @@ export function EntitiesPage() {
       setLoadingMembers(true)
       try {
         const data = await getOrganizationMembers(effectiveOrganizationId)
-        setMembers(data.filter((m) => m.role === "member"))
+        // Include both member and admin so "Asignar Miembros" has someone to assign
+        setMembers(data.filter((m) => m.role === "member" || m.role === "admin"))
       } catch (err) {
         console.error("Error loading members:", err)
       } finally {
@@ -1445,23 +1446,33 @@ export function EntitiesPage() {
             <DialogDescription>Selecciona los miembros que tendrán acceso a {selectedEntity?.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {/* {members.map((member) => ( */}
-            {members.map((member) => (
-              <div
-                key={member.id}
-                className="flex items-center space-x-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50"
-                onClick={() => toggleMember(member.id)}
-              >
-                <Checkbox checked={selectedMembers.includes(member.id)} />
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback>{member.name?.charAt(0)}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{member.name}</p>
-                  <p className="text-xs text-muted-foreground">{member.email}</p>
-                </div>
+            {loadingMembers ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-sm text-muted-foreground">Cargando miembros...</span>
               </div>
-            ))}
+            ) : members.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No hay miembros en esta organización. Invita miembros desde la pestaña Miembros para poder asignarlos a entidades.
+              </p>
+            ) : (
+              members.map((member) => (
+                <div
+                  key={member.id}
+                  className="flex items-center space-x-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50"
+                  onClick={() => toggleMember(member.id)}
+                >
+                  <Checkbox checked={selectedMembers.includes(member.id)} />
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback>{member.name?.charAt(0)}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{member.name}</p>
+                    <p className="text-xs text-muted-foreground">{member.email}</p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAssignMembersOpen(false)}>
