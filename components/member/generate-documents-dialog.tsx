@@ -12,6 +12,8 @@ import {
   Sparkles,
   Upload,
   ExternalLink,
+  MessageCircleQuestion,
+  BookOpen,
 } from "lucide-react"
 import {
   Dialog,
@@ -114,6 +116,12 @@ export function GenerateDocumentsDialog({
   const [error, setError] = React.useState<string | null>(null)
   const [improvingField, setImprovingField] = React.useState<string | null>(null)
   const [improvedFields, setImprovedFields] = React.useState<Set<string>>(new Set())
+  // "Preguntar a la IA" (sin contexto) y "Consultar en documentos" (RAG)
+  const [aiHelpTag, setAiHelpTag] = React.useState<string | null>(null)
+  const [aiHelpMode, setAiHelpMode] = React.useState<"ask" | "rag" | null>(null)
+  const [aiHelpQuestion, setAiHelpQuestion] = React.useState("")
+  const [aiHelpResponse, setAiHelpResponse] = React.useState("")
+  const [aiHelpLoading, setAiHelpLoading] = React.useState(false)
   const [generatedDocuments, setGeneratedDocuments] = React.useState<
     Array<{ templateId: string; documentName: string; drivePath: string }>
   >([])
@@ -263,6 +271,80 @@ export function GenerateDocumentsDialog({
     } finally {
       setImprovingField(null)
     }
+  }
+
+  const openAskSimple = (tag: string) => {
+    setAiHelpTag(tag)
+    setAiHelpMode("ask")
+    setAiHelpQuestion("")
+    setAiHelpResponse("")
+    setError(null)
+  }
+  const openRagQuery = (tag: string) => {
+    setAiHelpTag(tag)
+    setAiHelpMode("rag")
+    setAiHelpQuestion("")
+    setAiHelpResponse("")
+    setError(null)
+  }
+  const closeAiHelp = () => {
+    setAiHelpTag(null)
+    setAiHelpMode(null)
+    setAiHelpQuestion("")
+    setAiHelpResponse("")
+    setAiHelpLoading(false)
+    setError(null)
+  }
+
+  const handleAiHelpSubmit = async () => {
+    if (!aiHelpTag || !aiHelpMode || !aiHelpQuestion.trim()) return
+    setAiHelpLoading(true)
+    setError(null)
+    try {
+      if (aiHelpMode === "ask") {
+        const res = await fetch("/api/ask-simple", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: formData[aiHelpTag] || "",
+            question: aiHelpQuestion.trim(),
+            fieldLabel: aiHelpTag.replace(/_/g, " "),
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || "Error al preguntar")
+        }
+        const data = await res.json()
+        setAiHelpResponse(data.text ?? "")
+      } else {
+        const res = await fetch("/api/rag/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: aiHelpQuestion.trim(),
+            entityId: entity?.id,
+            entityName: entity?.name,
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || "Error al consultar documentos")
+        }
+        const data = await res.json()
+        setAiHelpResponse(data.text ?? "")
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error en la solicitud")
+    } finally {
+      setAiHelpLoading(false)
+    }
+  }
+
+  const handleAiHelpApply = () => {
+    if (!aiHelpTag || !aiHelpResponse.trim()) return
+    setFormData((prev) => ({ ...prev, [aiHelpTag]: aiHelpResponse.trim() }))
+    closeAiHelp()
   }
 
   // Helper function to handle Google OAuth2 authentication
@@ -782,40 +864,80 @@ export function GenerateDocumentsDialog({
                               )}
                             </div>
                             {tag !== "ENTIDAD" && tag !== "SECRETARIA" && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className={cn(
-                                        "h-7 gap-1.5 text-xs transition-all",
-                                        formData[tag]?.trim().length > 0 && !improvedFields.has(tag)
-                                          ? "text-primary hover:text-primary hover:bg-primary/10"
-                                          : "text-muted-foreground",
-                                      )}
-                                      disabled={!formData[tag]?.trim() || improvingField === tag}
-                                      onClick={() => handleAIImprove(tag)}
-                                    >
-                                      {improvingField === tag ? (
-                                        <>
-                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                          Mejorando...
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Wand2 className="h-3 w-3" />
-                                          Mejorar con IA
-                                        </>
-                                      )}
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="left">
-                                    <p className="text-xs">La IA mejorará la redacción jurídica de este campo</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
+                              <div className="flex items-center gap-1">
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className={cn(
+                                          "h-7 gap-1.5 text-xs transition-all",
+                                          formData[tag]?.trim().length > 0 && !improvedFields.has(tag)
+                                            ? "text-primary hover:text-primary hover:bg-primary/10"
+                                            : "text-muted-foreground",
+                                        )}
+                                        disabled={!formData[tag]?.trim() || improvingField === tag}
+                                        onClick={() => handleAIImprove(tag)}
+                                      >
+                                        {improvingField === tag ? (
+                                          <>
+                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                            Mejorando...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Wand2 className="h-3 w-3" />
+                                            Mejorar con IA
+                                          </>
+                                        )}
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      <p className="text-xs">Mejora la redacción jurídica (usa contexto del proceso)</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={() => openAskSimple(tag)}
+                                      >
+                                        <MessageCircleQuestion className="h-3 w-3" />
+                                        Preguntar
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      <p className="text-xs">Pregunta sin contexto jurídico (ej. convertir número a letras, formatear)</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={() => openRagQuery(tag)}
+                                      >
+                                        <BookOpen className="h-3 w-3" />
+                                        Consultar docs
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      <p className="text-xs">Buscar en documentos de la entidad (ej. nombre del alcalde, cédula)</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
                             )}
                           </div>
                           {(tag === "ENTIDAD" || tag === "SECRETARIA") ? (
@@ -911,6 +1033,69 @@ export function GenerateDocumentsDialog({
             )}
           </>
         )}
+
+      {/* Preguntar a la IA (sin contexto) / Consultar en documentos (RAG) */}
+      <Dialog open={!!aiHelpTag && !!aiHelpMode} onOpenChange={(open) => !open && closeAiHelp()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {aiHelpMode === "ask" ? "Preguntar a la IA" : "Consultar en documentos"}
+            </DialogTitle>
+            <DialogDescription>
+              {aiHelpMode === "ask"
+                ? "Sin contexto jurídico. Escribe tu pregunta; la respuesta aparecerá abajo. Si es correcta, aplica al campo; si no, puedes preguntar de nuevo."
+                : "Busca en los documentos de la entidad. La respuesta aparecerá abajo. Si es correcta, aplica al campo; si no, puedes preguntar de nuevo."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {aiHelpTag && (
+              <p className="text-sm text-muted-foreground">
+                Campo: <strong>{aiHelpTag.replace(/_/g, " ")}</strong>
+              </p>
+            )}
+            <div className="grid gap-2">
+              <Label htmlFor="ai-help-question">Pregunta o instrucción</Label>
+              <Input
+                id="ai-help-question"
+                placeholder={aiHelpMode === "ask" ? "Ej: convierte el número 5000 a letras" : "Ej: ¿cuál es el nombre del alcalde?"}
+                value={aiHelpQuestion}
+                onChange={(e) => setAiHelpQuestion(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAiHelpSubmit()}
+              />
+            </div>
+            {aiHelpResponse !== "" && (
+              <div className="grid gap-2">
+                <Label>Respuesta</Label>
+                <Textarea
+                  className="min-h-[80px] resize-y bg-muted/50"
+                  value={aiHelpResponse}
+                  onChange={(e) => setAiHelpResponse(e.target.value)}
+                  placeholder="La respuesta aparecerá aquí. Puedes editarla antes de aplicar."
+                />
+              </div>
+            )}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAiHelp} disabled={aiHelpLoading}>
+              Cancelar
+            </Button>
+            <Button
+              variant={aiHelpResponse ? "outline" : "default"}
+              onClick={handleAiHelpSubmit}
+              disabled={!aiHelpQuestion.trim() || aiHelpLoading}
+            >
+              {aiHelpLoading ? <><Loader2 className="mr-2 h-3 w-3 animate-spin" /> Consultando...</> : "Preguntar"}
+            </Button>
+            <Button
+              onClick={handleAiHelpApply}
+              disabled={!aiHelpResponse.trim() || aiHelpLoading}
+            >
+              Aplicar al campo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 
