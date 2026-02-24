@@ -306,7 +306,6 @@ export function GenerateDocumentsDialog({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text: formData[aiHelpTag] || "",
             question: aiHelpQuestion.trim(),
             fieldLabel: aiHelpTag.replace(/_/g, " "),
           }),
@@ -1036,7 +1035,7 @@ export function GenerateDocumentsDialog({
 
       {/* Preguntar a la IA (sin contexto) / Consultar en documentos (RAG) */}
       <Dialog open={!!aiHelpTag && !!aiHelpMode} onOpenChange={(open) => !open && closeAiHelp()}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               {aiHelpMode === "ask" ? "Preguntar a la IA" : "Consultar en documentos"}
@@ -1055,12 +1054,13 @@ export function GenerateDocumentsDialog({
             )}
             <div className="grid gap-2">
               <Label htmlFor="ai-help-question">Pregunta o instrucción</Label>
-              <Input
+              <Textarea
                 id="ai-help-question"
-                placeholder={aiHelpMode === "ask" ? "Ej: convierte el número 5000 a letras" : "Ej: ¿cuál es el nombre del alcalde?"}
+                placeholder={aiHelpMode === "ask" ? "Ej: convierte el número 5000 a letras en pesos colombianos" : "Ej: ¿cuál es el nombre del alcalde? ¿qué dice el contrato sobre...?"}
                 value={aiHelpQuestion}
                 onChange={(e) => setAiHelpQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAiHelpSubmit()}
+                rows={4}
+                className="min-h-[100px] resize-y"
               />
             </div>
             {aiHelpResponse !== "" && (

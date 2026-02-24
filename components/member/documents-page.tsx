@@ -24,6 +24,7 @@ import {
   Send,
   Check,
   XCircle,
+  Pencil,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -41,12 +42,19 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { documentTypes } from "@/lib/mock-data"
+import { DocumentAuditLog } from "@/components/document-audit-log"
 import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 
-type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
+type DocumentStatus = "all" | "draft" | "pending" | "in_review" | "approved" | "rejected"
 
 const statusConfig: Record<
   string,
@@ -54,6 +62,11 @@ const statusConfig: Record<
 > = {
   draft: { label: "Borrador", variant: "secondary", className: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" },
   pending: { label: "Pendiente", variant: "outline", className: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+  in_review: {
+    label: "En revisión",
+    variant: "outline",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  },
   approved: {
     label: "Aprobado",
     variant: "default",
@@ -80,7 +93,7 @@ interface MappedDocument {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   entityId: string
   entityName: string
   fileUrl: string
@@ -95,6 +108,7 @@ export function DocumentsPage() {
   const searchParams = useSearchParams()
   const [selectedDocument, setSelectedDocument] = React.useState<MappedDocument | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
+  const [auditDocumentId, setAuditDocumentId] = React.useState<string | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<DocumentStatus>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
@@ -190,7 +204,9 @@ export function DocumentsPage() {
         activeTab === "all" ||
         (activeTab === "approved" && doc.status === "approved") ||
         (activeTab === "pending" && doc.status === "pending") ||
-        (activeTab === "draft" && doc.status === "draft")
+        (activeTab === "in_review" && doc.status === "in_review") ||
+        (activeTab === "draft" && doc.status === "draft") ||
+        (activeTab === "rejected" && doc.status === "rejected")
 
       const matchesStatus = statusFilter === "all" || doc.status === statusFilter
       const matchesEntity = entityFilter === "all" || doc.entityId === entityFilter
@@ -206,7 +222,9 @@ export function DocumentsPage() {
     total: allDocuments.length,
     approved: allDocuments.filter((d) => d.status === "approved").length,
     pending: allDocuments.filter((d) => d.status === "pending").length,
+    in_review: allDocuments.filter((d) => d.status === "in_review").length,
     draft: allDocuments.filter((d) => d.status === "draft").length,
+    rejected: allDocuments.filter((d) => d.status === "rejected").length,
   }
 
   const handleViewDocument = (document: MappedDocument) => {
@@ -261,6 +279,29 @@ export function DocumentsPage() {
     }
   }
 
+  const handleReopenAsDraft = async (doc: MappedDocument) => {
+    if (doc.status !== "rejected") return
+    if (!confirm(`¿Volver "${doc.name}" a borrador para corregirlo? Podrás editarlo y enviarlo de nuevo a revisión.`)) return
+    try {
+      setIsUpdatingStatus(true)
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, status: "draft" }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.error || data?.message || "Error al volver a borrador")
+      setAllDocuments((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "draft" as const } : d))
+      )
+      alert("Documento en borrador. Puedes ir a Generar documentos del proceso para corregirlo y volver a enviar.")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al volver a borrador")
+    } finally {
+      setIsUpdatingStatus(false)
+    }
+  }
+
   const handleUpdateDocumentStatus = async (doc: MappedDocument, newStatus: "approved" | "rejected") => {
     const action = newStatus === "approved" ? "aprobar" : "rechazar"
     if (!confirm(`¿Estás seguro de que deseas ${action} "${doc.name}"?`)) {
@@ -291,8 +332,6 @@ export function DocumentsPage() {
       setIsUpdatingStatus(false)
     }
   }
-
-  const canApproveReject = profile?.role === "admin" || profile?.role === "superadmin"
 
   const router = useRouter()
   const pathname = usePathname()
@@ -340,12 +379,26 @@ export function DocumentsPage() {
         </Card>
       )}
 
+      {stats.in_review > 0 && (
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardContent className="flex flex-row items-center gap-3 py-3">
+            <Clock className="h-5 w-5 text-blue-500" />
+            <p className="text-sm">
+              Tiene {stats.in_review} documento{stats.in_review !== 1 ? "s" : ""} en revisión. El administrador los está
+              revisando; no podrá editarlos ni enviarlos de nuevo hasta que se aprueben o rechacen.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <StatsCard title="Total Documentos" value={stats.total} description="En todos los procesos" icon={Files} />
         <StatsCard title="Aprobados" value={stats.approved} description="Listos para uso" icon={CheckCircle2} />
         <StatsCard title="Pendientes" value={stats.pending} description="En espera de revisión" icon={Clock} />
+        <StatsCard title="En revisión" value={stats.in_review} description="Revisando el admin" icon={Eye} />
         <StatsCard title="Borradores" value={stats.draft} description="En edición" icon={AlertCircle} />
+        <StatsCard title="Rechazados" value={stats.rejected} description="Volver a borrador para corregir" icon={XCircle} />
       </div>
 
       {/* Main Content Card */}
@@ -381,10 +434,22 @@ export function DocumentsPage() {
                     {stats.pending}
                   </Badge>
                 </TabsTrigger>
+                <TabsTrigger value="in_review" className="gap-2">
+                  En revisión
+                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                    {stats.in_review}
+                  </Badge>
+                </TabsTrigger>
                 <TabsTrigger value="draft" className="gap-2">
                   Borradores
                   <Badge variant="secondary" className="h-5 px-1.5 text-xs">
                     {stats.draft}
+                  </Badge>
+                </TabsTrigger>
+                <TabsTrigger value="rejected" className="gap-2">
+                  Rechazados
+                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                    {stats.rejected}
                   </Badge>
                 </TabsTrigger>
               </TabsList>
@@ -550,6 +615,15 @@ export function DocumentsPage() {
                                   </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setAuditDocumentId(document.id)
+                                    }}
+                                  >
+                                    <History className="mr-2 h-4 w-4" />
+                                    Ver auditoría
+                                  </DropdownMenuItem>
                                   {(() => {
                                     // Check if fileUrl is a valid Google Drive URL (starts with http)
                                     const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
@@ -584,6 +658,21 @@ export function DocumentsPage() {
                                     }
                                     return null
                                   })()}
+                                  {document.status === "rejected" && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleReopenAsDraft(document)
+                                        }}
+                                        disabled={isUpdatingStatus}
+                                      >
+                                        <Pencil className="mr-2 h-4 w-4" />
+                                        Volver a borrador (para corregir)
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
                                   {(document.status === "draft" || document.status === "rejected") && (
                                     <>
                                       <DropdownMenuSeparator />
@@ -599,28 +688,12 @@ export function DocumentsPage() {
                                       </DropdownMenuItem>
                                     </>
                                   )}
-                                  {document.status === "pending" && canApproveReject && (
+                                  {document.status === "in_review" && (
                                     <>
                                       <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleUpdateDocumentStatus(document, "approved")
-                                        }}
-                                        disabled={isUpdatingStatus}
-                                      >
-                                        <Check className="mr-2 h-4 w-4" />
-                                        Aprobar
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleUpdateDocumentStatus(document, "rejected")
-                                        }}
-                                        disabled={isUpdatingStatus}
-                                      >
-                                        <XCircle className="mr-2 h-4 w-4" />
-                                        Rechazar
+                                      <DropdownMenuItem disabled className="text-muted-foreground">
+                                        <Eye className="mr-2 h-4 w-4" />
+                                        En revisión (bloqueado)
                                       </DropdownMenuItem>
                                     </>
                                   )}
@@ -648,6 +721,18 @@ export function DocumentsPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Auditoría del documento */}
+      <Dialog open={!!auditDocumentId} onOpenChange={(open) => !open && setAuditDocumentId(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Auditoría del documento</DialogTitle>
+          </DialogHeader>
+          {auditDocumentId && (
+            <DocumentAuditLog documentId={auditDocumentId} />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

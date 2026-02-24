@@ -93,7 +93,7 @@ export interface Process {
   documents_count?: number
 }
 
-export type DocumentStatus = "draft" | "pending" | "approved" | "rejected"
+export type DocumentStatus = "draft" | "pending" | "in_review" | "approved" | "rejected"
 
 export interface Document {
   id: string

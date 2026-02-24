@@ -8,42 +8,37 @@ import { openai } from "@ai-sdk/openai"
 import { getOpenAIModel, getOpenAIChatModelString } from "@/lib/ai-model-config"
 
 export interface AskSimpleOptions {
-  /** Current content of the field (optional) */
-  text?: string
-  /** User question / instruction (e.g. "convierte este número a letras") */
+  /** User question / instruction – ONLY this is used as input (e.g. "convierte 5000 a letras") */
   question: string
-  /** Field label for clarity only */
+  /** Field label for clarity only (optional) */
   fieldLabel?: string
   /** AI model override */
   model?: string
 }
 
-const SYSTEM_PROMPT = `Eres un asistente útil. El usuario está completando un campo y te pide una transformación o respuesta.
+const SYSTEM_PROMPT = `Eres un asistente útil. El usuario está completando un campo y te pide una transformación, análisis o respuesta.
 
 Reglas (en orden de prioridad):
-1. Responde ÚNICAMENTE con el texto que debe quedar en el campo. Sin explicaciones, sin "El resultado es:", sin comillas.
-2. Si en la pregunta del usuario aparece un número (cifras, ej. 5000, 1.234.567), SIEMPRE úsalo. Convierte ese número a letras si pide "a letras", "en letras", "en pesos", "en pesos colombianos", etc. Ejemplo: "convierte 5000 a letras en pesos colombianos" → "CINCO MIL PESOS M/CTE" o "cinco mil pesos colombianos" según el formato habitual. Nunca respondas "Escribe el número en el campo" si el número ya está en la pregunta.
-3. Si la pregunta incluye cualquier dato (número, palabra, fecha), usa ese dato y devuelve el resultado. No pidas que lo escriba en el campo.
-4. Para "número a letras" en español/Colombia: escribe en letras (ej. 5000 → cinco mil). Si pide "pesos colombianos", puedes añadir "pesos" o "pesos M/CTE" según contexto.
-5. Solo si la pregunta dice explícitamente "este texto", "el contenido del campo", "esto" (sin dar el valor) Y el campo está vacío, entonces di brevemente que indique el valor. En cualquier otro caso, usa lo que venga en la pregunta.`
+1. NUNCA repitas o devuelvas como respuesta el mismo texto largo que el usuario pegó. Si el usuario pide "analiza este texto", "qué código SECOP/UNSPSC", "busca el que mejor se acerque", "clasifica", etc., debes ANALIZAR y dar tu RESULTADO (código(s), recomendación, resumen), no devolver el texto de entrada.
+2. Cuando pidan un código (SECOP, UNSPSC, etc.) o clasificación a partir de una descripción: responde con el código o códigos más adecuados y una breve justificación (ej. "10191500 (Industrias cafeteras)" o "80161500 - Servicios de desarrollo agrícola. El convenio es para fortalecimiento cafetero y renovación de cafetales."). El texto que debe ir en el campo puede ser el código con nombre, o el código principal si el campo es solo para código.
+3. Responde con el texto que debe quedar en el campo: sin encabezados tipo "El resultado es:", sin comillas envolventes. Para preguntas de análisis/código puedes incluir 1-2 líneas de justificación si ayuda.
+4. Si en la pregunta aparece un número (5000, 1.234.567, etc.), úsalo: convierte a letras si pide "a letras", "en pesos colombianos", etc. (ej. 5000 → cinco mil pesos colombianos).
+5. Si pide formato, mayúsculas, resumir, traducir: haz solo eso sobre el dato que dé en la pregunta.
+6. Tu única entrada es la pregunta o instrucción del usuario. Responde usando únicamente lo que escribió en esa pregunta.`
 
 export async function askSimple(options: AskSimpleOptions): Promise<string> {
-  const { text, question, fieldLabel, model = getOpenAIChatModelString() } = options
+  const { question, fieldLabel, model = getOpenAIChatModelString() } = options
 
   if (!question?.trim()) {
     throw new Error("question is required")
   }
 
-  let userPrompt = `Pregunta del usuario: ${question.trim()}\n\n`
+  // Solo se usa lo que el usuario escribe en "Pregunta o instrucción"; no se envía contenido de otro campo.
+  let userPrompt = question.trim()
   if (fieldLabel) {
-    userPrompt += `(Campo: ${fieldLabel})\n\n`
+    userPrompt = `[Campo: ${fieldLabel}]\n\n${userPrompt}`
   }
-  if (text != null && String(text).trim() !== "") {
-    userPrompt += `Contenido actual del campo:\n${String(text).trim()}\n\n`
-  } else {
-    userPrompt += `Contenido actual del campo: (vacío)\n\n`
-  }
-  userPrompt += `Responde solo con el texto que debe ir en el campo, sin explicaciones.`
+  userPrompt += `\n\nResponde con el texto que debe ir en el campo (si pides análisis o código, da el resultado y opcionalmente una breve justificación). No repitas el texto largo de entrada como respuesta.`
 
   const openaiModel = model?.startsWith("openai/")
     ? openai(model.replace("openai/", "") as "gpt-4o")

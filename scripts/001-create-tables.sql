@@ -98,13 +98,28 @@ CREATE TABLE documents (
   name TEXT NOT NULL,
   type TEXT NOT NULL,
   version INTEGER DEFAULT 1,
-  status TEXT NOT NULL CHECK (status IN ('draft', 'pending', 'approved', 'rejected')) DEFAULT 'draft',
+  status TEXT NOT NULL CHECK (status IN ('draft', 'pending', 'in_review', 'approved', 'rejected')) DEFAULT 'draft',
   file_url TEXT,
   file_size INTEGER,
   created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Document audit log (status transitions + comments, e.g. rejection reason)
+CREATE TABLE document_audit_log (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  from_status TEXT NOT NULL,
+  to_status TEXT NOT NULL CHECK (to_status IN ('draft', 'pending', 'in_review', 'approved', 'rejected')),
+  changed_by UUID NOT NULL REFERENCES profiles(id) ON DELETE SET NULL,
+  changed_by_name TEXT,
+  changed_by_role TEXT,
+  comment TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_document_audit_log_document_id ON document_audit_log(document_id);
+CREATE INDEX idx_document_audit_log_created_at ON document_audit_log(created_at DESC);
 
 -- Chat messages table for AI assistant
 CREATE TABLE chat_messages (

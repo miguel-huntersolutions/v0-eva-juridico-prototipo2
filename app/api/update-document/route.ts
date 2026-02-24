@@ -39,11 +39,18 @@ export async function PUT(request: NextRequest) {
     const body = await request.json()
     const { documentId, status, comment } = body
 
-    // Members can only set status to "pending" (send to review)
-    // Admins and superadmins can set any status
-    if (profile.role === "member" && status !== "pending") {
+    // Members can set status to "pending" (send to review) or "draft" (only when doc is rejected, to correct it).
+    if (profile.role === "member" && status !== "pending" && status !== "draft") {
       return NextResponse.json(
-        { error: "Forbidden: Members can only send documents to review (pending status)" },
+        { error: "Forbidden: Members can only send to review (pending) or reopen as draft when rejected" },
+        { status: 403 },
+      )
+    }
+
+    // Admin and superadmin cannot set "pending" — only the member who created the doc sends to review.
+    if ((profile.role === "admin" || profile.role === "superadmin") && status === "pending") {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el miembro que creó el documento puede enviarlo a revisión" },
         { status: 403 },
       )
     }
@@ -55,9 +62,9 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    if (!["draft", "pending", "approved", "rejected"].includes(status)) {
+    if (!["draft", "pending", "in_review", "approved", "rejected"].includes(status)) {
       return NextResponse.json(
-        { error: "Invalid status. Must be one of: draft, pending, approved, rejected" },
+        { error: "Invalid status. Must be one of: draft, pending, in_review, approved, rejected" },
         { status: 400 },
       )
     }
@@ -94,6 +101,14 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 })
     }
 
+    // Member can set "draft" only when the document is currently "rejected" (to correct and resubmit).
+    if (profile.role === "member" && status === "draft" && document.status !== "rejected") {
+      return NextResponse.json(
+        { error: "Solo puede volver a borrador un documento que esté rechazado" },
+        { status: 403 },
+      )
+    }
+
     // Verify document belongs to user's organization (if admin or member, not superadmin)
     const documentOrgId = (document.process as any)?.entity?.organization_id
     if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== documentOrgId) {
@@ -109,11 +124,7 @@ export async function PUT(request: NextRequest) {
       updated_at: new Date().toISOString(),
     }
 
-    // Add comment if provided (you might want to store this in a separate table)
-    if (comment) {
-      // For now, we'll store it in a metadata field if your schema supports it
-      // Otherwise, you might need to create a document_comments table
-    }
+    const previousStatus = document.status as string
 
     const { data: updatedDocument, error: updateError } = await serviceRoleClient
       .from("documents")
@@ -129,10 +140,29 @@ export async function PUT(request: NextRequest) {
       )
     }
 
+    // Audit log: record status transition (including rejection/approval comments)
+    const { data: profileRow } = await serviceRoleClient
+      .from("profiles")
+      .select("name, role")
+      .eq("id", user.id)
+      .single()
+    const changedByName = (profileRow as any)?.name ?? user.email ?? null
+    const changedByRole = (profileRow as any)?.role ?? profile?.role ?? null
+
+    await serviceRoleClient.from("document_audit_log").insert({
+      document_id: documentId,
+      from_status: previousStatus,
+      to_status: status,
+      changed_by: user.id,
+      changed_by_name: changedByName,
+      changed_by_role: changedByRole,
+      comment: typeof comment === "string" ? comment.trim() || null : null,
+    })
+
     // When approved, ingest document into RAG (vector store) so the assistant can search it
     if (status === "approved") {
       try {
-        const { ingestDocumentToRag } = await import("@/lib/rag/ingest")
+        const { ingestDocumentToRag } = await import("../../../lib/rag/ingest")
         const result = await ingestDocumentToRag(documentId, user.id)
         if (!result.success) {
           // Document is still approved; ingest failure is non-fatal

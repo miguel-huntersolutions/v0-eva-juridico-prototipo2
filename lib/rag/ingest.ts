@@ -1,34 +1,37 @@
 /**
- * RAG ingestion: download document from Google Drive and add to OpenAI vector store.
- * Used when a document is approved so the assistant can search it.
+ * Ingest documents into the RAG vector store (OpenAI).
+ * Downloads the file from Google Drive (using document creator's tokens) and adds it to the vector store.
  */
 
 import { createClient } from "@supabase/supabase-js"
-import { OpenAI } from "openai"
-import * as fs from "fs"
-import * as path from "path"
-import * as os from "os"
+import OpenAI, { toFile } from "openai"
 import { downloadFileFromDriveForServer } from "@/lib/google/drive"
 
 const VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID
 
-/** Extract Google Drive file ID from webViewLink (e.g. https://drive.google.com/file/d/FILE_ID/view) */
-export function extractDriveFileIdFromUrl(fileUrl: string | null | undefined): string | null {
-  if (!fileUrl || typeof fileUrl !== "string") return null
-  const match = fileUrl.match(/\/d\/([a-zA-Z0-9_-]+)/)
-  return match ? match[1] : null
-}
-
 export interface IngestResult {
   success: boolean
-  openaiFileId?: string
   error?: string
+  openaiFileId?: string
 }
 
 /**
- * Download document from Drive, upload to OpenAI Files, and add to the vector store.
- * @param documentId - UUID of the document in our DB
- * @param userId - User ID for Drive OAuth (must have access to the file)
+ * Extract Google Drive file ID from file_url (webViewLink or direct link).
+ */
+function extractDriveFileId(fileUrl: string | null | undefined): string | null {
+  if (!fileUrl || typeof fileUrl !== "string") return null
+  // https://drive.google.com/file/d/FILE_ID/view
+  const m1 = fileUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/)
+  if (m1?.[1]) return m1[1]
+  // https://drive.google.com/open?id=FILE_ID
+  const m2 = fileUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/)
+  if (m2?.[1]) return m2[1]
+  return null
+}
+
+/**
+ * Ingest a document (by id) into the RAG vector store.
+ * Fetches the document from DB, downloads the file from Drive, uploads to OpenAI Files, then adds to vector store.
  */
 export async function ingestDocumentToRag(documentId: string, userId: string): Promise<IngestResult> {
   if (!VECTOR_STORE_ID) {
@@ -37,16 +40,18 @@ export async function ingestDocumentToRag(documentId: string, userId: string): P
 
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!serviceRoleKey) {
-    return { success: false, error: "SUPABASE_SERVICE_ROLE_KEY is not configured" }
+    return { success: false, error: "Server configuration error" }
   }
 
-  const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceRoleKey,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
 
   const { data: document, error: docError } = await supabase
     .from("documents")
-    .select("id, name, file_url, created_by")
+    .select("id, file_url, created_by, name")
     .eq("id", documentId)
     .single()
 
@@ -54,63 +59,63 @@ export async function ingestDocumentToRag(documentId: string, userId: string): P
     return { success: false, error: "Document not found" }
   }
 
-  const fileUrl = document.file_url as string | null
-  const driveFileId = extractDriveFileIdFromUrl(fileUrl)
+  const fileUrl = document.file_url
+  const driveFileId = extractDriveFileId(fileUrl)
   if (!driveFileId) {
     return { success: false, error: "Document has no valid Google Drive file URL" }
   }
 
-  // Try approver first (they have active session), then creator. Use service-role token lookup so RLS does not block.
-  const creatorId = (document.created_by as string | null) || null
-  const tryUserIds = creatorId && creatorId !== userId ? [userId, creatorId] : [userId]
+  // Use document creator for Drive download; fallback to current user
+  const driveUserId = document.created_by || userId
 
-  let buffer: Buffer | null = null
-  let lastError: string | null = null
-  for (const driveUserId of tryUserIds) {
-    try {
-      buffer = await downloadFileFromDriveForServer(driveUserId, driveFileId)
-      break
-    } catch (e) {
-      lastError = e instanceof Error ? e.message : "Failed to download from Drive"
+  let buffer: Buffer
+  try {
+    buffer = await downloadFileFromDriveForServer(driveUserId, driveFileId)
+  } catch (e) {
+    return {
+      success: false,
+      error: `Failed to download from Drive: ${e instanceof Error ? e.message : "Unknown error"}`,
     }
   }
-  if (!buffer) {
-    return { success: false, error: lastError || "Failed to download from Drive" }
+
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!openaiKey) {
+    return { success: false, error: "OPENAI_API_KEY is not configured" }
   }
 
-  if (!buffer.length) {
-    return { success: false, error: "Downloaded file is empty" }
-  }
+  const openai = new OpenAI({ apiKey: openaiKey })
 
-  // OpenAI SDK expects fs.ReadStream; write to temp file then stream
-  const baseName = (document.name || "document").replace(/[^a-zA-Z0-9._-]/g, "_")
-  const ext = path.extname(baseName) || ".pdf"
-  const safeName = baseName.endsWith(ext) ? baseName : baseName + ext
-  const tmpPath = path.join(os.tmpdir(), `rag-${documentId.slice(0, 8)}-${Date.now()}-${safeName}`)
+  // Determine file name and type for OpenAI
+  const fileName = (document.name && document.name.trim()) || `document-${documentId.slice(0, 8)}.docx`
+  const isPdf = fileName.toLowerCase().endsWith(".pdf")
+  const mimeType = isPdf ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+  let openaiFileId: string
   try {
-    fs.writeFileSync(tmpPath, buffer)
-    const stream = fs.createReadStream(tmpPath)
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
+    const uploadable = await toFile(buffer, fileName, { type: mimeType })
     const file = await openai.files.create({
-      file: stream,
+      file: uploadable,
       purpose: "assistants",
     })
-
-    await openai.vectorStores.files.create(VECTOR_STORE_ID, {
-      file_id: file.id,
-    })
-
-    return { success: true, openaiFileId: file.id }
+    openaiFileId = file.id
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error"
-    return { success: false, error: `OpenAI upload failed: ${msg}` }
-  } finally {
-    try {
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath)
-    } catch {
-      // ignore cleanup errors
+    return {
+      success: false,
+      error: `Failed to upload file to OpenAI: ${e instanceof Error ? e.message : "Unknown error"}`,
     }
   }
+
+  try {
+    await openai.beta.vectorStores.files.create(VECTOR_STORE_ID, {
+      file_id: openaiFileId,
+    })
+  } catch (e) {
+    return {
+      success: false,
+      error: `Failed to add file to vector store: ${e instanceof Error ? e.message : "Unknown error"}`,
+      openaiFileId,
+    }
+  }
+
+  return { success: true, openaiFileId }
 }

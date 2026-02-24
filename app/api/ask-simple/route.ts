@@ -12,7 +12,7 @@ export const maxDuration = 30
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { text, question, fieldLabel, model } = body
+    const { question, fieldLabel, model } = body
 
     if (!question || typeof question !== "string" || !question.trim()) {
       return NextResponse.json(
@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Solo se usa el campo "Pregunta o instrucción"; no se envía contenido de otros campos.
     const result = await askSimple({
-      text: typeof text === "string" ? text : undefined,
       question: question.trim(),
       fieldLabel: typeof fieldLabel === "string" ? fieldLabel : undefined,
       model: typeof model === "string" ? model : undefined,

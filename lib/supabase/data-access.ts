@@ -80,7 +80,7 @@ export interface Document {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   file_url: string
   file_size: number
   created_by: string | null

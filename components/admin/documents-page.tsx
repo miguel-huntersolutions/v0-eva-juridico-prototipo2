@@ -52,13 +52,14 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { documentTypes } from "@/lib/mock-data"
-import { getEntities, getDocuments, type EntityMapped } from "@/lib/supabase/client-data-access"
+import { getEntities, type EntityMapped } from "@/lib/supabase/client-data-access"
+import { DocumentAuditLog } from "@/components/document-audit-log"
 import { useProfile } from "@/hooks/use-profile"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { cn } from "@/lib/utils"
 
-type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
+type DocumentStatus = "all" | "draft" | "pending" | "in_review" | "approved" | "rejected"
 
 const statusConfig: Record<
   string,
@@ -66,6 +67,11 @@ const statusConfig: Record<
 > = {
   draft: { label: "Borrador", variant: "secondary", className: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" },
   pending: { label: "Pendiente", variant: "outline", className: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+  in_review: {
+    label: "En revisión",
+    variant: "outline",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  },
   approved: {
     label: "Aprobado",
     variant: "default",
@@ -92,7 +98,7 @@ interface MappedDocument {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   entityId: string
   entityName: string
   fileUrl: string
@@ -146,62 +152,57 @@ export function DocumentsPage() {
         setIsLoadingDocs(false)
         return
       }
-      
+
       try {
-        // First, get entities for the organization
-        const orgEntities = await getEntities(effectiveOrganizationId)
-        const entityIds = orgEntities.map((e) => e.id)
-        
-        // Get all documents
-        const allDocs = await getDocuments()
-        console.log("[AdminDocumentsPage] Raw documents from DB:", allDocs.length)
-        console.log("[AdminDocumentsPage] Sample raw document:", allDocs[0])
-        console.log("[AdminDocumentsPage] Organization entity IDs:", entityIds)
-        
-        // Filter documents to only include those from processes belonging to organization entities
-        const filteredDocs = allDocs.filter((d: any) => {
-          if (!d.process) {
-            console.warn("[AdminDocumentsPage] Document without process:", d.id, d.name)
-            return false
-          }
-          if (!d.process.entity) {
-            console.warn("[AdminDocumentsPage] Document process without entity:", d.id, d.name, "process_id:", d.process_id)
-            return false
-          }
-          const processEntityId = d.process.entity.id
-          const isIncluded = processEntityId && entityIds.includes(processEntityId)
-          if (!isIncluded && allDocs.length < 20) {
-            console.log("[AdminDocumentsPage] Document filtered out:", d.name, "entity_id:", processEntityId, "not in", entityIds)
-          }
-          return isIncluded
-        })
-        
-        console.log("[AdminDocumentsPage] Filtered documents count:", filteredDocs.length)
-        
-        const mapped: MappedDocument[] = filteredDocs.map((d) => ({
-          id: d.id,
-          processId: d.process_id,
-          processCode: d.process?.code || "",
-          processObject: d.process?.object || "",
-          name: d.name,
-          type: d.type,
-          version: d.version || 1,
-          status: d.status as MappedDocument["status"],
-          entityId: d.process?.entity?.id || "",
-          entityName: d.process?.entity?.name || "",
-          fileUrl: d.file_url || "",
-          fileSize: d.file_size || 0,
-          createdBy: "",
-          createdAt: d.created_at?.split("T")[0] || "",
-          updatedAt: d.updated_at?.split("T")[0] || "",
-          driveFolderUrl: (d.process as any)?.drive_folder_url || null,
-        }))
-        setAllDocuments(mapped)
-        console.log("[AdminDocumentsPage] Total documents in DB:", allDocs.length, "Organization documents:", mapped.length)
-        console.log("[AdminDocumentsPage] Document statuses:", mapped.map(d => ({ name: d.name, status: d.status })))
-        if (mapped.length > 0) {
-          console.log("[AdminDocumentsPage] Sample mapped document:", mapped[0])
+        const res = await fetch(
+          `/api/documents?organizationId=${encodeURIComponent(effectiveOrganizationId)}`
+        )
+        if (!res.ok) {
+          throw new Error(await res.text())
         }
+        const list = (await res.json()) as Array<{
+          id: string
+          processId: string
+          processCode: string
+          processObject: string
+          name: string
+          type: string
+          version: number
+          status: string
+          entityId: string
+          entityName: string
+          fileUrl: string
+          fileSize: number
+          createdAt: string
+          updatedAt: string
+          driveFolderUrl?: string | null
+        }>
+
+        const mapped: MappedDocument[] = list.map((d) => {
+          const rawStatus = d.status == null ? "draft" : String(d.status).toLowerCase().trim()
+          const status = ["draft", "pending", "in_review", "approved", "rejected"].includes(rawStatus)
+            ? (rawStatus as MappedDocument["status"])
+            : "draft"
+          return {
+            id: d.id,
+            processId: d.processId,
+            processCode: d.processCode,
+            processObject: d.processObject,
+            name: d.name,
+            type: d.type,
+            version: d.version ?? 1,
+            status,
+            entityId: d.entityId,
+            entityName: d.entityName,
+            fileUrl: d.fileUrl ?? "",
+            fileSize: d.fileSize ?? 0,
+            createdBy: "",
+            createdAt: d.createdAt ?? "",
+            updatedAt: d.updatedAt ?? "",
+            driveFolderUrl: d.driveFolderUrl ?? null,
+          }
+        })
+        setAllDocuments(mapped)
       } catch (err) {
         console.error("Error loading documents:", err)
       } finally {
@@ -242,6 +243,7 @@ export function DocumentsPage() {
         activeTab === "all" ||
         (activeTab === "approved" && doc.status === "approved") ||
         (activeTab === "pending" && doc.status === "pending") ||
+        (activeTab === "in_review" && doc.status === "in_review") ||
         (activeTab === "draft" && doc.status === "draft") ||
         (activeTab === "rejected" && doc.status === "rejected")
 
@@ -273,6 +275,7 @@ export function DocumentsPage() {
     total: allDocuments.length,
     approved: allDocuments.filter((d) => d.status === "approved").length,
     pending: allDocuments.filter((d) => d.status === "pending").length,
+    in_review: allDocuments.filter((d) => d.status === "in_review").length,
     draft: allDocuments.filter((d) => d.status === "draft").length,
     rejected: allDocuments.filter((d) => d.status === "rejected").length,
   }
@@ -364,28 +367,27 @@ export function DocumentsPage() {
     }
   }
 
-  const handleSendToReview = async (doc: MappedDocument) => {
-    if (doc.status === "pending") return
-    if (!confirm(`¿Enviar "${doc.name}" a revisión?`)) return
+  const handleMoveToInReview = async (doc: MappedDocument) => {
+    if (doc.status !== "pending") return
+    if (!confirm(`¿Pasar "${doc.name}" a estado "En revisión"? El miembro no podrá editarlo hasta que lo apruebes o rechaces.`)) return
     try {
       setIsUpdating(true)
       const response = await fetch("/api/update-document", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documentId: doc.id, status: "pending" }),
+        body: JSON.stringify({ documentId: doc.id, status: "in_review" }),
       })
       if (!response.ok) {
         const err = await response.json()
-        throw new Error(err.message || err.error || "Error al enviar a revisión")
+        throw new Error(err.message || err.error || "Error al pasar a revisión")
       }
       setAllDocuments((prev) =>
-        prev.map((d) => (d.id === doc.id ? { ...d, status: "pending" as const } : d))
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "in_review" as const } : d))
       )
-      setSelectedDocument((prev) => (prev?.id === doc.id ? { ...prev, status: "pending" as const } : prev))
-      if (selectedDocument?.id === doc.id) setIsDetailOpen(false)
+      setSelectedDocument((prev) => (prev?.id === doc.id ? { ...prev, status: "in_review" as const } : prev))
     } catch (error) {
-      console.error("Error sending to review:", error)
-      alert(error instanceof Error ? error.message : "Error al enviar a revisión")
+      console.error("Error moving to in_review:", error)
+      alert(error instanceof Error ? error.message : "Error al pasar a revisión")
     } finally {
       setIsUpdating(false)
     }
@@ -419,9 +421,10 @@ export function DocumentsPage() {
       />
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <StatsCard title="Total" value={stats.total} description="Documentos" icon={Files} />
-        <StatsCard title="Pendientes" value={stats.pending} description="Por revisar" icon={Clock} />
+        <StatsCard title="Pendientes" value={stats.pending} description="Enviados por miembro" icon={Clock} />
+        <StatsCard title="En revisión" value={stats.in_review} description="Revisando" icon={Eye} />
         <StatsCard title="Aprobados" value={stats.approved} description="Aprobados" icon={CheckCircle2} />
         <StatsCard title="Borradores" value={stats.draft} description="En edición" icon={AlertCircle} />
         <StatsCard title="Rechazados" value={stats.rejected} description="Rechazados" icon={XCircle} />
@@ -443,6 +446,9 @@ export function DocumentsPage() {
             <TabsList>
               <TabsTrigger value="pending">
                 Pendientes <Badge variant="secondary" className="ml-2">{stats.pending}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="in_review">
+                En revisión <Badge variant="secondary" className="ml-2">{stats.in_review}</Badge>
               </TabsTrigger>
               <TabsTrigger value="all">
                 Todos <Badge variant="secondary" className="ml-2">{stats.total}</Badge>
@@ -473,6 +479,7 @@ export function DocumentsPage() {
                 <SelectContent>
                   <SelectItem value="all">Todos los estados</SelectItem>
                   <SelectItem value="pending">Pendiente</SelectItem>
+                  <SelectItem value="in_review">En revisión</SelectItem>
                   <SelectItem value="approved">Aprobado</SelectItem>
                   <SelectItem value="draft">Borrador</SelectItem>
                   <SelectItem value="rejected">Rechazado</SelectItem>
@@ -575,14 +582,14 @@ export function DocumentsPage() {
                             <p>{doc.createdAt}</p>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
                                 <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                               <DropdownMenuItem onSelect={() => handleViewDocument(doc)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 Ver Detalles
@@ -595,19 +602,19 @@ export function DocumentsPage() {
                                   Abrir Documento
                                 </DropdownMenuItem>
                               )}
-                              {(doc.status === "draft" || doc.status === "rejected") && (
+                              {doc.status === "pending" && (
                                 <>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
-                                    onSelect={() => handleSendToReview(doc)}
+                                    onSelect={() => handleMoveToInReview(doc)}
                                     disabled={isUpdating}
                                   >
-                                    <Send className="mr-2 h-4 w-4" />
-                                    Enviar a revisión
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    Pasar a revisión
                                   </DropdownMenuItem>
                                 </>
                               )}
-                              {doc.status === "pending" && (
+                              {doc.status === "in_review" && (
                                 <>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
@@ -691,6 +698,7 @@ export function DocumentsPage() {
                 <Label className="text-xs text-muted-foreground">Objeto del Proceso</Label>
                 <p className="mt-1 text-sm">{selectedDocument.processObject}</p>
               </div>
+              <DocumentAuditLog documentId={selectedDocument.id} className="mt-2" />
               {selectedDocument.fileUrl && (
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => window.open(selectedDocument.fileUrl, "_blank")}>
@@ -703,23 +711,23 @@ export function DocumentsPage() {
                   </Button>
                 </div>
               )}
-              {(selectedDocument.status === "draft" || selectedDocument.status === "rejected") && (
+              {selectedDocument.status === "pending" && (
                 <div className="flex gap-2 pt-4">
                   <Button
-                    onClick={() => handleSendToReview(selectedDocument)}
+                    onClick={() => handleMoveToInReview(selectedDocument)}
                     disabled={isUpdating}
                     className="flex-1"
                   >
                     {isUpdating ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
-                      <Send className="mr-2 h-4 w-4" />
+                      <Eye className="mr-2 h-4 w-4" />
                     )}
-                    Enviar a revisión
+                    Pasar a revisión
                   </Button>
                 </div>
               )}
-              {selectedDocument.status === "pending" && (
+              {selectedDocument.status === "in_review" && (
                 <div className="flex gap-2 pt-4">
                   <Button
                     onClick={() => {
