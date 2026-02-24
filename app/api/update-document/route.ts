@@ -162,7 +162,7 @@ export async function PUT(request: NextRequest) {
     // When approved, ingest document into RAG (vector store) so the assistant can search it
     if (status === "approved") {
       try {
-        const { ingestDocumentToRag } = await import("../../../lib/rag/ingest")
+        const { ingestDocumentToRag } = await import("@/lib/rag/ingest")
         const result = await ingestDocumentToRag(documentId, user.id)
         if (!result.success) {
           // Document is still approved; ingest failure is non-fatal

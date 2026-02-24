@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
-import { ingestDocumentToRag } from "../../../lib/rag/ingest"
+import { ingestDocumentToRag } from "@/lib/rag/ingest"
 
 export async function POST(request: NextRequest) {
   try {
