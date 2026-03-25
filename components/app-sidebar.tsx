@@ -73,7 +73,13 @@ const navItems: NavItem[] = [
   { title: "Dashboard", href: "/member/dashboard", icon: Home, roles: ["member"] },
   { title: "Procesos", href: "/member/processes", icon: FolderKanban, roles: ["member"] },
   { title: "Documentos", href: "/member/documents", icon: FileText, roles: ["member"] },
-  { title: "Asistente Jurídico", href: "/member/assistant", icon: MessageSquareText, roles: ["member"], badge: "IA" },
+  {
+    title: "Asistente Jurídico",
+    href: "/member/assistant",
+    icon: MessageSquareText,
+    roles: ["member", "admin", "superadmin"],
+    badge: "IA",
+  },
 
   { title: "Documentación", href: "/docs", icon: Book, roles: ["superadmin", "admin", "member"] },
 ]
