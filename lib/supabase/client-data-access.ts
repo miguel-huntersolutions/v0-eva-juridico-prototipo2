@@ -596,8 +596,9 @@ export async function getTemplates(processTypeId?: string) {
     console.log("[getTemplates] Querying template_process_types for processTypeId:", processTypeId)
     const { data: relationData, error: relationError } = await supabase
       .from("template_process_types")
-      .select("template_id")
+      .select("template_id, created_at")
       .eq("process_type_id", processTypeId)
+      .order("created_at", { ascending: true })
 
     if (relationError) {
       console.error("[getTemplates] Error querying template_process_types:", relationError)
@@ -606,7 +607,14 @@ export async function getTemplates(processTypeId?: string) {
 
     console.log("[getTemplates] Found relations:", relationData?.length || 0, relationData)
 
-    const templateIds = (relationData || []).map((row) => row.template_id)
+    const templateIds: string[] = []
+    const seenIds = new Set<string>()
+    for (const row of relationData || []) {
+      if (row.template_id && !seenIds.has(row.template_id)) {
+        seenIds.add(row.template_id)
+        templateIds.push(row.template_id)
+      }
+    }
 
     // If no relations found, fallback to direct process_type_id lookup
     // This handles templates that were created before the many-to-many relationship was implemented
@@ -616,7 +624,7 @@ export async function getTemplates(processTypeId?: string) {
         .from("templates")
         .select("*")
         .eq("process_type_id", processTypeId)
-        .order("name")
+        .order("created_at", { ascending: true })
 
       if (fallbackError) {
         console.error("[getTemplates] Error in fallback query:", fallbackError)
@@ -663,16 +671,22 @@ export async function getTemplates(processTypeId?: string) {
       .from("templates")
       .select("*")
       .in("id", templateIds)
-      .order("name")
 
     if (error) {
       console.error("[getTemplates] Error fetching templates:", error)
       throw error
     }
 
-    console.log("[getTemplates] Fetched templates:", data?.length || 0, data?.map(t => ({ id: t.id, name: t.name })))
+    const orderIndex = new Map(templateIds.map((id, i) => [id, i]))
+    const sorted = [...(data || [])].sort((a, b) => {
+      const ia = orderIndex.get(a.id) ?? 999999
+      const ib = orderIndex.get(b.id) ?? 999999
+      return ia - ib
+    })
 
-    return (data || []).map((t) => ({
+    console.log("[getTemplates] Fetched templates:", sorted?.length || 0, sorted?.map(t => ({ id: t.id, name: t.name })))
+
+    return sorted.map((t) => ({
       id: t.id,
       name: t.name,
       processTypeId: t.process_type_id,
@@ -683,7 +697,7 @@ export async function getTemplates(processTypeId?: string) {
   }
 
   // If no processTypeId, get all templates
-  const { data, error } = await supabase.from("templates").select("*").order("name")
+  const { data, error } = await supabase.from("templates").select("*").order("created_at", { ascending: true })
   if (error) throw error
 
   return (data || []).map((t) => ({

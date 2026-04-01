@@ -234,7 +234,7 @@ export async function getProcessType(id: string) {
 // Templates
 export async function getTemplates(processTypeId?: string) {
   const supabase = await createServerClient()
-  let query = supabase.from("templates").select("*").order("name")
+  let query = supabase.from("templates").select("*").order("created_at", { ascending: true })
 
   if (processTypeId) {
     query = query.eq("process_type_id", processTypeId)

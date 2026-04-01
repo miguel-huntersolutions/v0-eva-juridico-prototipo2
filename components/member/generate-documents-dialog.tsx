@@ -14,6 +14,8 @@ import {
   ExternalLink,
   MessageCircleQuestion,
   BookOpen,
+  Plus,
+  Trash2,
 } from "lucide-react"
 import {
   Dialog,
@@ -33,6 +35,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils"
 import { getTemplates, createProcess, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
+import { parseDynamicTableTagToken } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 
 /** Converts template fileUrl (fileId:xxx|path:yyy or full Drive URL) to a viewable Google Drive link. */
@@ -69,6 +72,21 @@ interface GenerateDocumentsDialogProps {
   onDocumentsGenerated?: () => void // Callback to refresh processes list
   /** When true, render content inline (no modal); use on generate page */
   embedded?: boolean
+}
+
+type DynamicTableDef = {
+  token: string
+  loopName: string
+  family: string
+  variant: string
+  fields: string[]
+}
+
+type DynamicTableFamilyDef = {
+  family: string
+  fields: string[]
+  variants: DynamicTableDef[]
+  requiredFields: string[]
 }
 
 export function GenerateDocumentsDialog({
@@ -111,6 +129,7 @@ export function GenerateDocumentsDialog({
   const [isLoadingTemplates, setIsLoadingTemplates] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState(0) // Step index (0-based)
   const [formData, setFormData] = React.useState<Record<string, string>>({})
+  const [tableData, setTableData] = React.useState<Record<string, Array<Record<string, string>>>>({})
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [isSaving, setIsSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -169,9 +188,23 @@ export function GenerateDocumentsDialog({
         
         // Initialize form data with empty values for all tags
         const initialData: Record<string, string> = {}
+        const initialTableData: Record<string, Array<Record<string, string>>> = {}
+        const tableFamilyFields: Record<string, string[]> = {}
         const tags = getAllUniqueTags(data)
         tags.forEach((tag) => {
-          initialData[tag] = ""
+          const tableDef = parseDynamicTableTagToken(tag)
+          if (tableDef) {
+            const family = tableDef.loopName.split("@")[0] || tableDef.loopName
+            if (!tableFamilyFields[family]) tableFamilyFields[family] = []
+            tableDef.fields.forEach((field) => {
+              if (!tableFamilyFields[family].includes(field)) tableFamilyFields[family].push(field)
+            })
+          } else {
+            initialData[tag] = ""
+          }
+        })
+        Object.entries(tableFamilyFields).forEach(([family, fields]) => {
+          initialTableData[family] = [Object.fromEntries(fields.map((f) => [f, ""]))]
         })
         
         // Auto-fill ENTIDAD and SECRETARIA if they exist
@@ -183,6 +216,7 @@ export function GenerateDocumentsDialog({
         }
         
         setFormData(initialData)
+        setTableData(initialTableData)
         setCurrentStep(0)
         setGeneratedDocuments([])
         setError(null)
@@ -199,6 +233,7 @@ export function GenerateDocumentsDialog({
 
   const handleClose = () => {
     setFormData({})
+    setTableData({})
     setCurrentStep(0)
     setGeneratedDocuments([])
     setError(null)
@@ -226,6 +261,34 @@ export function GenerateDocumentsDialog({
         return newSet
       })
     }
+  }
+
+  const handleTableCellChange = (tableFamily: string, rowIndex: number, field: string, value: string) => {
+    setTableData((prev) => {
+      const rows = [...(prev[tableFamily] || [])]
+      const currentRow = rows[rowIndex] || {}
+      rows[rowIndex] = { ...currentRow, [field]: value }
+      return { ...prev, [tableFamily]: rows }
+    })
+  }
+
+  const addTableRow = (tableFamily: string, fields: string[]) => {
+    setTableData((prev) => {
+      const rows = [...(prev[tableFamily] || [])]
+      rows.push(Object.fromEntries(fields.map((f) => [f, ""])))
+      return { ...prev, [tableFamily]: rows }
+    })
+  }
+
+  const removeTableRow = (tableFamily: string, rowIndex: number, fields: string[]) => {
+    setTableData((prev) => {
+      const rows = [...(prev[tableFamily] || [])]
+      rows.splice(rowIndex, 1)
+      if (rows.length === 0) {
+        rows.push(Object.fromEntries(fields.map((f) => [f, ""])))
+      }
+      return { ...prev, [tableFamily]: rows }
+    })
   }
 
   const handleAIImprove = async (tag: string) => {
@@ -497,10 +560,35 @@ export function GenerateDocumentsDialog({
       setError(null)
 
       // Prepare replacements (remove {{}} from tag names if present)
-      const replacements: Record<string, string> = {}
+      const replacements: Record<string, any> = {}
       Object.entries(formData).forEach(([tag, value]) => {
         const cleanTag = tag.replace(/[{}]/g, "")
         replacements[cleanTag] = value || ""
+      })
+      const allDynamicTableDefs: DynamicTableDef[] = allTags
+        .map((tag) => {
+          const parsed = parseDynamicTableTagToken(tag)
+          if (!parsed) return null
+          const [family, variant = "base"] = parsed.loopName.split("@")
+          return {
+            token: tag,
+            loopName: parsed.loopName,
+            family: family || parsed.loopName,
+            variant,
+            fields: parsed.fields,
+          }
+        })
+        .filter((x): x is DynamicTableDef => x !== null)
+
+      allDynamicTableDefs.forEach((tableDef) => {
+        const rows = tableData[tableDef.family] || []
+        replacements[tableDef.loopName] = rows.map((row) => {
+          const mappedRow: Record<string, string> = {}
+          tableDef.fields.forEach((field) => {
+            mappedRow[field] = (row?.[field] || "").trim()
+          })
+          return mappedRow
+        })
       })
 
       // Generate document name
@@ -691,6 +779,16 @@ export function GenerateDocumentsDialog({
     if (!currentTemplate.variables || currentTemplate.variables.length === 0) return true
     
     return currentTemplate.variables.every((tag) => {
+      const tableDef = parseDynamicTableTagToken(tag)
+      if (tableDef) {
+        const [family] = tableDef.loopName.split("@")
+        const rows = tableData[family || tableDef.loopName] || []
+        if (rows.length === 0) return false
+        // Only base fields are required; detail-only extra fields can remain empty.
+        const requiredFields = tableDef.loopName.endsWith("@base") ? tableDef.fields : []
+        if (requiredFields.length === 0) return true
+        return rows.every((row) => requiredFields.every((field) => (row?.[field] || "").trim().length > 0))
+      }
       const value = formData[tag] || ""
       return value.trim().length > 0
     })
@@ -703,6 +801,52 @@ export function GenerateDocumentsDialog({
 
   const currentTemplate = templates[currentStep] || null
   const currentTemplateTags = currentTemplate?.variables || []
+  const currentTemplateTableDefs = React.useMemo<DynamicTableDef[]>(
+    () =>
+      currentTemplateTags
+        .map((tag) => {
+          const parsed = parseDynamicTableTagToken(tag)
+          if (!parsed) return null
+          const [family, variant = "base"] = parsed.loopName.split("@")
+          return { token: tag, loopName: parsed.loopName, family: family || parsed.loopName, variant, fields: parsed.fields }
+        })
+        .filter((x): x is DynamicTableDef => x !== null),
+    [currentTemplateTags]
+  )
+  const currentTemplateTableFamilies = React.useMemo<DynamicTableFamilyDef[]>(() => {
+    const grouped = new Map<string, DynamicTableFamilyDef>()
+    currentTemplateTableDefs.forEach((def) => {
+      if (!grouped.has(def.family)) {
+        grouped.set(def.family, {
+          family: def.family,
+          fields: [],
+          variants: [],
+          requiredFields: [],
+        })
+      }
+      const g = grouped.get(def.family)!
+      g.variants.push(def)
+      def.fields.forEach((f) => {
+        if (!g.fields.includes(f)) g.fields.push(f)
+      })
+      if (def.variant === "base") {
+        def.fields.forEach((f) => {
+          if (!g.requiredFields.includes(f)) g.requiredFields.push(f)
+        })
+      }
+    })
+    // if no @base variant exists, require first variant fields
+    grouped.forEach((g) => {
+      if (g.requiredFields.length === 0 && g.variants.length > 0) {
+        g.requiredFields = [...g.variants[0].fields]
+      }
+    })
+    return Array.from(grouped.values())
+  }, [currentTemplateTableDefs])
+  const currentTemplateScalarTags = React.useMemo(
+    () => currentTemplateTags.filter((tag) => !parseDynamicTableTagToken(tag)),
+    [currentTemplateTags]
+  )
 
   const effectiveOpen = embedded ? true : open
 
@@ -845,7 +989,8 @@ export function GenerateDocumentsDialog({
                         <p className="text-sm mt-2">Los valores de Entidad y Secretaría se asignarán automáticamente.</p>
                       </div>
                     ) : (
-                      currentTemplateTags.map((tag) => (
+                      <>
+                      {currentTemplateScalarTags.map((tag) => (
                         <div key={tag} className="space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
@@ -959,7 +1104,64 @@ export function GenerateDocumentsDialog({
                             />
                           )}
                         </div>
-                      ))
+                      ))}
+
+                      {currentTemplateTableFamilies.map((tableFamily) => {
+                        const rows = tableData[tableFamily.family] || []
+                        const label = tableFamily.family.replace(/_/g, " ")
+                        return (
+                          <div key={tableFamily.family} className="space-y-3 rounded-lg border p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <Label>{label} *</Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Tabla dinámica ({tableFamily.fields.join(", ")}).
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => addTableRow(tableFamily.family, tableFamily.fields)}
+                              >
+                                <Plus className="h-4 w-4 mr-1" />
+                                Agregar fila
+                              </Button>
+                            </div>
+
+                            <div className="space-y-2">
+                              {rows.map((row, rowIndex) => (
+                                <div key={`${tableFamily.family}-${rowIndex}`} className="grid gap-2 md:grid-cols-12 items-end">
+                                  {tableFamily.fields.map((field) => (
+                                    <div key={`${tableFamily.family}-${rowIndex}-${field}`} className="space-y-1 md:col-span-3">
+                                      <Label className="text-xs">{field}</Label>
+                                      <Input
+                                        value={row?.[field] || ""}
+                                        onChange={(e) =>
+                                          handleTableCellChange(tableFamily.family, rowIndex, field, e.target.value)
+                                        }
+                                        placeholder={`Valor de ${field}`}
+                                      />
+                                    </div>
+                                  ))}
+                                  <div className="md:col-span-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => removeTableRow(tableFamily.family, rowIndex, tableFamily.fields)}
+                                      title="Eliminar fila"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      </>
                     )}
                   </div>
 

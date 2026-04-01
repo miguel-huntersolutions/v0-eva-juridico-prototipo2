@@ -32,6 +32,7 @@ import {
   buildChatContextBlock,
   USER_RAG_CONTEXT_KEY,
 } from "@/lib/document-assistant/orchestrator"
+import { DYNAMIC_TABLE_PREFIX } from "@/lib/utils/template-helpers"
 
 export const maxDuration = 60
 
@@ -111,7 +112,10 @@ export async function POST(req: NextRequest) {
       return errorResponse("Plantilla no encontrada", "template_not_found", 404)
     }
 
-    const tags = template.variables && Array.isArray(template.variables) ? template.variables : []
+    const tags =
+      template.variables && Array.isArray(template.variables)
+        ? template.variables.filter((v) => typeof v === "string" && !v.startsWith(DYNAMIC_TABLE_PREFIX))
+        : []
 
     // Log contexto usado para consultas (entidad, secretaría, tipo de proceso)
     const queryContext = {

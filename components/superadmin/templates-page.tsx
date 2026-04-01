@@ -57,7 +57,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import type { ProcessType } from "@/lib/mock-data"
 import { getTemplates, createTemplate, deleteTemplate, updateTemplate, getProcessTypes, type Template } from "@/lib/supabase/client-data-access"
-import { extractTagsFromDocx } from "@/lib/utils/template-helpers"
+import { extractTagsFromDocx, parseDynamicTableTagToken } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 
 interface UploadedFile {
@@ -69,6 +69,7 @@ interface UploadedFile {
 }
 
 export function TemplatesPage() {
+  const MAX_DOCX_SIZE_BYTES = 4.5 * 1024 * 1024
   const searchParams = useSearchParams()
   const router = useRouter()
   const { profile } = useProfile()
@@ -90,6 +91,7 @@ export function TemplatesPage() {
   const [editReplacementFile, setEditReplacementFile] = React.useState<UploadedFile | null>(null)
   const [editExtractedTags, setEditExtractedTags] = React.useState<string[]>([])
   const [isExtractingEditTags, setIsExtractingEditTags] = React.useState(false)
+  const [editLargeFileWarning, setEditLargeFileWarning] = React.useState<string | null>(null)
   const [isEditDragging, setIsEditDragging] = React.useState(false)
   const [isSavingEdit, setIsSavingEdit] = React.useState(false)
   const editFileInputRef = React.useRef<HTMLInputElement>(null)
@@ -102,6 +104,7 @@ export function TemplatesPage() {
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(null)
   const [extractedTags, setExtractedTags] = React.useState<string[]>([])
   const [isExtractingTags, setIsExtractingTags] = React.useState(false)
+  const [largeFileWarning, setLargeFileWarning] = React.useState<string | null>(null)
   // Renamed isDragging to isDragActive for consistency
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
@@ -251,7 +254,22 @@ export function TemplatesPage() {
       file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
       file.name.endsWith(".docx")
     ) {
+      if (file.size > MAX_DOCX_SIZE_BYTES) {
+        setEditReplacementFile(null)
+        setEditExtractedTags(selectedTemplate?.variables || [])
+        setEditLargeFileWarning(
+          "Archivo bloqueado por tamaño. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar.",
+        )
+        alert("El archivo supera el tamaño máximo permitido (4.5 MB). Reduce el peso y vuelve a intentarlo.")
+        return
+      }
+
       setIsExtractingEditTags(true)
+      setEditLargeFileWarning(
+        file.size >= MAX_DOCX_SIZE_BYTES * 0.8
+          ? "El archivo es grande y podría fallar en la subida/generación. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar."
+          : null,
+      )
       
       try {
         // Extract tags from the document
@@ -270,6 +288,7 @@ export function TemplatesPage() {
         alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
         setEditReplacementFile(null)
         setEditExtractedTags([])
+        setEditLargeFileWarning(null)
       } finally {
         setIsExtractingEditTags(false)
       }
@@ -446,6 +465,7 @@ export function TemplatesPage() {
     setIsDragging(false)
     setIsUploading(false)
     setIsExtractingTags(false)
+    setLargeFileWarning(null)
   }
 
   const handleOpenCreate = () => {
@@ -463,8 +483,23 @@ export function TemplatesPage() {
       file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
       file.name.endsWith(".docx")
     ) {
+      if (file.size > MAX_DOCX_SIZE_BYTES) {
+        setUploadedFile(null)
+        setExtractedTags([])
+        setLargeFileWarning(
+          "Archivo bloqueado por tamaño. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar.",
+        )
+        alert("El archivo supera el tamaño máximo permitido (4.5 MB). Reduce el peso y vuelve a intentarlo.")
+        return
+      }
+
       setIsUploading(true)
       setIsExtractingTags(true)
+      setLargeFileWarning(
+        file.size >= MAX_DOCX_SIZE_BYTES * 0.8
+          ? "El archivo es grande y podría fallar en la subida/generación. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar."
+          : null,
+      )
       
       try {
         // Extract tags from the document
@@ -483,6 +518,7 @@ export function TemplatesPage() {
         alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
         setUploadedFile(null)
         setExtractedTags([])
+        setLargeFileWarning(null)
       } finally {
         setIsUploading(false)
         setIsExtractingTags(false)
@@ -575,6 +611,13 @@ SECCIONES SUGERIDAS:
     const sizes = ["Bytes", "KB", "MB", "GB"]
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+  }
+
+  const formatVariableForDisplay = (tag: string): string => {
+    const tableDef = parseDynamicTableTagToken(tag)
+    if (!tableDef) return `{{${tag}}}`
+    const [family, variant = "base"] = tableDef.loopName.split("@")
+    return `{{TABLE_${family}_${variant.toUpperCase()}_${tableDef.fields.map((f) => f.toUpperCase()).join("_")}}}`
   }
 
   const canProceedStep1 = templateName.trim() !== "" && selectedProcessTypeId !== ""
@@ -1197,7 +1240,7 @@ SECCIONES SUGERIDAS:
                         <Upload className="mr-2 h-4 w-4" />
                         Seleccionar Archivo
                       </Button>
-                      <p className="text-xs text-muted-foreground">Solo archivos .docx (máx. 10MB)</p>
+                      <p className="text-xs text-muted-foreground">Solo archivos .docx (máx. 4.5MB)</p>
                     </div>
                   )}
                   <input
@@ -1208,6 +1251,13 @@ SECCIONES SUGERIDAS:
                     onChange={handleFileChangeNew} // Use the renamed file change handler
                   />
                 </div>
+                {largeFileWarning && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertTitle>Archivo grande detectado</AlertTitle>
+                    <AlertDescription className="text-sm">{largeFileWarning}</AlertDescription>
+                  </Alert>
+                )}
 
                 {/* Show extracted tags */}
                 {uploadedFile && extractedTags.length > 0 && (
@@ -1224,7 +1274,7 @@ SECCIONES SUGERIDAS:
                         <div className="mt-3 flex flex-wrap gap-2">
                           {extractedTags.map((tag) => (
                             <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {`{{${tag}}}`}
+                              {formatVariableForDisplay(tag)}
                             </Badge>
                           ))}
                         </div>
@@ -1294,7 +1344,7 @@ SECCIONES SUGERIDAS:
                         <div className="mt-2 flex flex-wrap gap-2">
                           {extractedTags.map((tag) => (
                             <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {`{{${tag}}}`}
+                              {formatVariableForDisplay(tag)}
                             </Badge>
                           ))}
                         </div>
@@ -1460,7 +1510,7 @@ SECCIONES SUGERIDAS:
                             <div className="mt-2 flex flex-wrap gap-1">
                               {selectedTemplate.variables.map((tag) => (
                                 <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                                  {`{{${tag}}}`}
+                                  {formatVariableForDisplay(tag)}
                                 </Badge>
                               ))}
                             </div>
@@ -1526,6 +1576,13 @@ SECCIONES SUGERIDAS:
                     onChange={handleEditFileChange}
                   />
                 </div>
+                {editLargeFileWarning && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertTitle>Archivo grande detectado</AlertTitle>
+                    <AlertDescription className="text-sm">{editLargeFileWarning}</AlertDescription>
+                  </Alert>
+                )}
 
                 {/* Show extracted tags from new file or current tags */}
                 {(editReplacementFile ? editExtractedTags.length > 0 : selectedTemplate.variables && selectedTemplate.variables.length > 0) && (
@@ -1546,7 +1603,7 @@ SECCIONES SUGERIDAS:
                         <div className="mt-3 flex flex-wrap gap-2">
                           {(editReplacementFile ? editExtractedTags : selectedTemplate.variables || []).map((tag) => (
                             <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {`{{${tag}}}`}
+                              {formatVariableForDisplay(tag)}
                             </Badge>
                           ))}
                         </div>
