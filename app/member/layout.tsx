@@ -6,6 +6,7 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { Loader2 } from "lucide-react"
+import { FloatingChat } from "@/components/floating-chat/floating-chat"
 
 export default function MemberLayout({
   children,
@@ -27,6 +28,7 @@ export default function MemberLayout({
     <SidebarProvider>
       <AppSidebar profile={profile} />
       <SidebarInset className={`overflow-y-auto px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</SidebarInset>
+      <FloatingChat />
     </SidebarProvider>
   )
 }

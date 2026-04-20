@@ -1,0 +1,249 @@
+"use client"
+
+import * as React from "react"
+import { Bot, X, Send, Minimize2, Maximize2, Loader2, AlertCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { cn } from "@/lib/utils"
+import { useAssistantChat } from "@/lib/ai-chat/use-assistant-chat"
+
+function renderMessageContent(content: string) {
+  // Basic markdown: bold, inline code, line breaks
+  const lines = content.split("\n")
+  return lines.map((line, i) => {
+    const parts = line.split(/(\*\*[^*]+\*\*|`[^`]+`)/)
+    return (
+      <React.Fragment key={i}>
+        {parts.map((part, j) => {
+          if (part.startsWith("**") && part.endsWith("**")) {
+            return <strong key={j}>{part.slice(2, -2)}</strong>
+          }
+          if (part.startsWith("`") && part.endsWith("`")) {
+            return (
+              <code key={j} className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
+                {part.slice(1, -1)}
+              </code>
+            )
+          }
+          return <span key={j}>{part}</span>
+        })}
+        {i < lines.length - 1 && <br />}
+      </React.Fragment>
+    )
+  })
+}
+
+export function FloatingChat() {
+  const [isOpen, setIsOpen] = React.useState(false)
+  const [isMinimized, setIsMinimized] = React.useState(false)
+  const [inputText, setInputText] = React.useState("")
+  const scrollEndRef = React.useRef<HTMLDivElement>(null)
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+
+  const { messages, sendMessage, isLoading, error } = useAssistantChat({
+    apiEndpoint: "/api/assistant",
+  })
+
+  React.useEffect(() => {
+    if (isOpen && !isMinimized) {
+      scrollEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [messages, isOpen, isMinimized])
+
+  React.useEffect(() => {
+    if (isOpen && !isMinimized) {
+      textareaRef.current?.focus()
+    }
+  }, [isOpen, isMinimized])
+
+  const handleSend = async () => {
+    const text = inputText.trim()
+    if (!text || isLoading) return
+    setInputText("")
+    await sendMessage({ text })
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
+
+  const unreadCount = 0
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
+      {/* Chat panel */}
+      {isOpen && (
+        <div
+          className={cn(
+            "flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl transition-all duration-200",
+            isMinimized ? "h-14 w-72" : "h-[480px] w-[340px]",
+          )}
+        >
+          {/* Header */}
+          <div className="flex shrink-0 items-center justify-between gap-2 bg-primary px-4 py-3">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-foreground/20">
+                <Bot className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-primary-foreground leading-none">EVA Jurídico</p>
+                {!isMinimized && (
+                  <p className="text-xs text-primary-foreground/70 mt-0.5">Asistente legal</p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-primary-foreground/80 hover:bg-primary-foreground/20 hover:text-primary-foreground"
+                onClick={() => setIsMinimized((v) => !v)}
+              >
+                {isMinimized ? (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-primary-foreground/80 hover:bg-primary-foreground/20 hover:text-primary-foreground"
+                onClick={() => setIsOpen(false)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {!isMinimized && (
+            <>
+              {/* Messages */}
+              <ScrollArea className="flex-1 px-3 py-3">
+                {messages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                      <Bot className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">¡Hola! Soy EVA</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Tu asistente jurídico. Pregúntame sobre contratación pública, normas, procesos y más.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-3">
+                  {messages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={cn(
+                        "flex items-end gap-2",
+                        msg.role === "user" ? "flex-row-reverse" : "flex-row",
+                      )}
+                    >
+                      {msg.role === "assistant" && (
+                        <Avatar className="h-6 w-6 shrink-0">
+                          <AvatarFallback className="bg-primary text-primary-foreground text-[10px]">
+                            EVA
+                          </AvatarFallback>
+                        </Avatar>
+                      )}
+                      <div
+                        className={cn(
+                          "max-w-[75%] rounded-2xl px-3 py-2 text-xs leading-relaxed",
+                          msg.role === "user"
+                            ? "rounded-br-sm bg-primary text-primary-foreground"
+                            : "rounded-bl-sm bg-muted text-foreground",
+                        )}
+                      >
+                        {renderMessageContent(msg.content)}
+                      </div>
+                    </div>
+                  ))}
+
+                  {isLoading && (
+                    <div className="flex items-end gap-2">
+                      <Avatar className="h-6 w-6 shrink-0">
+                        <AvatarFallback className="bg-primary text-primary-foreground text-[10px]">
+                          EVA
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="rounded-2xl rounded-bl-sm bg-muted px-3 py-2">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      </div>
+                    </div>
+                  )}
+
+                  {error && (
+                    <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>Error al procesar la solicitud. Intenta de nuevo.</span>
+                    </div>
+                  )}
+                </div>
+
+                <div ref={scrollEndRef} />
+              </ScrollArea>
+
+              {/* Input */}
+              <div className="shrink-0 border-t bg-background p-3">
+                <div className="flex items-end gap-2">
+                  <Textarea
+                    ref={textareaRef}
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Escribe tu consulta..."
+                    className="min-h-[36px] max-h-[100px] resize-none rounded-xl text-xs py-2"
+                    rows={1}
+                    disabled={isLoading}
+                  />
+                  <Button
+                    size="icon"
+                    className="h-9 w-9 shrink-0 rounded-xl"
+                    onClick={handleSend}
+                    disabled={!inputText.trim() || isLoading}
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
+                  Enter para enviar · Shift+Enter para nueva línea
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* FAB button */}
+      <Button
+        size="icon"
+        className="h-14 w-14 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
+        onClick={() => {
+          setIsOpen((v) => !v)
+          setIsMinimized(false)
+        }}
+        aria-label="Abrir asistente jurídico EVA"
+      >
+        {isOpen ? (
+          <X className="h-5 w-5" />
+        ) : (
+          <Bot className="h-6 w-6" />
+        )}
+        {!isOpen && unreadCount > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground">
+            {unreadCount}
+          </span>
+        )}
+      </Button>
+    </div>
+  )
+}

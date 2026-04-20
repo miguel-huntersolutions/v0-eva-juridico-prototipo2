@@ -8,6 +8,7 @@ import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { OrganizationSelector } from "@/components/admin/organization-selector"
 import { Loader2 } from "lucide-react"
+import { FloatingChat } from "@/components/floating-chat/floating-chat"
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { profile, isLoading: profileLoading } = useProfile()
@@ -52,6 +53,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="flex h-screen overflow-hidden">
       <AppSidebar profile={profile} selectedOrganizationId={effectiveOrganizationId || undefined} />
       <main className={`flex-1 overflow-y-auto bg-background ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</main>
+      <FloatingChat />
     </div>
   )
 }
