@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
@@ -122,7 +123,9 @@ function RoleSection({ manual }: { manual: RoleManual }) {
 export default function ManualGeneralPage() {
   return (
     <div className="min-h-screen bg-background text-foreground print:bg-white print:text-black">
-      <ManualPrintTrigger />
+      <Suspense fallback={null}>
+        <ManualPrintTrigger />
+      </Suspense>
       <div className="mx-auto max-w-5xl p-8 print:p-6">
         <header className="mb-10 space-y-3">
           <h1 className="text-3xl font-bold">EVA Juridico - Manual General de Usuario</h1>

@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { notFound } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,7 +35,9 @@ export default async function ManualByRolePage({ params }: { params: Promise<{ r
 
   return (
     <div className="min-h-screen bg-background text-foreground print:bg-white print:text-black">
-      <ManualPrintTrigger />
+      <Suspense fallback={null}>
+        <ManualPrintTrigger />
+      </Suspense>
       <div className="mx-auto max-w-5xl p-8 print:p-6">
         <header className="mb-8 space-y-3">
           <div className="flex items-center gap-3">
