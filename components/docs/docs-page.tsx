@@ -85,6 +85,16 @@ export function DocsPage({ userRole = "member" }: DocsPageProps) {
       f.answer.toLowerCase().includes(searchQuery.toLowerCase()),
   )
 
+  const handleDownloadManual = () => {
+    const manualPath = "/docs/manual-general.pdf"
+    const link = document.createElement("a")
+    link.href = manualPath
+    link.download = "manual-general-eva-juridico.pdf"
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   return (
     <div className="flex h-full">
       {/* Sidebar de navegación */}
@@ -219,7 +229,7 @@ export function DocsPage({ userRole = "member" }: DocsPageProps) {
 
         {/* Footer con descarga */}
         <div className="p-3 border-t border-border">
-          <Button variant="outline" size="sm" className="w-full gap-2 bg-transparent">
+          <Button variant="outline" size="sm" className="w-full gap-2 bg-transparent" onClick={handleDownloadManual}>
             <Download className="h-4 w-4" />
             Descargar Manual PDF
           </Button>
@@ -405,13 +415,17 @@ function OverviewView({
             Si tienes dudas adicionales o necesitas soporte técnico, contacta al equipo de EVA Jurídico.
           </p>
           <div className="flex gap-3">
-            <Button variant="outline" size="sm" className="gap-2 bg-transparent">
-              <MessageSquareText className="h-4 w-4" />
-              Contactar Soporte
+            <Button variant="outline" size="sm" className="gap-2 bg-transparent" asChild>
+              <a href="mailto:miguel@huntersolutions.tech">
+                <MessageSquareText className="h-4 w-4" />
+                Contactar Soporte
+              </a>
             </Button>
-            <Button variant="ghost" size="sm" className="gap-2">
-              <ExternalLink className="h-4 w-4" />
-              Centro de Ayuda
+            <Button variant="ghost" size="sm" className="gap-2" asChild>
+              <a href="mailto:miguel@huntersolutions.tech">
+                <ExternalLink className="h-4 w-4" />
+                Centro de Ayuda
+              </a>
             </Button>
           </div>
         </CardContent>
@@ -603,9 +617,11 @@ function FAQView({ faqs }: { faqs: FAQ[] }) {
               <h3 className="font-medium">¿No encuentras lo que buscas?</h3>
               <p className="text-sm text-muted-foreground">Contacta al equipo de soporte para resolver tus dudas.</p>
             </div>
-            <Button className="gap-2">
-              <MessageSquareText className="h-4 w-4" />
-              Contactar
+            <Button className="gap-2" asChild>
+              <a href="mailto:miguel@huntersolutions.tech">
+                <MessageSquareText className="h-4 w-4" />
+                Contactar
+              </a>
             </Button>
           </div>
         </CardContent>

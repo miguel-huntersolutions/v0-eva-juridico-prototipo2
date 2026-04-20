@@ -561,48 +561,12 @@ export function TemplatesPage() {
   }
 
   const handleDownloadExample = () => {
-    // Create a mock .docx download (in real app this would download actual file)
-    const content = `
-PLANTILLA DE EJEMPLO - EVA JURÍDICO
-=====================================
-
-Este documento sirve como ejemplo de estructura para plantillas de documentos jurídicos.
-
-VARIABLES DISPONIBLES:
-- {{ENTIDAD_NOMBRE}}: Nombre de la entidad contratante
-- {{ENTIDAD_NIT}}: NIT de la entidad
-- {{REPRESENTANTE_LEGAL}}: Nombre del representante legal
-- {{OBJETO_CONTRATO}}: Objeto del contrato
-- {{VALOR_CONTRATO}}: Valor total del contrato
-- {{PLAZO_EJECUCION}}: Plazo de ejecución
-- {{FECHA_ELABORACION}}: Fecha de elaboración del documento
-- {{SECRETARIA_NOMBRE}}: Nombre de la secretaría supervisora
-
-SECCIONES SUGERIDAS:
-1. IDENTIFICACIÓN
-2. JUSTIFICACIÓN DE LA NECESIDAD
-3. OBJETO DEL CONTRATO
-4. ESPECIFICACIONES TÉCNICAS
-5. ANÁLISIS DEL SECTOR
-6. PRESUPUESTO Y CERTIFICACIÓN
-7. CRITERIOS DE SELECCIÓN
-8. ANÁLISIS DE RIESGOS
-9. GARANTÍAS
-10. SUPERVISIÓN
-
-=====================================
-© EVA Jurídico - Plantilla de Ejemplo
-    `.trim()
-
-    const blob = new Blob([content], { type: "text/plain" })
-    const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
-    a.href = url
-    a.download = "plantilla-ejemplo-eva-juridico.txt"
+    a.href = "/docs/ESTUDIO-PREVIO.docx"
+    a.download = "ESTUDIO-PREVIO.docx"
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
   }
 
   const formatFileSize = (bytes: number): string => {

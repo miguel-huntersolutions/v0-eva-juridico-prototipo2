@@ -81,18 +81,28 @@ export const superadminDocs: DocContent = {
       id: "process-types",
       title: "Tipos de Proceso",
       content:
-        "Gestión de los tipos de proceso disponibles: Licitación Pública, Selección Abreviada, Contratación Directa, Concurso de Méritos y Mínima Cuantía. Cada tipo tiene campos personalizados, plantillas asociadas y base legal.",
+        "Gestión de tipos de proceso configurables por el superadministrador. Cada tipo define su descripción, campos dinámicos y base legal aplicable para la generación documental.",
     },
     {
       id: "templates",
       title: "Plantillas Maestras",
       content:
-        "Administración de plantillas de documentos legales. Permite crear nuevas plantillas con variables dinámicas, cargar archivos de ejemplo y gestionar versiones.",
+        "Administración de plantillas de documentos legales. Permite crear, editar y eliminar plantillas; además, extrae automáticamente variables desde archivos .docx para su uso dinámico.",
       subsections: [
         {
           title: "Variables Disponibles",
           content:
-            "{{proceso_codigo}}, {{proceso_objeto}}, {{entidad_nombre}}, {{entidad_nit}}, {{representante_legal}}, {{fecha_actual}}, {{valor_total}}",
+            "Las variables se detectan desde cada plantilla cargada en formato {{VARIABLE}}, por lo que dependen del documento que suba el superadministrador.",
+        },
+        {
+          title: "Tablas con variante base",
+          content:
+            "Para tablas principales use la sintaxis recomendada {{TABLE_FAMILIA_BASE_CAMPO1_CAMPO2}}. También funciona la variante legacy {{TABLE:FAMILIA@base:campo1:campo2}}.",
+        },
+        {
+          title: "Tablas con variante detail",
+          content:
+            "Para desgloses o filas de detalle use {{TABLE_FAMILIA_DETAIL_CAMPO1_CAMPO2}} o el formato legacy {{TABLE:FAMILIA@detail:campo1:campo2}}. Mantenga la misma FAMILIA para relacionar base y detail.",
         },
       ],
     },
@@ -120,12 +130,45 @@ export const superadminDocs: DocContent = {
         {
           number: 3,
           title: "Configurar Tipos de Proceso",
-          description: "Revise y configure los tipos de proceso con sus campos y plantillas asociadas",
+          description: "Revise y configure los tipos de proceso activos según las necesidades de cada organización",
         },
         {
           number: 4,
           title: "Gestionar Plantillas",
           description: "Cargue plantillas maestras y asócielas a los tipos de proceso correspondientes",
+          details: [
+            "Suba archivos .docx con variables tipo {{VARIABLE}} para campos simples.",
+            "Para tabla base use, por ejemplo, {{TABLE_CLASIFICADORES_BASE_CODIGO_DESCRIPCION}}.",
+            "Para tabla detail use, por ejemplo, {{TABLE_CLASIFICADORES_DETAIL_ITEM_VALOR}}.",
+            "Puede usar formato legacy equivalente: {{TABLE:CLASIFICADORES@base:codigo:descripcion}} y {{TABLE:CLASIFICADORES@detail:item:valor}}.",
+            "Ubique cada marcador TABLE en un párrafo independiente para una generación más estable.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "template-tables",
+      title: "Crear Tablas base y detail",
+      steps: [
+        {
+          number: 1,
+          title: "Definir familia",
+          description: "Elija una familia única (ej: CLASIFICADORES) y reutilícela en base y detail.",
+        },
+        {
+          number: 2,
+          title: "Insertar tabla base",
+          description: "Agregue el marcador {{TABLE_CLASIFICADORES_BASE_CODIGO_DESCRIPCION}}.",
+        },
+        {
+          number: 3,
+          title: "Insertar tabla detail",
+          description: "Agregue el marcador {{TABLE_CLASIFICADORES_DETAIL_ITEM_VALOR}}.",
+        },
+        {
+          number: 4,
+          title: "Validar extracción",
+          description: "Al cargar la plantilla confirme que se detecten ambas variantes de tabla en variables.",
         },
       ],
     },
@@ -163,6 +206,11 @@ export const superadminDocs: DocContent = {
       answer: "Sí, las plantillas maestras están disponibles globalmente para todas las organizaciones.",
     },
     {
+      question: "¿Cómo manejo tablas con base y detail en una plantilla?",
+      answer:
+        "Use la misma familia con variantes distintas: TABLE_FAMILIA_BASE_* para la tabla principal y TABLE_FAMILIA_DETAIL_* para el detalle. También puede usar la sintaxis legacy con @base y @detail.",
+    },
+    {
       question: "¿Qué sucede si suspendo una organización?",
       answer: "Los usuarios de esa organización no podrán acceder al sistema hasta que se reactive.",
     },
@@ -190,10 +238,14 @@ export const adminDocs: DocContent = {
       id: "entities",
       title: "Gestión de Entidades",
       content:
-        "Las entidades representan los clientes del bufete (alcaldías, municipios, empresas públicas). Puede crear, editar, ver detalles, asignar miembros y cargar documentos.",
+        "Las entidades representan los clientes del bufete (alcaldías, municipios, empresas públicas). Puede crear, editar y consultar entidades con sus datos básicos, secretarías y estado operativo.",
       subsections: [
         { title: "Datos Básicos", content: "Nombre de la entidad, NIT y Representante Legal" },
-        { title: "Documentos", content: "Logo institucional, Plan Anual de Adquisiciones (PAA) y Plan de Desarrollo" },
+        {
+          title: "Documentos",
+          content:
+            "La visualización de documentos de contexto depende de la información asociada a la entidad; el flujo principal actual se centra en datos básicos y secretarías.",
+        },
         { title: "Secretarías", content: "Dependencias con nombre de la secretaría, secretario, email y teléfono" },
       ],
     },
@@ -203,9 +255,9 @@ export const adminDocs: DocContent = {
       content:
         "Administración del equipo jurídico: invitar miembros, editar información, asignar entidades, cambiar estados y eliminar miembros.",
       subsections: [
-        { title: "Activo", content: "Puede acceder y trabajar normalmente" },
-        { title: "Pendiente", content: "Invitación enviada, esperando aceptación" },
-        { title: "Inactivo", content: "Acceso suspendido temporalmente" },
+        { title: "Pendiente", content: "Usuario registrado con estado de revisión pendiente" },
+        { title: "Aprobado", content: "Miembro habilitado para operar en las entidades asignadas" },
+        { title: "Rechazado", content: "Acceso no autorizado o deshabilitado en la organización" },
       ],
     },
   ],
@@ -220,7 +272,6 @@ export const adminDocs: DocContent = {
           description: "Navegue a Entidades y complete el formulario de 3 pasos",
           details: [
             "Información básica: nombre, NIT, representante",
-            "Documentos: logo, PAA, Plan de Desarrollo",
             "Secretarías: agregar dependencias con contactos",
           ],
         },
@@ -237,7 +288,7 @@ export const adminDocs: DocContent = {
         {
           number: 4,
           title: "Verificar Configuración",
-          description: "Confirme que cada entidad tenga documentos, secretarías y miembros asignados",
+          description: "Confirme que cada entidad tenga secretarías y miembros asignados para operar",
         },
       ],
     },
@@ -300,7 +351,7 @@ export const memberDocs: DocContent = {
         "Centro de operaciones para procesos de contratación. Puede crear, ver, editar, generar documentos y cambiar estados de procesos.",
       subsections: [
         { title: "Borrador", content: "Proceso en creación, no finalizado" },
-        { title: "Activo", content: "Proceso en ejecución" },
+        { title: "En Progreso", content: "Proceso en ejecución" },
         { title: "En Revisión", content: "Pendiente de aprobación" },
         { title: "Completado", content: "Proceso finalizado exitosamente" },
         { title: "Archivado", content: "Proceso cerrado sin completar" },
@@ -310,13 +361,13 @@ export const memberDocs: DocContent = {
       id: "ai-improvement",
       title: "Mejora con IA",
       content:
-        "Cada campo de texto en la creación de procesos tiene un botón 'Mejorar con IA' que optimiza la redacción jurídica, corrige errores gramaticales y ajusta al lenguaje técnico legal.",
+        "Las ayudas de IA ('Mejorar con IA', 'Preguntar' y 'Consultar docs') están disponibles durante la generación de documentos, para completar y refinar campos de plantilla con mejor redacción y contexto.",
     },
     {
       id: "documents",
       title: "Gestión de Documentos",
       content:
-        "Administración de documentos generados desde plantillas. Puede ver, descargar, consultar versiones y aprobar documentos.",
+        "Administración de documentos generados desde plantillas. Puede ver detalles, descargar archivos, revisar trazabilidad y enviar documentos a revisión desde su flujo operativo.",
     },
     {
       id: "assistant",
@@ -354,17 +405,17 @@ export const memberDocs: DocContent = {
         {
           number: 4,
           title: "Completar Formulario",
-          description: "Llene los campos requeridos: código, objeto, valor, justificación",
+          description: "Complete la selección inicial del proceso y continúe al módulo de generación de documentos",
           details: [
-            "Use 'Mejorar con IA' en cada campo de texto",
-            "Revise las sugerencias antes de aceptar",
-            "Complete todos los campos obligatorios",
+            "La creación inicial define entidad, secretaría y tipo de proceso",
+            "El código se genera automáticamente",
+            "El diligenciamiento de contenido se realiza en la etapa de generación",
           ],
         },
         {
           number: 5,
           title: "Guardar Proceso",
-          description: "Guarde como borrador o cree el proceso para comenzar a generar documentos",
+          description: "Cree el proceso para iniciar la generación y edición de documentos asociados",
         },
       ],
     },
@@ -401,8 +452,8 @@ export const memberDocs: DocContent = {
         { number: 1, title: "Abrir Proceso", description: "Vaya a Procesos y seleccione el proceso deseado" },
         {
           number: 2,
-          title: "Ir a Documentos",
-          description: "En la vista de detalle, acceda a la pestaña de Documentos",
+          title: "Abrir Generación",
+          description: "Use la acción de generar documentos del proceso para abrir la pantalla dedicada",
         },
         { number: 3, title: "Generar Documento", description: "Seleccione la plantilla y haga clic en Generar" },
         {
@@ -461,7 +512,7 @@ export const generalDocs = {
   },
   architecture: {
     title: "Arquitectura del Sistema",
-    stack: ["Next.js 15", "React 19", "TypeScript", "Tailwind CSS", "shadcn/ui", "Vercel AI SDK", "OpenAI GPT-4"],
+    stack: ["Next.js 16", "React 19", "TypeScript", "Tailwind CSS", "shadcn/ui", "Vercel AI SDK", "OpenAI"],
   },
   support: {
     title: "Soporte Técnico",
