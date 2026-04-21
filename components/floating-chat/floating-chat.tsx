@@ -4,7 +4,6 @@ import * as React from "react"
 import { Bot, X, Send, Minimize2, Maximize2, Loader2, AlertCircle, MessageSquarePlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
 import { useAssistantChat } from "@/lib/ai-chat/use-assistant-chat"
@@ -40,7 +39,7 @@ export function FloatingChat() {
   const [isOpen, setIsOpen] = React.useState(false)
   const [isMinimized, setIsMinimized] = React.useState(false)
   const [inputText, setInputText] = React.useState("")
-  const scrollEndRef = React.useRef<HTMLDivElement>(null)
+  const messagesScrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 
   const [activeConversationId, setActiveConversationId] = React.useState<string | null>(null)
@@ -118,8 +117,9 @@ export function FloatingChat() {
   }, [activeConversationId, hookConversationId, setHookConversationId])
 
   React.useEffect(() => {
-    if (isOpen && !isMinimized) {
-      scrollEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (isOpen && !isMinimized && messagesScrollRef.current) {
+      const el = messagesScrollRef.current
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     }
   }, [messages, isOpen, isMinimized])
 
@@ -164,7 +164,7 @@ export function FloatingChat() {
       {isOpen && (
         <div
           className={cn(
-            "flex flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl transition-all duration-200",
+            "flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-background shadow-2xl transition-all duration-200",
             isMinimized ? "h-14 w-72" : "h-[480px] w-[340px]",
           )}
         >
@@ -218,8 +218,11 @@ export function FloatingChat() {
           </div>
 
           {!isMinimized && (
-            <>
-              <ScrollArea className="flex-1 px-3 py-3">
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div
+                ref={messagesScrollRef}
+                className="min-h-0 flex-1 basis-0 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3"
+              >
                 {messages.length === 0 && (
                   <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -283,9 +286,7 @@ export function FloatingChat() {
                     </div>
                   )}
                 </div>
-
-                <div ref={scrollEndRef} />
-              </ScrollArea>
+              </div>
 
               <div className="shrink-0 border-t bg-background p-3">
                 <div className="flex items-end gap-2">
@@ -312,7 +313,7 @@ export function FloatingChat() {
                   Enter para enviar · Shift+Enter para nueva línea
                 </p>
               </div>
-            </>
+            </div>
           )}
         </div>
       )}
