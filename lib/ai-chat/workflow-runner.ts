@@ -4,12 +4,15 @@
  * Generated from OpenAI Agent Builder and adapted for conversation history
  */
 
-import { tool, fileSearchTool, Agent, AgentInputItem, Runner, withTrace } from "@openai/agents"
+import { fileSearchTool, Agent, AgentInputItem, Runner, withTrace } from "@openai/agents"
 import { z } from "zod"
 import { OpenAI } from "openai"
 import { runGuardrails } from "@openai/guardrails"
+import { generateText } from "ai"
+import { openai } from "@ai-sdk/openai"
 import type { ChatMessage } from "./types"
-import { getOpenAIWorkflowModel } from "@/lib/ai-model-config"
+import { getOpenAIModel, getOpenAIWorkflowModel } from "@/lib/ai-model-config"
+import { ASESOR_JURIDICO_SYSTEM_PROMPT } from "@/lib/ai-chat/asesor-juridico-system-prompt"
 
 // Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
@@ -284,6 +287,37 @@ const generalInformationAgent = new Agent({
   },
 })
 
+/** Paso 1 de /api/assistant: solo RAG; si no basta, el servidor usa generateText con el asesor jurídico. */
+const RagFirstResultSchema = z.object({
+  sufficient: z.boolean().describe(
+    "true solo si la consulta puede responderse con fundamento claro en fragmentos recuperados de los documentos indexados",
+  ),
+  groundedAnswer: z.string().describe(
+    "Respuesta completa en español cuando sufficient es true; si false, cadena vacía",
+  ),
+})
+
+const ragDocumentProbeAgent = new Agent({
+  name: "RAG document probe",
+  instructions: `Eres un paso previo de búsqueda en documentos del sistema EVA Jurídico. Tienes la herramienta file_search sobre el repositorio de documentos cargados (vector store).
+
+Procedimiento:
+1) Usa file_search y busca en los documentos indexados información relevante para la última consulta del usuario. El historial sirve solo como contexto.
+2) Si encuentras contenido en esos documentos que permita responder con seguridad la consulta, pon sufficient=true y redacta la respuesta completa en groundedAnswer: español colombiano, formal y técnico. Cuando corresponda, indica de qué documento o sección proviene la información (sin inventar nombres de archivo).
+3) Si tras usar file_search no hay material suficiente en los documentos indexados para fundamentar la respuesta, pon sufficient=false y groundedAnswer debe ser exactamente una cadena vacía.
+
+No inventes citas a documentos. No pongas sufficient=true sin respaldo recuperable en la búsqueda.`,
+  model: getOpenAIWorkflowModel(),
+  tools: [fileSearch],
+  outputType: RagFirstResultSchema,
+  modelSettings: {
+    temperature: 0,
+    topP: 1,
+    maxTokens: 4096,
+    store: true,
+  },
+})
+
 type WorkflowInput = { input_as_text: string }
 
 export type RunWorkflowOptions = {
@@ -409,6 +443,104 @@ export async function runWorkflow(
         }
         return extractOutputText(generalAgentResult)
       }
+    }
+  })
+}
+
+const GENERAL_FALLBACK_FOOTER = `\n\n---\n**Nota:** Respuesta en **modo asesor normativo** (no hubo material suficiente en los documentos indexados del repositorio para responder solo con archivos). Contrastar con un abogado titulado ante el caso concreto.`
+
+const DOCS_ANSWER_PREFIX = "**Fuente:** documentos indexados en el sistema.\n\n"
+
+/**
+ * Orquestación para el chat del asistente: primero RAG (file_search + salida estructurada);
+ * si no alcanza, respuesta con modelo de chat y temperatura 0 según {@link ASESOR_JURIDICO_SYSTEM_PROMPT}.
+ */
+export async function runRagFirstThenGeneralChat(
+  inputText: string,
+  conversationHistory: ChatMessage[] = [],
+  options: RunWorkflowOptions = {},
+): Promise<{ text: string; source: "documents" | "general" }> {
+  const { skipGuardrails = false } = options
+  const workflow: WorkflowInput = { input_as_text: inputText }
+
+  const agentHistory: AgentInputItem[] = convertMessagesToAgentInput(conversationHistory)
+  agentHistory.push({
+    role: "user",
+    content: [{ type: "input_text", text: inputText }],
+  })
+
+  return await withTrace("EvaJuridicoRagFirst", async () => {
+    const runner = new Runner({
+      traceMetadata: {
+        __trace_source__: "eva-rag-first",
+        workflow_id: WORKFLOW_ID || "eva-rag-first",
+      },
+    })
+
+    let effectiveUserText = inputText
+
+    if (!skipGuardrails) {
+      const guardrailsInputText = workflow.input_as_text
+      const {
+        hasTripwire: guardrailsHasTripwire,
+        safeText: guardrailsAnonymizedText,
+        failOutput: guardrailsFailOutput,
+        passOutput: guardrailsPassOutput,
+      } = await runAndApplyGuardrails(guardrailsInputText, getJailbreakGuardrailConfig(), agentHistory, workflow)
+
+      const guardrailsOutput = guardrailsHasTripwire ? guardrailsFailOutput : guardrailsPassOutput
+
+      if (guardrailsHasTripwire) {
+        return {
+          text: JSON.stringify(guardrailsOutput),
+          source: "general",
+        }
+      }
+      if (agentHistory.length > 0) {
+        const lastMessage = agentHistory[agentHistory.length - 1]
+        if (lastMessage.content && lastMessage.content[0] && lastMessage.content[0].type === "input_text") {
+          lastMessage.content[0].text = guardrailsAnonymizedText
+          effectiveUserText = guardrailsAnonymizedText
+        }
+      }
+    }
+
+    const probeResult = await runner.run(ragDocumentProbeAgent, [...agentHistory])
+    const parsed = probeResult.finalOutput as z.infer<typeof RagFirstResultSchema> | undefined
+
+    if (
+      parsed &&
+      parsed.sufficient === true &&
+      typeof parsed.groundedAnswer === "string" &&
+      parsed.groundedAnswer.trim().length > 0
+    ) {
+      return {
+        text: `${DOCS_ANSWER_PREFIX}${parsed.groundedAnswer.trim()}`,
+        source: "documents",
+      }
+    }
+
+    const openaiModel = openai(getOpenAIModel() as "gpt-4o")
+    const historyMessages = [
+      ...conversationHistory.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+      { role: "user" as const, content: effectiveUserText },
+    ]
+
+    const result = await generateText({
+      model: openaiModel,
+      system: ASESOR_JURIDICO_SYSTEM_PROMPT,
+      messages: historyMessages,
+      temperature: 0,
+      maxTokens: 4096,
+    })
+
+    const body = (result.text || "").trim()
+    return {
+      text: body ? `${body}${GENERAL_FALLBACK_FOOTER}` : `No fue posible generar una respuesta.${GENERAL_FALLBACK_FOOTER}`,
+      source: "general",
     }
   })
 }

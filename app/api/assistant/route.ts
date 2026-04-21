@@ -4,20 +4,17 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { runWorkflow } from "@/lib/ai-chat/workflow-runner"
+import { runRagFirstThenGeneralChat } from "@/lib/ai-chat/workflow-runner"
 import { fetchConversation } from "@/lib/ai-chat/services/conversations-api"
 
 /** Segment config must be static; runtime can use ASSISTANT_MAX_DURATION / Vercel. */
 export const maxDuration = 60
 
-// Get workflow ID from environment variable
-const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID
-
 export async function POST(req: NextRequest) {
   try {
-    if (!WORKFLOW_ID) {
+    if (!process.env.OPENAI_API_KEY?.trim()) {
       return NextResponse.json(
-        { error: "Assistant workflow not configured" },
+        { error: "OpenAI API key not configured" },
         { status: 500 }
       )
     }
@@ -45,15 +42,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Run the workflow with conversation history
-    const responseText = await runWorkflow(message, conversationHistory)
+    // RAG (file_search) primero; si no alcanza, asesor normativo con generateText (temp. 0)
+    const { text: responseText, source: answerSource } = await runRagFirstThenGeneralChat(
+      message,
+      conversationHistory,
+    )
 
-    // Return the response
-    // Note: For workflows, we use conversationId as the "thread" identifier
-    // since workflows don't use OpenAI threads in the traditional sense
     return NextResponse.json({
       message: responseText,
-      threadId: conversationId || threadId, // Use conversationId as thread identifier
+      /** "documents" = respuesta anclada al repositorio indexado; "general" = modo normativo sin RAG suficiente */
+      answerSource,
+      threadId: conversationId || threadId,
       conversationId,
     })
   } catch (error: any) {
