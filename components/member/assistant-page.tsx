@@ -351,6 +351,11 @@ export function AssistantPage() {
 
   const renderContent = (content: string) => {
     return content
+      // Citas tipo Markdown solo al inicio de línea (evita coincidir con `</strong> ` u otros `>` HTML)
+      .replace(
+        /^> (.+)$/gim,
+        '<blockquote class="border-l-2 border-primary/50 pl-3 my-2 text-muted-foreground italic">$1</blockquote>',
+      )
       .replace(/^## (.*$)/gim, '<h2 class="text-lg font-semibold mt-4 mb-2">$1</h2>')
       .replace(/^### (.*$)/gim, '<h3 class="text-base font-medium mt-3 mb-1">$1</h3>')
       .replace(/^#### (.*$)/gim, '<h4 class="text-sm font-medium mt-2 mb-1">$1</h4>')
@@ -360,10 +365,6 @@ export function AssistantPage() {
       .replace(/^(\d+)\. (.*$)/gim, '<li class="ml-4 list-decimal">$2</li>')
       .replace(/\n\n/g, '</p><p class="my-2">')
       .replace(/\n/g, "<br/>")
-      .replace(
-        /> (.*?)(<|$)/g,
-        '<blockquote class="border-l-2 border-primary/50 pl-3 my-2 text-muted-foreground italic">$1</blockquote>$2',
-      )
       .replace(/\|.*\|/g, (match) => {
         const cells = match
           .split("|")
