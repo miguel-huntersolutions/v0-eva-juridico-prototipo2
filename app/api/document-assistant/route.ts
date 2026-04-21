@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
-import { getTemplateById } from "@/lib/supabase/data-access"
+import { getTemplateById, getProcess } from "@/lib/supabase/data-access"
 import {
   DocumentAssistantRequestSchema,
   type DocumentAssistantResponse,
@@ -110,6 +110,23 @@ export async function POST(req: NextRequest) {
       template = await getTemplateById(templateId)
     } catch {
       return errorResponse("Plantilla no encontrada", "template_not_found", 404)
+    }
+
+    try {
+      const proc = await getProcess(context.processId)
+      const scopedEntityId = template.entity_id ?? null
+      if (scopedEntityId && scopedEntityId !== proc.entity_id) {
+        return errorResponse(
+          "Esta plantilla no corresponde a la entidad del proceso.",
+          "template_entity_mismatch",
+          403,
+        )
+      }
+      if (context.entityId && proc.entity_id !== context.entityId) {
+        return errorResponse("El contexto no coincide con el proceso.", "context_entity_mismatch", 400)
+      }
+    } catch {
+      return errorResponse("Proceso no encontrado o sin acceso", "process_not_found", 403)
     }
 
     const tags =
@@ -256,6 +273,7 @@ export async function POST(req: NextRequest) {
               headers: { "Content-Type": "application/json", Cookie: cookieHeader },
               body: JSON.stringify({
                 templatePath: template.file_url,
+                templateId: template.id,
                 replacements,
                 processCode: context.processCode,
                 processId: context.processId,
@@ -384,6 +402,7 @@ export async function POST(req: NextRequest) {
             headers: { "Content-Type": "application/json", Cookie: cookieHeader },
             body: JSON.stringify({
               templatePath: template.file_url,
+              templateId: template.id,
               replacements,
               processCode: context.processCode,
               processId: context.processId,

@@ -47,6 +47,54 @@ export interface Template {
   fileUrl: string
   variables?: string[]
   createdAt: string
+  /** Entidad cliente; null = aplica a cualquier entidad (plantillas legadas). */
+  entityId?: string | null
+  entityName?: string | null
+}
+
+/** Entidades activas para asignar plantillas (superadmin). */
+export interface TemplateEntityOption {
+  id: string
+  name: string
+  nit: string
+  organizationId: string
+  organizationName: string
+}
+
+export async function getTemplateEntityOptions(): Promise<TemplateEntityOption[]> {
+  const supabase = createBrowserClient()
+  const { data, error } = await supabase
+    .from("entities")
+    .select("id, name, nit, organization_id, organization:organizations(name)")
+    .eq("status", "active")
+    .order("name")
+
+  if (error) throw error
+
+  return (data || []).map((e: Record<string, unknown>) => {
+    const org = e.organization as { name?: string } | null | undefined
+    return {
+      id: e.id as string,
+      name: e.name as string,
+      nit: (e.nit as string) || "",
+      organizationId: e.organization_id as string,
+      organizationName: org?.name || "Organización",
+    }
+  })
+}
+
+function mapDbTemplateRow(t: Record<string, unknown>): Template {
+  const ent = t.entity as { name?: string } | null | undefined
+  return {
+    id: t.id as string,
+    name: t.name as string,
+    processTypeId: (t.process_type_id as string) || "",
+    fileUrl: (t.file_url as string) || "",
+    variables: (t.variables as string[]) || [],
+    createdAt: typeof t.created_at === "string" ? t.created_at.split("T")[0] : "",
+    entityId: (t.entity_id as string | null) ?? null,
+    entityName: ent?.name ?? null,
+  }
 }
 
 // Client-side Process type (with camelCase fields matching the mapped return values from getProcessesMapped)
@@ -546,6 +594,41 @@ export async function getProcessTypes() {
   return data as ProcessType[]
 }
 
+/**
+ * Tipos de proceso con al menos una plantilla aplicable a la entidad
+ * (plantilla sin `entity_id` o con `entity_id` igual a la entidad).
+ * Incluye asociaciones vía `template_process_types` y `templates.process_type_id`.
+ */
+export async function getProcessTypesForEntity(entityId: string): Promise<ProcessType[]> {
+  const id = typeof entityId === "string" ? entityId.trim() : ""
+  if (!id) return []
+
+  const templates = await getTemplates(undefined, id)
+  if (templates.length === 0) return []
+
+  const supabase = createBrowserClient()
+  const templateIds = [...new Set(templates.map((t) => t.id))]
+
+  const { data: relRows, error: relErr } = await supabase
+    .from("template_process_types")
+    .select("process_type_id")
+    .in("template_id", templateIds)
+
+  if (relErr) throw relErr
+
+  const typeIdSet = new Set<string>()
+  for (const t of templates) {
+    if (t.processTypeId) typeIdSet.add(t.processTypeId)
+  }
+  for (const row of relRows || []) {
+    const pid = row.process_type_id as string | undefined
+    if (pid) typeIdSet.add(pid)
+  }
+
+  const allTypes = await getProcessTypes()
+  return allTypes.filter((pt) => typeIdSet.has(pt.id))
+}
+
 export async function createProcessType(data: { name: string; description: string }) {
   const supabase = createBrowserClient()
 
@@ -585,15 +668,23 @@ export async function deleteProcessType(id: string) {
 }
 
 // Templates
-export async function getTemplates(processTypeId?: string) {
+const TEMPLATE_LIST_SELECT = "*, entity:entities(name)"
+
+function filterTemplatesByEntityScope(templates: Template[], entityId?: string | null): Template[] {
+  const id = typeof entityId === "string" ? entityId.trim() : ""
+  if (!id) return templates
+  return templates.filter((t) => !t.entityId || t.entityId === id)
+}
+
+export async function getTemplates(processTypeId?: string, entityId?: string | null) {
   const supabase = createBrowserClient()
 
-  console.log("[getTemplates] Called with processTypeId:", processTypeId)
+  const shouldFilterEntity = typeof entityId === "string" && entityId.trim().length > 0
+  const entityScope = shouldFilterEntity ? entityId!.trim() : ""
+
+  console.log("[getTemplates] Called with", { processTypeId, entityId, shouldFilterEntity })
 
   if (processTypeId) {
-    // Use the many-to-many relationship table to get templates
-    // This allows templates to be associated with multiple process types
-    console.log("[getTemplates] Querying template_process_types for processTypeId:", processTypeId)
     const { data: relationData, error: relationError } = await supabase
       .from("template_process_types")
       .select("template_id, created_at")
@@ -605,8 +696,6 @@ export async function getTemplates(processTypeId?: string) {
       throw relationError
     }
 
-    console.log("[getTemplates] Found relations:", relationData?.length || 0, relationData)
-
     const templateIds: string[] = []
     const seenIds = new Set<string>()
     for (const row of relationData || []) {
@@ -616,13 +705,11 @@ export async function getTemplates(processTypeId?: string) {
       }
     }
 
-    // If no relations found, fallback to direct process_type_id lookup
-    // This handles templates that were created before the many-to-many relationship was implemented
     if (templateIds.length === 0) {
       console.log("[getTemplates] No relations found, falling back to direct process_type_id lookup")
       const { data: fallbackData, error: fallbackError } = await supabase
         .from("templates")
-        .select("*")
+        .select(TEMPLATE_LIST_SELECT)
         .eq("process_type_id", processTypeId)
         .order("created_at", { ascending: true })
 
@@ -631,46 +718,26 @@ export async function getTemplates(processTypeId?: string) {
         throw fallbackError
       }
 
-      console.log("[getTemplates] Fallback found templates:", fallbackData?.length || 0, fallbackData?.map(t => ({ id: t.id, name: t.name })))
-
-      // If we found templates via fallback, create the relations for future use
       if (fallbackData && fallbackData.length > 0) {
-        console.log("[getTemplates] Creating missing relations for", fallbackData.length, "templates")
         const relationsToCreate = fallbackData.map((t) => ({
           template_id: t.id,
           process_type_id: processTypeId,
         }))
 
-        // Insert relations (ignore conflicts if they already exist)
         const { error: insertError } = await supabase
           .from("template_process_types")
           .upsert(relationsToCreate, { onConflict: "template_id,process_type_id", ignoreDuplicates: true })
 
         if (insertError) {
           console.error("[getTemplates] Error creating relations (non-critical):", insertError)
-          // Don't throw, just log - the templates are still valid
-        } else {
-          console.log("[getTemplates] Relations created successfully")
         }
       }
 
-      return (fallbackData || []).map((t) => ({
-        id: t.id,
-        name: t.name,
-        processTypeId: t.process_type_id,
-        fileUrl: t.file_url,
-        variables: t.variables || [],
-        createdAt: t.created_at?.split("T")[0] || "",
-      })) as Template[]
+      const mapped = (fallbackData || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+      return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
     }
 
-    console.log("[getTemplates] Template IDs to fetch:", templateIds)
-
-    // Get templates by IDs
-    const { data, error } = await supabase
-      .from("templates")
-      .select("*")
-      .in("id", templateIds)
+    const { data, error } = await supabase.from("templates").select(TEMPLATE_LIST_SELECT).in("id", templateIds)
 
     if (error) {
       console.error("[getTemplates] Error fetching templates:", error)
@@ -684,77 +751,58 @@ export async function getTemplates(processTypeId?: string) {
       return ia - ib
     })
 
-    console.log("[getTemplates] Fetched templates:", sorted?.length || 0, sorted?.map(t => ({ id: t.id, name: t.name })))
-
-    return sorted.map((t) => ({
-      id: t.id,
-      name: t.name,
-      processTypeId: t.process_type_id,
-      fileUrl: t.file_url,
-      variables: t.variables || [],
-      createdAt: t.created_at?.split("T")[0] || "",
-    })) as Template[]
+    const mapped = sorted.map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+    return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
   }
 
-  // If no processTypeId, get all templates
-  const { data, error } = await supabase.from("templates").select("*").order("created_at", { ascending: true })
+  const { data, error } = await supabase
+    .from("templates")
+    .select(TEMPLATE_LIST_SELECT)
+    .order("created_at", { ascending: true })
   if (error) throw error
 
-  return (data || []).map((t) => ({
-    id: t.id,
-    name: t.name,
-    processTypeId: t.process_type_id,
-    fileUrl: t.file_url,
-    variables: t.variables || [],
-    createdAt: t.created_at?.split("T")[0] || "",
-  })) as Template[]
+  const mapped = (data || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+  return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
 }
 
 export async function createTemplate(data: {
   name: string
   processTypeId: string
+  entityId: string
   fileUrl: string
   description?: string
   variables?: string[]
 }) {
   const supabase = createBrowserClient()
 
+  if (!data.entityId?.trim()) {
+    throw new Error("Debe seleccionar una entidad para la plantilla")
+  }
+
   const { data: newTemplate, error } = await supabase
     .from("templates")
     .insert({
       name: data.name,
       process_type_id: data.processTypeId,
+      entity_id: data.entityId.trim(),
       file_url: data.fileUrl,
       variables: data.variables || [],
     })
-    .select()
+    .select(TEMPLATE_LIST_SELECT)
     .single()
 
   if (error) throw error
 
-  // Create the relationship in template_process_types table
-  // This ensures the many-to-many relationship is maintained
-  const { error: relationError } = await supabase
-    .from("template_process_types")
-    .insert({
-      template_id: newTemplate.id,
-      process_type_id: data.processTypeId,
-    })
+  const { error: relationError } = await supabase.from("template_process_types").insert({
+    template_id: newTemplate.id,
+    process_type_id: data.processTypeId,
+  })
 
   if (relationError) {
-    // Log but don't throw - the template was created successfully
-    // The relation might already exist or there might be a constraint issue
     console.error("[createTemplate] Error creating relation (non-critical):", relationError)
   }
 
-  return {
-    id: newTemplate.id,
-    name: newTemplate.name,
-    processTypeId: newTemplate.process_type_id,
-    fileUrl: newTemplate.file_url,
-    variables: newTemplate.variables || [],
-    createdAt: newTemplate.created_at?.split("T")[0] || "",
-  } as Template
+  return mapDbTemplateRow(newTemplate as Record<string, unknown>)
 }
 
 export async function updateTemplate(
@@ -762,6 +810,7 @@ export async function updateTemplate(
   data: Partial<{
     name: string
     processTypeId: string
+    entityId: string | null
     fileUrl: string
     variables?: string[]
   }>,
@@ -773,24 +822,20 @@ export async function updateTemplate(
   if (data.processTypeId) updateData.process_type_id = data.processTypeId
   if (data.fileUrl) updateData.file_url = data.fileUrl
   if (data.variables !== undefined) updateData.variables = data.variables
+  if (data.entityId !== undefined) {
+    updateData.entity_id = data.entityId === null || data.entityId === "" ? null : data.entityId.trim()
+  }
 
   const { data: updatedTemplate, error } = await supabase
     .from("templates")
     .update(updateData)
     .eq("id", id)
-    .select()
+    .select(TEMPLATE_LIST_SELECT)
     .single()
 
   if (error) throw error
 
-  return {
-    id: updatedTemplate.id,
-    name: updatedTemplate.name,
-    processTypeId: updatedTemplate.process_type_id,
-    fileUrl: updatedTemplate.file_url,
-    variables: updatedTemplate.variables || [],
-    createdAt: updatedTemplate.created_at?.split("T")[0] || "",
-  } as Template
+  return mapDbTemplateRow(updatedTemplate as Record<string, unknown>)
 }
 
 /**

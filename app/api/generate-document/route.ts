@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
       entityId, // Entity ID to get logo
       secretaryName, // Secretary name for auto-replacement
       createdBy, // User ID who created the document
+      templateId, // UUID de plantilla (recomendado; valida alcance por entidad)
     } = body
 
     if (!templatePath || !replacements || !processCode || !documentName) {
@@ -55,6 +56,51 @@ export async function POST(request: NextRequest) {
         { error: "Missing required fields: templatePath, replacements, processCode, documentName" },
         { status: 400 },
       )
+    }
+
+    // Plantillas con entity_id solo pueden generarse para procesos de esa entidad
+    const { getTemplateById, getProcess } = await import("@/lib/supabase/data-access")
+    let templateEntityId: string | null | undefined
+    if (templateId && typeof templateId === "string") {
+      try {
+        const tpl = await getTemplateById(templateId)
+        if (tpl.file_url !== templatePath) {
+          return NextResponse.json(
+            { error: "Los datos de la plantilla no coinciden con la selección." },
+            { status: 400 },
+          )
+        }
+        templateEntityId = tpl.entity_id ?? null
+      } catch {
+        return NextResponse.json({ error: "Plantilla no encontrada" }, { status: 404 })
+      }
+    } else {
+      const { data: byPath } = await supabase
+        .from("templates")
+        .select("entity_id")
+        .eq("file_url", templatePath)
+      if (byPath?.length === 1) {
+        templateEntityId = byPath[0].entity_id ?? null
+      }
+    }
+    if (templateEntityId) {
+      if (!processId || typeof processId !== "string") {
+        return NextResponse.json(
+          { error: "Esta plantilla está asociada a una entidad; se requiere el proceso (processId)." },
+          { status: 400 },
+        )
+      }
+      try {
+        const proc = await getProcess(processId)
+        if (proc.entity_id !== templateEntityId) {
+          return NextResponse.json(
+            { error: "Esta plantilla no corresponde a la entidad del proceso." },
+            { status: 403 },
+          )
+        }
+      } catch {
+        return NextResponse.json({ error: "Proceso no encontrado o sin acceso" }, { status: 403 })
+      }
     }
 
     // Extract fileId from templatePath if it's in the format "fileId:xxx|path:yyy"

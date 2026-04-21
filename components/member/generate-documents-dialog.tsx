@@ -160,10 +160,12 @@ export function GenerateDocumentsDialog({
   React.useEffect(() => {
     async function loadTemplates() {
       const processTypeId = process?.processTypeId || processData?.processTypeId
-      
+      const entityId = process?.entityId || processData?.entityId
+
       console.log("[GenerateDocumentsDialog] Loading templates:", {
         open,
         processTypeId,
+        entityId,
         hasProcess: !!process,
         hasProcessData: !!processData,
         processProcessTypeId: process?.processTypeId,
@@ -179,7 +181,7 @@ export function GenerateDocumentsDialog({
       try {
         setIsLoadingTemplates(true)
         console.log("[GenerateDocumentsDialog] Calling getTemplates with processTypeId:", processTypeId)
-        const data = await getTemplates(processTypeId)
+        const data = await getTemplates(processTypeId, entityId || undefined)
         console.log("[GenerateDocumentsDialog] Templates loaded:", {
           count: data.length,
           templates: data.map(t => ({ id: t.id, name: t.name, processTypeId: t.processTypeId })),
@@ -229,7 +231,7 @@ export function GenerateDocumentsDialog({
     }
 
     loadTemplates()
-  }, [open, process?.processTypeId, processData?.processTypeId, entity?.name, secretaryName])
+  }, [open, process?.processTypeId, processData?.processTypeId, process?.entityId, processData?.entityId, entity?.name, secretaryName])
 
   const handleClose = () => {
     setFormData({})
@@ -617,6 +619,7 @@ export function GenerateDocumentsDialog({
         },
         body: JSON.stringify({
           templatePath: template.fileUrl, // This should be the Drive path
+          templateId: template.id,
           replacements,
           processCode: processCode,
           processId: processIdToUse,

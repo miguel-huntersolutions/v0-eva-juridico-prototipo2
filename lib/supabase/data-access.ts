@@ -50,6 +50,8 @@ export interface Template {
   name: string
   process_type_id: string
   file_url: string
+  /** Si está definida, la plantilla solo aplica a procesos de esta entidad; null = todas. */
+  entity_id?: string | null
   variables?: string[] | null
   created_at: string
   updated_at: string

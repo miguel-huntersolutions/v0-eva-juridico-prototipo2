@@ -24,6 +24,8 @@ La URL efectiva se obtiene con `getAppUrl()` en `lib/app-config.ts`.
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Sí | Clave anónima (pública) para el cliente en el navegador. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Sí (server) | Clave de service role para operaciones en servidor (invitaciones, RAG ingest, actualizar documentos, etc.). No exponer en cliente. |
 
+**Migraciones SQL:** si el repositorio añade scripts en `scripts/` (p. ej. `031-templates-entity-id.sql` para `templates.entity_id`), aplíquelos en el SQL Editor de Supabase o su pipeline de migraciones para mantener el esquema alineado con el código.
+
 ---
 
 ## OpenAI (modelos y API)

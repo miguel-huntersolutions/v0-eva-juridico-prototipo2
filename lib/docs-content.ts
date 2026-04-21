@@ -87,7 +87,7 @@ export const superadminDocs: DocContent = {
       id: "templates",
       title: "Plantillas Maestras",
       content:
-        "Administración de plantillas de documentos legales. Permite crear, editar y eliminar plantillas; además, extrae automáticamente variables desde archivos .docx para su uso dinámico.",
+        "Administración de plantillas de documentos legales. Cada plantilla se asocia a un tipo de proceso y a una entidad cliente: solo los procesos de esa entidad (con ese tipo de proceso) verán la plantilla al generar documentos. Las plantillas antiguas sin entidad siguen aplicando a todas las entidades. Extrae automáticamente variables desde archivos .docx.",
       subsections: [
         {
           title: "Variables Disponibles",
@@ -135,8 +135,9 @@ export const superadminDocs: DocContent = {
         {
           number: 4,
           title: "Gestionar Plantillas",
-          description: "Cargue plantillas maestras y asócielas a los tipos de proceso correspondientes",
+          description: "Cargue plantillas maestras, elija tipo de proceso y entidad cliente; al generar documentos solo verán esas plantillas los procesos de esa entidad.",
           details: [
+            "En el paso 1 elija tipo de proceso y entidad (obligatoria en plantillas nuevas).",
             "Suba archivos .docx con variables tipo {{VARIABLE}} para campos simples.",
             "Para tabla base use, por ejemplo, {{TABLE_CLASIFICADORES_BASE_CODIGO_DESCRIPCION}}.",
             "Para tabla detail use, por ejemplo, {{TABLE_CLASIFICADORES_DETAIL_ITEM_VALOR}}.",
@@ -203,7 +204,8 @@ export const superadminDocs: DocContent = {
     },
     {
       question: "¿Las plantillas se actualizan para todas las organizaciones?",
-      answer: "Sí, las plantillas maestras están disponibles globalmente para todas las organizaciones.",
+      answer:
+        "Las plantillas maestras las define el superadministrador para toda la plataforma. Cada plantilla puede limitarse a una entidad cliente: al generar documentos solo aparecen las que coinciden con el tipo de proceso y la entidad del proceso (o las que no tienen entidad, que aplican a todas).",
     },
     {
       question: "¿Cómo manejo tablas con base y detail en una plantilla?",
@@ -455,7 +457,12 @@ export const memberDocs: DocContent = {
           title: "Abrir Generación",
           description: "Use la acción de generar documentos del proceso para abrir la pantalla dedicada",
         },
-        { number: 3, title: "Generar Documento", description: "Seleccione la plantilla y haga clic en Generar" },
+        {
+          number: 3,
+          title: "Generar Documento",
+          description:
+            "Solo verá plantillas del tipo de proceso del proceso actual y asignadas a su entidad (o plantillas sin entidad, válidas para todas). Elija la plantilla y haga clic en Generar.",
+        },
         {
           number: 4,
           title: "Revisar y Descargar",

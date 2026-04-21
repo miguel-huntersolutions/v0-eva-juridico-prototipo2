@@ -56,7 +56,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { ProcessType } from "@/lib/mock-data"
-import { getTemplates, createTemplate, deleteTemplate, updateTemplate, getProcessTypes, type Template } from "@/lib/supabase/client-data-access"
+import {
+  getTemplates,
+  createTemplate,
+  deleteTemplate,
+  updateTemplate,
+  getProcessTypes,
+  getTemplateEntityOptions,
+  type Template,
+  type TemplateEntityOption,
+} from "@/lib/supabase/client-data-access"
+
+const ENTITY_GLOBAL_VALUE = "__global__"
 import { extractTagsFromDocx, parseDynamicTableTagToken } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 
@@ -88,6 +99,7 @@ export function TemplatesPage() {
   // Edit dialog states
   const [editTemplateName, setEditTemplateName] = React.useState("")
   const [editProcessTypeId, setEditProcessTypeId] = React.useState("")
+  const [editEntityId, setEditEntityId] = React.useState<string>(ENTITY_GLOBAL_VALUE)
   const [editReplacementFile, setEditReplacementFile] = React.useState<UploadedFile | null>(null)
   const [editExtractedTags, setEditExtractedTags] = React.useState<string[]>([])
   const [isExtractingEditTags, setIsExtractingEditTags] = React.useState(false)
@@ -97,10 +109,13 @@ export function TemplatesPage() {
   const editFileInputRef = React.useRef<HTMLInputElement>(null)
   // Renamed filterProcessType to processTypeFilter for consistency
   const [filterProcessType, setFilterProcessType] = React.useState<string>("all")
+  const [filterEntityId, setFilterEntityId] = React.useState<string>("all")
   const [createStep, setCreateStep] = React.useState(1)
   const [templateName, setTemplateName] = React.useState("")
   const [templateDescription, setTemplateDescription] = React.useState("")
   const [selectedProcessTypeId, setSelectedProcessTypeId] = React.useState("")
+  const [selectedEntityId, setSelectedEntityId] = React.useState("")
+  const [entityOptions, setEntityOptions] = React.useState<TemplateEntityOption[]>([])
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(null)
   const [extractedTags, setExtractedTags] = React.useState<string[]>([])
   const [isExtractingTags, setIsExtractingTags] = React.useState(false)
@@ -129,7 +144,14 @@ export function TemplatesPage() {
         setIsLoadingTemplates(true)
         setLoadError(null)
 
-        const [typesData, templatesData] = await Promise.all([getProcessTypes(), getTemplates()])
+        const [typesData, templatesData, entityOpts] = await Promise.all([
+          getProcessTypes(),
+          getTemplates(),
+          getTemplateEntityOptions().catch((e) => {
+            console.warn("[TemplatesPage] No se pudieron cargar entidades:", e)
+            return [] as TemplateEntityOption[]
+          }),
+        ])
 
         setProcessTypes(
           typesData.map((pt) => ({
@@ -139,6 +161,7 @@ export function TemplatesPage() {
           })),
         )
         setTemplates(templatesData)
+        setEntityOptions(entityOpts)
       } catch (err) {
         console.error("Error loading data:", err)
         setLoadError("Error al cargar los datos. Por favor, intente de nuevo.")
@@ -156,6 +179,7 @@ export function TemplatesPage() {
     if (isEditOpen && selectedTemplate) {
       setEditTemplateName(selectedTemplate.name)
       setEditProcessTypeId(selectedTemplate.processTypeId)
+      setEditEntityId(selectedTemplate.entityId || ENTITY_GLOBAL_VALUE)
       // Reset replacement file and tags when dialog opens
       setEditReplacementFile(null)
       setEditExtractedTags(selectedTemplate.variables || [])
@@ -205,13 +229,22 @@ export function TemplatesPage() {
       result = result.filter((t) => t.processTypeId === filterProcessType)
     }
 
+    if (filterEntityId !== "all") {
+      result = result.filter((t) => !t.entityId || t.entityId === filterEntityId)
+    }
+
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
-      result = result.filter((t) => t.name.toLowerCase().includes(query) || t.fileUrl.toLowerCase().includes(query))
+      result = result.filter(
+        (t) =>
+          t.name.toLowerCase().includes(query) ||
+          t.fileUrl.toLowerCase().includes(query) ||
+          (t.entityName && t.entityName.toLowerCase().includes(query)),
+      )
     }
 
     return result
-  }, [templates, filterProcessType, searchQuery])
+  }, [templates, filterProcessType, filterEntityId, searchQuery])
 
   // Added templatesByType memo (though not used in the final merged code)
   const templatesByType = React.useMemo(() => {
@@ -230,6 +263,7 @@ export function TemplatesPage() {
     setSelectedTemplate(template)
     setEditTemplateName(template.name)
     setEditProcessTypeId(template.processTypeId)
+    setEditEntityId(template.entityId || ENTITY_GLOBAL_VALUE)
     setEditReplacementFile(null)
     setEditExtractedTags(template.variables || [])
     setIsEditOpen(true)
@@ -238,6 +272,7 @@ export function TemplatesPage() {
   const resetEditDialog = () => {
     setEditTemplateName("")
     setEditProcessTypeId("")
+    setEditEntityId(ENTITY_GLOBAL_VALUE)
     setEditReplacementFile(null)
     setEditExtractedTags([])
     setIsEditDragging(false)
@@ -334,11 +369,13 @@ export function TemplatesPage() {
       const updateData: {
         name: string
         processTypeId: string
+        entityId: string | null
         fileUrl?: string
         variables?: string[]
       } = {
         name: editTemplateName,
         processTypeId: editProcessTypeId,
+        entityId: editEntityId === ENTITY_GLOBAL_VALUE ? null : editEntityId,
       }
 
       // Get the process type name for folder organization
@@ -451,15 +488,17 @@ export function TemplatesPage() {
   const clearFilters = () => {
     setSearchQuery("")
     setFilterProcessType("all")
+    setFilterEntityId("all")
   }
 
-  const hasActiveFilters = searchQuery || filterProcessType !== "all"
+  const hasActiveFilters = searchQuery || filterProcessType !== "all" || filterEntityId !== "all"
 
   const resetCreateDialog = () => {
     setCreateStep(1)
     setTemplateName("")
     setTemplateDescription("")
     setSelectedProcessTypeId("")
+    setSelectedEntityId("")
     setUploadedFile(null)
     setExtractedTags([])
     setIsDragging(false)
@@ -584,7 +623,11 @@ export function TemplatesPage() {
     return `{{TABLE_${family}_${variant.toUpperCase()}_${tableDef.fields.map((f) => f.toUpperCase()).join("_")}}}`
   }
 
-  const canProceedStep1 = templateName.trim() !== "" && selectedProcessTypeId !== ""
+  const canProceedStep1 =
+    templateName.trim() !== "" &&
+    selectedProcessTypeId !== "" &&
+    selectedEntityId !== "" &&
+    entityOptions.some((e) => e.id === selectedEntityId)
   const canProceedStep2 = uploadedFile !== null
   const selectedProcessType = processTypes.find((pt) => pt.id === selectedProcessTypeId)
 
@@ -705,7 +748,7 @@ export function TemplatesPage() {
   }
 
   const handleCreateTemplate = async (retryCount = 0) => {
-    if (!templateName || !selectedProcessTypeId || !uploadedFile || !uploadedFile.file) return
+    if (!templateName || !selectedProcessTypeId || !selectedEntityId || !uploadedFile || !uploadedFile.file) return
 
     try {
       setIsSaving(true)
@@ -777,6 +820,7 @@ export function TemplatesPage() {
       const newTemplate = await createTemplate({
         name: templateName,
         processTypeId: selectedProcessTypeId,
+        entityId: selectedEntityId,
         fileUrl: fileUrl, // Store fileId and path for easy access
         description: templateDescription,
         variables: extractedTags, // Save the extracted tags
@@ -884,8 +928,8 @@ export function TemplatesPage() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 sm:flex-row">
-            <div className="relative flex-1">
+          <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap">
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar plantillas..."
@@ -895,7 +939,7 @@ export function TemplatesPage() {
               />
             </div>
             <Select value={filterProcessType} onValueChange={setFilterProcessType}>
-              <SelectTrigger className="w-full sm:w-[250px]">
+              <SelectTrigger className="w-full lg:w-[220px]">
                 <SelectValue placeholder="Filtrar por tipo de proceso" />
               </SelectTrigger>
               <SelectContent>
@@ -903,6 +947,19 @@ export function TemplatesPage() {
                 {processTypes.map((pt) => (
                   <SelectItem key={pt.id} value={pt.id}>
                     {pt.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterEntityId} onValueChange={setFilterEntityId}>
+              <SelectTrigger className="w-full lg:w-[260px]">
+                <SelectValue placeholder="Filtrar por entidad" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[280px]">
+                <SelectItem value="all">Todas las entidades</SelectItem>
+                {entityOptions.map((ent) => (
+                  <SelectItem key={ent.id} value={ent.id}>
+                    {ent.organizationName} — {ent.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -923,9 +980,18 @@ export function TemplatesPage() {
                   </div>
                   <div className="space-y-1">
                     <CardTitle className="text-base leading-tight">{template.name}</CardTitle>
-                    <Badge variant="secondary" className="text-xs">
-                      {getProcessTypeName(template.processTypeId)}
-                    </Badge>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="secondary" className="text-xs">
+                        {getProcessTypeName(template.processTypeId)}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {template.entityName
+                          ? template.entityName
+                          : template.entityId
+                            ? "Entidad"
+                            : "Todas las entidades"}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
                 <DropdownMenu>
@@ -993,7 +1059,7 @@ export function TemplatesPage() {
             <FileText className="h-12 w-12 text-muted-foreground/50" />
             <h3 className="mt-4 text-lg font-semibold">No hay plantillas</h3>
             <p className="mt-2 text-center text-sm text-muted-foreground">
-              {searchQuery || filterProcessType !== "all"
+              {searchQuery || filterProcessType !== "all" || filterEntityId !== "all"
                 ? "No se encontraron plantillas con los filtros aplicados."
                 : "Comienza creando tu primera plantilla de documento."}
             </p>
@@ -1099,6 +1165,40 @@ export function TemplatesPage() {
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     La plantilla se usará para generar documentos de este tipo de proceso
+                  </p>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="tpl-entity">Entidad cliente *</Label>
+                  {entityOptions.length === 0 ? (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertTitle>No hay entidades disponibles</AlertTitle>
+                      <AlertDescription className="text-sm">
+                        Cree entidades en las organizaciones antes de asociar plantillas. Si acaba de aplicar la
+                        migración de base de datos, verifique que exista la columna{" "}
+                        <span className="font-mono">templates.entity_id</span>.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
+                      <SelectTrigger id="tpl-entity">
+                        <SelectValue placeholder="Seleccionar entidad..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[280px]">
+                        {entityOptions.map((ent) => (
+                          <SelectItem key={ent.id} value={ent.id}>
+                            <span className="line-clamp-2">
+                              {ent.organizationName} — {ent.name}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Solo los procesos de esta entidad verán esta plantilla al generar documentos (además del tipo de
+                    proceso). Las plantillas sin entidad (legado) aplican a cualquier entidad.
                   </p>
                 </div>
 
@@ -1284,6 +1384,17 @@ export function TemplatesPage() {
                   </div>
                   <Separator />
                   <div>
+                    <p className="text-sm text-muted-foreground">Entidad</p>
+                    <p className="font-medium">
+                      {entityOptions.find((e) => e.id === selectedEntityId)
+                        ? `${entityOptions.find((e) => e.id === selectedEntityId)!.organizationName} — ${
+                            entityOptions.find((e) => e.id === selectedEntityId)!.name
+                          }`
+                        : selectedEntityId || "—"}
+                    </p>
+                  </div>
+                  <Separator />
+                  <div>
                     <p className="text-sm text-muted-foreground">Archivo</p>
                     <div className="flex items-center gap-2">
                       <FileText className="h-4 w-4 text-primary" />
@@ -1380,7 +1491,13 @@ export function TemplatesPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold">{selectedTemplate.name}</h3>
-                  <Badge variant="secondary">{getProcessTypeName(selectedTemplate.processTypeId)}</Badge>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="secondary">{getProcessTypeName(selectedTemplate.processTypeId)}</Badge>
+                    <Badge variant="outline">
+                      {selectedTemplate.entityName ||
+                        (selectedTemplate.entityId ? "Entidad asignada" : "Todas las entidades")}
+                    </Badge>
+                  </div>
                 </div>
               </div>
               <Separator />
@@ -1452,6 +1569,32 @@ export function TemplatesPage() {
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     Una plantilla solo puede estar asociada a un tipo de proceso. Si necesitas usar esta plantilla para múltiples tipos, puedes duplicarla y asociarla a cada tipo.
+                  </p>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-entity">Entidad</Label>
+                  <Select value={editEntityId} onValueChange={setEditEntityId}>
+                    <SelectTrigger id="edit-entity">
+                      <SelectValue placeholder="Entidad" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[280px]">
+                      <SelectItem value={ENTITY_GLOBAL_VALUE}>Todas las entidades (sin restricción)</SelectItem>
+                      {selectedTemplate?.entityId &&
+                        !entityOptions.some((e) => e.id === selectedTemplate.entityId) && (
+                          <SelectItem value={selectedTemplate.entityId}>
+                            {selectedTemplate.entityName || selectedTemplate.entityId} (actual)
+                          </SelectItem>
+                        )}
+                      {entityOptions.map((ent) => (
+                        <SelectItem key={ent.id} value={ent.id}>
+                          {ent.organizationName} — {ent.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Restringe la plantilla a una entidad o déjala global para compatibilidad con datos antiguos.
                   </p>
                 </div>
 

@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  getProcessTypes,
+  getProcessTypesForEntity,
   getSecretaries,
   getEntities,
   getEntitiesForImpersonation,
@@ -85,19 +85,25 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
   const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
-    async function loadProcessTypes() {
+    async function loadProcessTypesForEntity() {
+      const eid = formData.entityId
+      if (!open || !eid || eid === "placeholder" || eid === "none" || eid === "loading") {
+        setProcessTypes([])
+        setIsLoadingTypes(false)
+        return
+      }
       try {
-        const types = await getProcessTypes()
+        setIsLoadingTypes(true)
+        const types = await getProcessTypesForEntity(eid)
         setProcessTypes(types)
-      } catch (error) {
+      } catch {
+        setProcessTypes([])
       } finally {
         setIsLoadingTypes(false)
       }
     }
-    if (open) {
-      loadProcessTypes()
-    }
-  }, [open])
+    loadProcessTypesForEntity()
+  }, [open, formData.entityId])
 
   React.useEffect(() => {
     async function loadEntities() {
@@ -224,7 +230,8 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
                 <Select
                   value={formData.entityId}
                   onValueChange={(v) => {
-                    setFormData((prev) => ({ ...prev, entityId: v, secretaryId: "" }))
+                    setFormData((prev) => ({ ...prev, entityId: v, secretaryId: "", processTypeId: "" }))
+                    setSelectedProcessType(null)
                   }}
                   disabled={isLoadingEntities}
                 >
@@ -280,14 +287,34 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
 
               <div className="space-y-2">
                 <Label htmlFor="processType">Tipo de Proceso</Label>
-                <Select value={formData.processTypeId} onValueChange={handleProcessTypeChange}>
+                <Select
+                  value={formData.processTypeId}
+                  onValueChange={handleProcessTypeChange}
+                  disabled={!formData.entityId || isLoadingTypes}
+                >
                   <SelectTrigger id="processType" className="w-full">
-                    <SelectValue placeholder="Seleccionar tipo..." />
+                    <SelectValue
+                      placeholder={
+                        !formData.entityId
+                          ? "Seleccione primero una entidad"
+                          : isLoadingTypes
+                            ? "Cargando tipos..."
+                            : "Seleccionar tipo..."
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    {isLoadingTypes ? (
+                    {!formData.entityId ? (
+                      <SelectItem value="need-entity" disabled>
+                        Elija una entidad para ver los tipos disponibles
+                      </SelectItem>
+                    ) : isLoadingTypes ? (
                       <SelectItem value="loading" disabled>
                         Cargando tipos de proceso...
+                      </SelectItem>
+                    ) : processTypes.length === 0 ? (
+                      <SelectItem value="no-types" disabled>
+                        No hay tipos con plantillas para esta entidad
                       </SelectItem>
                     ) : (
                       processTypes.map((pt) => (
@@ -298,6 +325,10 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
                     )}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  Solo se muestran tipos de proceso que tengan al menos una plantilla asignada a esta entidad (o
+                  plantillas globales sin entidad).
+                </p>
               </div>
 
               {selectedProcessType && (

@@ -71,7 +71,7 @@ export function DocumentAssistantDialog({
     setLastGeneration(null)
     setError(null)
     setLoadingTemplates(true)
-    getTemplates(processTypeId)
+    getTemplates(processTypeId, process.entityId)
       .then((data) => {
         if (!cancelled) setTemplates(data)
       })
@@ -84,7 +84,7 @@ export function DocumentAssistantDialog({
     return () => {
       cancelled = true
     }
-  }, [effectiveOpen, processTypeId, process?.id])
+  }, [effectiveOpen, processTypeId, process?.id, process?.entityId])
 
   // Send first message "Inicio" when we have sessionId, templates and process
   React.useEffect(() => {
