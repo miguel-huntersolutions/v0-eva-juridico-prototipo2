@@ -12,7 +12,10 @@ import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
 import type { ChatMessage } from "./types"
 import { getOpenAIModel, getOpenAIWorkflowModel } from "@/lib/ai-model-config"
-import { ASESOR_JURIDICO_SYSTEM_PROMPT } from "@/lib/ai-chat/asesor-juridico-system-prompt"
+import {
+  ASESOR_JURIDICO_SYSTEM_PROMPT,
+  ASESOR_JURIDICO_TEMPERATURE,
+} from "@/lib/ai-chat/asesor-juridico-system-prompt"
 
 // Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
@@ -533,7 +536,7 @@ export async function runRagFirstThenGeneralChat(
       model: openaiModel,
       system: ASESOR_JURIDICO_SYSTEM_PROMPT,
       messages: historyMessages,
-      temperature: 0,
+      temperature: ASESOR_JURIDICO_TEMPERATURE,
       maxTokens: 4096,
     })
 

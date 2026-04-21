@@ -13,6 +13,8 @@ export interface CreateChatRouteOptions {
   systemPrompt: string
   /** AI model to use (default from OPENAI_MODEL env, e.g. openai/gpt-4o) */
   model?: string
+  /** Sampling temperature (default: model default; use 0 for instrucciones tipo GPT “fijo”) */
+  temperature?: number
   /** Maximum duration in seconds (default: 30) */
   maxDuration?: number
   /** Additional configuration */
@@ -37,6 +39,7 @@ export function createChatRoute(options: CreateChatRouteOptions) {
   const {
     systemPrompt,
     model = getOpenAIChatModelString(),
+    temperature,
     maxDuration = 30,
   } = options
 
@@ -58,6 +61,7 @@ export function createChatRoute(options: CreateChatRouteOptions) {
         model: openaiModel,
         system: systemPrompt,
         messages: convertToModelMessages(messages),
+        ...(temperature !== undefined ? { temperature } : {}),
       })
 
       return result.toUIMessageStreamResponse()

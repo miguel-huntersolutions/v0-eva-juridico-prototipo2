@@ -4,6 +4,7 @@ import { getOpenAIChatModelString } from "@/lib/ai-model-config"
 import {
   ASESOR_JURIDICO_CHAT_WEB_MODE_PREFIX,
   ASESOR_JURIDICO_SYSTEM_PROMPT,
+  ASESOR_JURIDICO_TEMPERATURE,
 } from "@/lib/ai-chat/asesor-juridico-system-prompt"
 
 /** Segment config must be static; runtime duration can be set via AI_CHAT_MAX_DURATION / Vercel. */
@@ -19,5 +20,6 @@ const SYSTEM_PROMPT = `${ASESOR_JURIDICO_CHAT_WEB_MODE_PREFIX}${ASESOR_JURIDICO_
 export const POST = createChatRoute({
   systemPrompt: SYSTEM_PROMPT,
   model: getOpenAIChatModelString(),
+  temperature: ASESOR_JURIDICO_TEMPERATURE,
   maxDuration: getChatMaxDuration(),
 })
