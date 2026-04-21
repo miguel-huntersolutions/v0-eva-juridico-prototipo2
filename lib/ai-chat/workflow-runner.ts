@@ -300,23 +300,30 @@ const RagFirstResultSchema = z.object({
   ),
 })
 
-const ragDocumentProbeAgent = new Agent({
-  name: "RAG document probe",
-  instructions: `Eres un paso previo de búsqueda en documentos del sistema EVA Jurídico. Tienes la herramienta file_search sobre el repositorio de documentos cargados (vector store).
+/** Instrucciones del asesor + tarea estructurada RAG (solo /api/assistant; no afecta runWorkflow de documentos). */
+const RAG_PROBE_INSTRUCTIONS_SUFFIX = `
+
+---
+TAREA CON HERRAMIENTA file_search (repositorio de documentos indexados en EVA Jurídico):
+Tienes obligatoriamente la herramienta file_search sobre el vector store de documentos cargados.
 
 Procedimiento:
-1) Usa file_search y busca en los documentos indexados información relevante para la última consulta del usuario. El historial sirve solo como contexto.
-2) Si encuentras contenido en esos documentos que permita responder con seguridad la consulta, pon sufficient=true y redacta la respuesta completa en groundedAnswer: español colombiano, formal y técnico. Cuando corresponda, indica de qué documento o sección proviene la información (sin inventar nombres de archivo).
+1) Usa file_search y busca en los documentos indexados información relevante para la última consulta del usuario. El historial de la conversación sirve solo como contexto.
+2) Si encuentras contenido en esos documentos que permita responder con seguridad la consulta, cumpliendo las reglas de rol, alcance, marco normativo, jurisprudencia y estilo indicados arriba, pon sufficient=true y redacta la respuesta completa en groundedAnswer (español colombiano, formal y técnico). Cuando corresponda, indica de qué documento o sección proviene la información (sin inventar nombres de archivo).
 3) Si tras usar file_search no hay material suficiente en los documentos indexados para fundamentar la respuesta, pon sufficient=false y groundedAnswer debe ser exactamente una cadena vacía.
 
-No inventes citas a documentos. No pongas sufficient=true sin respaldo recuperable en la búsqueda.`,
+No inventes citas a documentos. No pongas sufficient=true sin respaldo recuperable en la búsqueda.`
+
+const ragDocumentProbeAgent = new Agent({
+  name: "RAG document probe",
+  instructions: `${ASESOR_JURIDICO_SYSTEM_PROMPT}${RAG_PROBE_INSTRUCTIONS_SUFFIX}`,
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
   outputType: RagFirstResultSchema,
   modelSettings: {
     temperature: 0,
     topP: 1,
-    maxTokens: 4096,
+    maxTokens: 8192,
     store: true,
   },
 })
