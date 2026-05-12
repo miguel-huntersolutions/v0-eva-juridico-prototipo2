@@ -11,10 +11,15 @@ import { runGuardrails } from "@openai/guardrails"
 import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
 import type { ChatMessage } from "./types"
-import { getOpenAIModel, getOpenAIWorkflowModel } from "@/lib/ai-model-config"
 import {
-  ASESOR_JURIDICO_SYSTEM_PROMPT,
-  ASESOR_JURIDICO_TEMPERATURE,
+  getOpenAIModel,
+  getOpenAIWorkflowModel,
+  getAsesorJuridicoSystemPrompt,
+  getAsesorJuridicoTemperature,
+} from "@/lib/ai-model-config"
+import {
+  ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT,
+  ASESOR_JURIDICO_TEMPERATURE_DEFAULT,
 } from "@/lib/ai-chat/asesor-juridico-system-prompt"
 
 // Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
@@ -316,7 +321,7 @@ No inventes citas a documentos. No pongas sufficient=true sin respaldo recuperab
 
 const ragDocumentProbeAgent = new Agent({
   name: "RAG document probe",
-  instructions: `${ASESOR_JURIDICO_SYSTEM_PROMPT}${RAG_PROBE_INSTRUCTIONS_SUFFIX}`,
+  instructions: `${getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT)}${RAG_PROBE_INSTRUCTIONS_SUFFIX}`,
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
   outputType: RagFirstResultSchema,
@@ -541,9 +546,9 @@ export async function runRagFirstThenGeneralChat(
 
     const result = await generateText({
       model: openaiModel,
-      system: ASESOR_JURIDICO_SYSTEM_PROMPT,
+      system: getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT),
       messages: historyMessages,
-      temperature: ASESOR_JURIDICO_TEMPERATURE,
+      temperature: getAsesorJuridicoTemperature(ASESOR_JURIDICO_TEMPERATURE_DEFAULT),
       maxTokens: 4096,
     })
 

@@ -14,8 +14,14 @@ export const ASESOR_JURIDICO_GPT_NAME = "Asesor Jurídico en Contratación Estat
 export const ASESOR_JURIDICO_GPT_DESCRIPTION =
   "GPT jurídico especializado en contratación estatal colombiana, orientado a la estructuración, análisis y acompañamiento jurídico de procesos contractuales conforme a la Ley 80 de 1993 y demás normas relacionadas con énfasis en SECOP II."
 
-/** TEMPERATURA: 0.0 — aplicar en cada llamada (`temperature: 0`). */
-export const ASESOR_JURIDICO_TEMPERATURE = 0
+/**
+ * TEMPERATURA por defecto del asesor jurídico (0.0).
+ * Puede sobreescribirse en runtime con `ASESOR_JURIDICO_TEMPERATURE` (ver `lib/ai-model-config.ts`).
+ */
+export const ASESOR_JURIDICO_TEMPERATURE_DEFAULT = 0
+
+/** @deprecated Usa `getAsesorJuridicoTemperature()` para respetar la env var. */
+export const ASESOR_JURIDICO_TEMPERATURE = ASESOR_JURIDICO_TEMPERATURE_DEFAULT
 
 /** Prefijo solo para `/api/chat` (canal sin búsqueda en vector store de la org.). */
 export const ASESOR_JURIDICO_CHAT_WEB_MODE_PREFIX = `Modo CHAT WEB: en esta vía no se ejecuta búsqueda automática en el repositorio vectorial de documentos de la organización. Aplica el marco normativo y las instrucciones siguientes usando tu conocimiento sobre contratación estatal colombiana. Omite como fuente obligatoria los “documentos cargados en el sistema” cuando no existan en este canal; sí cita normativa oficial aplicable.
@@ -23,9 +29,11 @@ export const ASESOR_JURIDICO_CHAT_WEB_MODE_PREFIX = `Modo CHAT WEB: en esta vía
 `
 
 /**
- * INSTRUCCIONES DEL SISTEMA (texto acordado con el cliente).
+ * INSTRUCCIONES DEL SISTEMA (texto acordado con el cliente) — DEFAULT.
+ * Puede sobreescribirse en runtime con `ASESOR_JURIDICO_SYSTEM_PROMPT`
+ * (ver `lib/ai-model-config.ts`).
  */
-export const ASESOR_JURIDICO_SYSTEM_PROMPT = `Actúas permanentemente como abogado asesor especializado en contratación estatal colombiana, con 15 años de experiencia profesional.
+export const ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT = `Actúas permanentemente como abogado asesor especializado en contratación estatal colombiana, con 15 años de experiencia profesional.
 
 ALCANCE:
 - Operas exclusivamente en contratación estatal en Colombia.
@@ -75,3 +83,6 @@ ESTILO (MARCO CAPITAL):
 
 ADVERTENCIA ÉTICA (NO AUTOMÁTICA):
 Esta respuesta no constituye asesoría legal profesional. Para situaciones específicas, se recomienda consultar directamente con un abogado titulado. Este GPT no reemplaza el juicio humano ni garantiza certeza jurídica.`
+
+/** @deprecated Usa `getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT)` para respetar la env var. */
+export const ASESOR_JURIDICO_SYSTEM_PROMPT = ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT

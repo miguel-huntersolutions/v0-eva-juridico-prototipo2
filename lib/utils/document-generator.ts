@@ -232,10 +232,24 @@ export function replaceTagsInText(text: string, replacements: Record<string, str
  * @param entityLogoUrl - Optional URL of the entity logo to include when {{LOGO_ENTIDAD}} is found
  * @returns Promise resolving to the modified file buffer
  */
+/**
+ * Imagen genérica para los tags {{IMAGE}} / {{IMAGE_*}}.
+ * `buffer` es el contenido binario del archivo subido por el usuario.
+ */
+export interface TemplateImageInput {
+  buffer: Buffer
+  /** Ancho en píxeles. Default: 400. */
+  width?: number
+  /** Alto en píxeles. Default: 300. */
+  height?: number
+}
+
 export async function replaceTagsInDocx(
   fileBuffer: ArrayBuffer | Buffer,
   replacements: Record<string, any>,
   entityLogoUrl?: string | null,
+  /** Mapa por tag (sin {{}}) -> imagen subida por el usuario. */
+  images?: Record<string, TemplateImageInput> | null,
 ): Promise<Buffer> {
   try {
     // Dynamic import to avoid SSR issues
@@ -262,6 +276,9 @@ export async function replaceTagsInDocx(
         zip.file(fileName, injected)
       }
     })
+
+    // (La inyección del prefijo `%` para tags de imagen se hace más abajo,
+    // una vez construido el mapa imageBufferMap, para inyectar solo donde haya datos.)
     
     // Prepare replacements
     const finalReplacements: Record<string, any> = { ...replacements }
@@ -321,87 +338,88 @@ export async function replaceTagsInDocx(
       sampleContent: docxContent.substring(0, 200), // First 200 chars for debugging
     })
     
-    // If entity logo URL is provided, ALWAYS prepare image module and add to replacements
-    // Even if tag not found in XML search, docxtemplater will process it if it exists in the document
-    let imageModule: any = null
+    // Construye el mapa de buffers por tag (LOGO_ENTIDAD + IMAGE/IMAGE_* genéricos).
+    // El ImageModule busca aquí el binario y el tamaño por tagName.
+    const imageBufferMap: Record<string, { buffer: Buffer; width: number; height: number }> = {}
+    const DEFAULT_IMAGE_WIDTH = 400 // px (tamaño "mediano" en el doc; ajustable en Word)
+    const DEFAULT_IMAGE_HEIGHT = 300
+
     if (entityLogoUrl) {
       try {
         console.log("[replaceTagsInDocx] Downloading logo from:", entityLogoUrl)
-        // Download the logo image
         const logoResponse = await fetch(entityLogoUrl)
         if (logoResponse.ok) {
           const logoBuffer = Buffer.from(await logoResponse.arrayBuffer())
           console.log("[replaceTagsInDocx] Logo downloaded, size:", logoBuffer.length)
-          
-          // Get image extension
-          const imageExtension = entityLogoUrl.split(".").pop()?.toLowerCase() || "png"
-          
-          // Initialize image module with proper configuration
-          // According to docxtemplater-image-module-free docs:
-          // - getImage(tagValue, tagName) receives the value from replacements and tag name
-          // - Should return a Buffer, ArrayBuffer, or Promise that resolves to one
-          // - getSize(img, tagValue, tagName) receives the image buffer and should return [width, height]
-          imageModule = new ImageModule({
-            centered: false,
-            fileType: "docx",
-            getImage: (tagValue: any, tagName: string) => {
-              console.log("[replaceTagsInDocx] getImage called - tagName:", tagName, "tagValue type:", typeof tagValue, "isBuffer:", Buffer.isBuffer(tagValue))
-              
-              // If tagName is LOGO_ENTIDAD, return the logo buffer
-              if (tagName === "LOGO_ENTIDAD") {
-                console.log("[replaceTagsInDocx] Returning logo buffer for LOGO_ENTIDAD, size:", logoBuffer.length)
-                return logoBuffer
-              }
-              
-              // If tagValue is already a Buffer (we passed it directly), return it
-              if (Buffer.isBuffer(tagValue)) {
-                console.log("[replaceTagsInDocx] tagValue is a Buffer, returning it directly, size:", tagValue.length)
-                return tagValue
-              }
-              
-              // If tagValue is an object with _src property, return the buffer
-              if (tagValue && typeof tagValue === "object" && tagValue._src && Buffer.isBuffer(tagValue._src)) {
-                console.log("[replaceTagsInDocx] Returning buffer from object._src, size:", tagValue._src.length)
-                return tagValue._src
-              }
-              
-              console.log("[replaceTagsInDocx] Returning null for tagName:", tagName, "tagValue:", tagValue)
-              return null
-            },
-            getSize: (img: Buffer, tagValue: any, tagName: string) => {
-              console.log("[replaceTagsInDocx] getSize called - tagName:", tagName, "img size:", img?.length)
-              // Return default dimensions (in pixels)
-              // Width and height in pixels (Word uses EMU units internally)
-              // Adjust these values as needed for your logo size
-              if (tagValue && typeof tagValue === "object" && tagValue._width && tagValue._height) {
-                return [tagValue._width, tagValue._height]
-              }
-              // Default size for logo
-              return [200, 100] // [width, height] in pixels
-            },
-          })
-          
-          // Set the replacement value - can be anything, getImage will handle it based on tagName
-          // We'll use a simple string marker so getImage can identify it by tagName
+          imageBufferMap.LOGO_ENTIDAD = { buffer: logoBuffer, width: 200, height: 100 }
           finalReplacements.LOGO_ENTIDAD = "LOGO_ENTIDAD"
-          console.log("[replaceTagsInDocx] LOGO_ENTIDAD set in replacements as marker string")
         } else {
           console.warn("[replaceTagsInDocx] Could not download entity logo, status:", logoResponse.status)
-          // Still set it to empty string so the tag gets replaced
           finalReplacements.LOGO_ENTIDAD = ""
         }
       } catch (logoError) {
         console.warn("[replaceTagsInDocx] Error processing entity logo:", logoError)
-        // Still set it to empty string so the tag gets replaced
         finalReplacements.LOGO_ENTIDAD = ""
       }
     } else if (hasLogoTag && !entityLogoUrl) {
-      // If LOGO_ENTIDAD tag exists but no logo URL, replace with empty string
       console.warn("[replaceTagsInDocx] LOGO_ENTIDAD tag found but no logo URL provided")
       finalReplacements.LOGO_ENTIDAD = ""
-    } else if (!hasLogoTag && !entityLogoUrl) {
-      // Tag doesn't exist in document and no logo URL, no need to process
-      console.log("[replaceTagsInDocx] LOGO_ENTIDAD tag not found in document and no logo URL")
+    }
+
+    // Imágenes genéricas {{IMAGE}} / {{IMAGE_*}} subidas por el usuario en el formulario.
+    if (images) {
+      for (const [tagName, img] of Object.entries(images)) {
+        if (!img || !Buffer.isBuffer(img.buffer) || img.buffer.length === 0) continue
+        imageBufferMap[tagName] = {
+          buffer: img.buffer,
+          width: typeof img.width === "number" && img.width > 0 ? img.width : DEFAULT_IMAGE_WIDTH,
+          height: typeof img.height === "number" && img.height > 0 ? img.height : DEFAULT_IMAGE_HEIGHT,
+        }
+        // Marcador: getImage usa el tagName para localizar el buffer en el mapa.
+        finalReplacements[tagName] = tagName
+      }
+    }
+
+    // docxtemplater-image-module-free reconoce las etiquetas de imagen por el prefijo `%`
+    // ({{%TAG}}). Reescribimos `{{TAG}}` -> `{{%TAG}}` SOLO para los tags que tienen
+    // imagen disponible en imageBufferMap (LOGO_ENTIDAD + IMAGE/IMAGE_*), para no romper
+    // la plantilla cuando un tag IMAGE aparece sin imagen subida.
+    const imageTagNames = Object.keys(imageBufferMap)
+    if (imageTagNames.length > 0) {
+      const escapedTags = imageTagNames.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")
+      const prefixPattern = new RegExp(`\\{\\{(?!%)(${escapedTags})\\}\\}`, "g")
+      Object.keys(zip.files).forEach((fileName) => {
+        if (!fileName.startsWith("word/") || !fileName.endsWith(".xml")) return
+        const raw = zip.files[fileName]?.asText?.()
+        if (!raw) return
+        // Si ninguno de los nombres está siquiera presente como substring, saltamos.
+        if (!imageTagNames.some((t) => raw.includes(t))) return
+        // Word puede partir el tag entre varios runs; colapsamos antes de buscar.
+        const collapsed = collapseWordRunsForTableTags(raw)
+        const withPrefix = collapsed.replace(prefixPattern, "{{%$1}}")
+        if (withPrefix !== raw) {
+          zip.file(fileName, withPrefix)
+        }
+      })
+    }
+
+    let imageModule: any = null
+    if (imageTagNames.length > 0) {
+      imageModule = new ImageModule({
+        centered: false,
+        fileType: "docx",
+        getImage: (_tagValue: any, tagName: string) => {
+          const entry = imageBufferMap[tagName]
+          if (entry) return entry.buffer
+          if (Buffer.isBuffer(_tagValue)) return _tagValue
+          return null
+        },
+        getSize: (_img: Buffer, _tagValue: any, tagName: string) => {
+          const entry = imageBufferMap[tagName]
+          if (entry) return [entry.width, entry.height]
+          return [DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT]
+        },
+      })
     }
     
     // Create and render the document

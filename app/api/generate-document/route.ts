@@ -49,6 +49,7 @@ export async function POST(request: NextRequest) {
       secretaryName, // Secretary name for auto-replacement
       createdBy, // User ID who created the document
       templateId, // UUID de plantilla (recomendado; valida alcance por entidad)
+      images, // Record<tag, { dataUrl: string; width?: number; height?: number }>
     } = body
 
     if (!templatePath || !replacements || !processCode || !documentName) {
@@ -167,7 +168,37 @@ export async function POST(request: NextRequest) {
     }
 
     // Replace tags in the document (including logo if present)
-    const generatedBuffer = await replaceTagsInDocx(templateBuffer, allReplacements, entityLogoUrl)
+    // Decodifica imágenes subidas en el formulario (dataURL base64 -> Buffer).
+    // Solo se aceptan tags válidos (IMAGE o IMAGE_*) para evitar inyección de claves arbitrarias.
+    const { isImageTag } = await import("@/lib/utils/template-helpers")
+    const decodedImages: Record<string, { buffer: Buffer; width?: number; height?: number }> = {}
+    if (images && typeof images === "object") {
+      for (const [tag, raw] of Object.entries(images as Record<string, any>)) {
+        if (!isImageTag(tag)) continue
+        const dataUrl = raw?.dataUrl
+        if (typeof dataUrl !== "string") continue
+        const match = dataUrl.match(/^data:([\w./+-]+);base64,(.+)$/)
+        if (!match) continue
+        try {
+          const buffer = Buffer.from(match[2], "base64")
+          if (buffer.length === 0) continue
+          decodedImages[tag] = {
+            buffer,
+            width: typeof raw.width === "number" ? raw.width : undefined,
+            height: typeof raw.height === "number" ? raw.height : undefined,
+          }
+        } catch (e) {
+          console.warn(`[generate-document] Could not decode image for tag ${tag}:`, e)
+        }
+      }
+    }
+
+    const generatedBuffer = await replaceTagsInDocx(
+      templateBuffer,
+      allReplacements,
+      entityLogoUrl,
+      decodedImages,
+    )
 
     if (!processCode) {
       return NextResponse.json(

@@ -104,6 +104,11 @@ export const superadminDocs: DocContent = {
           content:
             "Para desgloses o filas de detalle use {{TABLE_FAMILIA_DETAIL_CAMPO1_CAMPO2}} o el formato legacy {{TABLE:FAMILIA@detail:campo1:campo2}}. Mantenga la misma FAMILIA para relacionar base y detail.",
         },
+        {
+          title: "Insertar imágenes",
+          content:
+            "Para insertar imágenes en la plantilla use {{IMAGE}} (una sola imagen) o {{IMAGE_NOMBRE}} (varias con nombres distintos, ej. {{IMAGE_FIRMA}}, {{IMAGE_FOTO}}). En el formulario de generación aparecerá un selector de archivo para cada etiqueta; la imagen se inserta con un tamaño mediano predefinido y luego puede ajustarse desde Word.",
+        },
       ],
     },
   ],

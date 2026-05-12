@@ -4,6 +4,23 @@
 
 export const DYNAMIC_TABLE_PREFIX = "__TABLE__"
 
+/**
+ * Etiquetas de imagen reconocidas en el documento. En el campo del formulario
+ * se renderiza un selector de archivo (en lugar de un textarea).
+ *
+ * Soporta:
+ *   - {{IMAGE}}              (una imagen)
+ *   - {{IMAGE_NOMBRE}}       (varias imágenes con nombres distintos)
+ *
+ * Nota: NO se aplica a {{LOGO_ENTIDAD}}, que se sigue tratando aparte (logo
+ * de la entidad inyectado automáticamente desde la BD).
+ */
+export function isImageTag(tag: string): boolean {
+  if (!tag || typeof tag !== "string") return false
+  if (tag === "IMAGE") return true
+  return /^IMAGE_[A-Z0-9_]+$/.test(tag)
+}
+
 export interface DynamicTableTagDef {
   loopName: string
   fields: string[]

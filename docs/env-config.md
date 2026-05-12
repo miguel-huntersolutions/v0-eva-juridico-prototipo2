@@ -37,8 +37,10 @@ La URL efectiva se obtiene con `getAppUrl()` en `lib/app-config.ts`.
 | `OPENAI_WORKFLOW_MODEL` | Opcional | Modelo del agente/workflow (guardrails, RAG). Si no se define, se usa `OPENAI_MODEL`. Default en código: `gpt-4o-mini`. |
 | `OPENAI_ASSISTANT_WORKFLOW_ID` | Sí (asistente) | ID del workflow del asistente (formato `wf_...`). Si no está definido, el RAG vía asistente se desactiva. |
 | `OPENAI_VECTOR_STORE_ID` | Sí (RAG) | ID del vector store de OpenAI para RAG e ingestión de documentos (formato `vs_...`). |
+| `ASESOR_JURIDICO_TEMPERATURE` | Opcional | Temperatura del asesor jurídico (`/api/chat` y fallback de `/api/assistant`). Rango 0..2. Default: `0`. |
+| `ASESOR_JURIDICO_SYSTEM_PROMPT` | Opcional | Sobrescribe el system prompt del asesor jurídico (texto completo). Si está vacío o no se define, se usa el texto por defecto del archivo `lib/ai-chat/asesor-juridico-system-prompt.ts`. |
 
-Los modelos se leen desde `lib/ai-model-config.ts` (`getOpenAIModel`, `getOpenAIWorkflowModel`, `getOpenAIChatModelString`).
+Los modelos y parámetros del asesor jurídico se leen desde `lib/ai-model-config.ts` (`getOpenAIModel`, `getOpenAIWorkflowModel`, `getOpenAIChatModelString`, `getAsesorJuridicoTemperature`, `getAsesorJuridicoSystemPrompt`).
 
 ---
 

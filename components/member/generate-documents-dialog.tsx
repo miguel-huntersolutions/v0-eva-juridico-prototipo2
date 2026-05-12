@@ -35,7 +35,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils"
 import { getTemplates, createProcess, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
-import { parseDynamicTableTagToken } from "@/lib/utils/template-helpers"
+import { parseDynamicTableTagToken, isImageTag } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 
 /** Converts template fileUrl (fileId:xxx|path:yyy or full Drive URL) to a viewable Google Drive link. */
@@ -130,6 +130,10 @@ export function GenerateDocumentsDialog({
   const [currentStep, setCurrentStep] = React.useState(0) // Step index (0-based)
   const [formData, setFormData] = React.useState<Record<string, string>>({})
   const [tableData, setTableData] = React.useState<Record<string, Array<Record<string, string>>>>({})
+  /** Mapa por tag (IMAGE / IMAGE_*) -> imagen seleccionada por el usuario en el formulario. */
+  const [imageData, setImageData] = React.useState<
+    Record<string, { dataUrl: string; mime: string; fileName: string }>
+  >({})
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [isSaving, setIsSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -236,6 +240,7 @@ export function GenerateDocumentsDialog({
   const handleClose = () => {
     setFormData({})
     setTableData({})
+    setImageData({})
     setCurrentStep(0)
     setGeneratedDocuments([])
     setError(null)
@@ -565,7 +570,14 @@ export function GenerateDocumentsDialog({
       const replacements: Record<string, any> = {}
       Object.entries(formData).forEach(([tag, value]) => {
         const cleanTag = tag.replace(/[{}]/g, "")
+        // Las imágenes se envían aparte (campo `images`); no van como texto.
+        if (isImageTag(cleanTag)) return
         replacements[cleanTag] = value || ""
+      })
+      // Imágenes subidas por el usuario para los tags IMAGE / IMAGE_*
+      const imagesPayload: Record<string, { dataUrl: string }> = {}
+      Object.entries(imageData).forEach(([tag, img]) => {
+        if (img?.dataUrl) imagesPayload[tag] = { dataUrl: img.dataUrl }
       })
       const allDynamicTableDefs: DynamicTableDef[] = allTags
         .map((tag) => {
@@ -621,6 +633,7 @@ export function GenerateDocumentsDialog({
           templatePath: template.fileUrl, // This should be the Drive path
           templateId: template.id,
           replacements,
+          images: imagesPayload,
           processCode: processCode,
           processId: processIdToUse,
           documentName,
@@ -792,6 +805,9 @@ export function GenerateDocumentsDialog({
         if (requiredFields.length === 0) return true
         return rows.every((row) => requiredFields.every((field) => (row?.[field] || "").trim().length > 0))
       }
+      if (isImageTag(tag)) {
+        return !!imageData[tag]?.dataUrl
+      }
       const value = formData[tag] || ""
       return value.trim().length > 0
     })
@@ -847,9 +863,47 @@ export function GenerateDocumentsDialog({
     return Array.from(grouped.values())
   }, [currentTemplateTableDefs])
   const currentTemplateScalarTags = React.useMemo(
-    () => currentTemplateTags.filter((tag) => !parseDynamicTableTagToken(tag)),
+    () => currentTemplateTags.filter((tag) => !parseDynamicTableTagToken(tag) && !isImageTag(tag)),
     [currentTemplateTags]
   )
+  const currentTemplateImageTags = React.useMemo(
+    () => currentTemplateTags.filter((tag) => isImageTag(tag)),
+    [currentTemplateTags]
+  )
+
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024 // 4 MB
+  const ACCEPTED_IMAGE_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]
+
+  const handleImageChange = (tag: string, file: File | null) => {
+    if (!file) {
+      setImageData((prev) => {
+        const next = { ...prev }
+        delete next[tag]
+        return next
+      })
+      return
+    }
+    if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {
+      setError("Formato no soportado. Usa PNG, JPG, WEBP o GIF.")
+      return
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError("La imagen excede 4 MB.")
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : ""
+      if (!result.startsWith("data:")) return
+      setImageData((prev) => ({
+        ...prev,
+        [tag]: { dataUrl: result, mime: file.type, fileName: file.name },
+      }))
+      setError(null)
+    }
+    reader.onerror = () => setError("No se pudo leer la imagen seleccionada.")
+    reader.readAsDataURL(file)
+  }
 
   const effectiveOpen = embedded ? true : open
 
@@ -993,6 +1047,63 @@ export function GenerateDocumentsDialog({
                       </div>
                     ) : (
                       <>
+                      {currentTemplateImageTags.map((tag) => {
+                        const current = imageData[tag]
+                        const inputId = `field-${tag}`
+                        return (
+                          <div key={tag} className="space-y-2">
+                            <Label htmlFor={inputId}>
+                              {tag.replace(/_/g, " ")} *
+                            </Label>
+                            <div className="flex items-start gap-3">
+                              <label
+                                htmlFor={inputId}
+                                className="flex h-28 w-40 cursor-pointer items-center justify-center rounded-md border border-dashed bg-muted/30 text-xs text-muted-foreground hover:bg-muted/50"
+                              >
+                                {current?.dataUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={current.dataUrl}
+                                    alt={tag}
+                                    className="max-h-full max-w-full rounded object-contain"
+                                  />
+                                ) : (
+                                  <span className="flex flex-col items-center gap-1 px-2 text-center">
+                                    <Upload className="h-5 w-5" />
+                                    Seleccionar imagen
+                                  </span>
+                                )}
+                              </label>
+                              <div className="flex-1 space-y-2">
+                                <Input
+                                  id={inputId}
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/webp,image/gif"
+                                  onChange={(e) => handleImageChange(tag, e.target.files?.[0] || null)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  PNG, JPG, WEBP o GIF. Máx 4 MB. Se insertará en tamaño mediano; puedes ajustarla en Word.
+                                </p>
+                                {current && (
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <span className="truncate">{current.fileName}</span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 gap-1 text-xs"
+                                      onClick={() => handleImageChange(tag, null)}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      Quitar
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
                       {currentTemplateScalarTags.map((tag) => (
                         <div key={tag} className="space-y-2">
                           <div className="flex items-center justify-between">
