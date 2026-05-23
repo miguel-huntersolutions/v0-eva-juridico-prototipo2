@@ -5,7 +5,11 @@
 
 import { convertToModelMessages, streamText, type UIMessage } from "ai"
 import { openai } from "@ai-sdk/openai"
-import { getOpenAIChatModelString, getOpenAIModel } from "@/lib/ai-model-config"
+import {
+  getOpenAIChatModelString,
+  getOpenAIModel,
+  openAIModelSupportsSamplingParams,
+} from "@/lib/ai-model-config"
 import type { AIChatConfig } from "./types"
 
 export interface CreateChatRouteOptions {
@@ -57,11 +61,17 @@ export function createChatRoute(options: CreateChatRouteOptions) {
         openaiModel = openai(getOpenAIModel() as "gpt-4o")
       }
 
+      const modelId = model?.startsWith("openai/")
+        ? model.replace("openai/", "")
+        : getOpenAIModel()
+
       const result = streamText({
         model: openaiModel,
         system: systemPrompt,
         messages: convertToModelMessages(messages),
-        ...(temperature !== undefined ? { temperature } : {}),
+        ...(temperature !== undefined && openAIModelSupportsSamplingParams(modelId)
+          ? { temperature }
+          : {}),
       })
 
       return result.toUIMessageStreamResponse()

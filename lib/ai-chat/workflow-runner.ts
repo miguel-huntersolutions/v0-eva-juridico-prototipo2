@@ -16,6 +16,8 @@ import {
   getOpenAIWorkflowModel,
   getAsesorJuridicoSystemPrompt,
   getAsesorJuridicoTemperature,
+  openAIModelSupportsSamplingParams,
+  temperatureOptionForModel,
 } from "@/lib/ai-model-config"
 import {
   ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT,
@@ -184,6 +186,17 @@ function extractOutputText(output: any): string {
 
 const fileSearch = fileSearchTool([VECTOR_STORE_ID])
 
+/** modelSettings para Agents SDK; omite temperature/topP en modelos o-series (no los admiten). */
+function agentModelSettings(
+  temperature: number,
+  maxTokens: number,
+): { temperature?: number; topP?: number; maxTokens: number; store: true } {
+  const model = getOpenAIWorkflowModel()
+  const base = { maxTokens, store: true as const }
+  if (!openAIModelSupportsSamplingParams(model)) return base
+  return { ...base, temperature, topP: 1 }
+}
+
 // Agent definitions
 const ClassificationAgentSchema = z.object({
   classification: z.enum(["contract_consultation", "process_guidance", "legal_research", "general_information"]),
@@ -199,12 +212,7 @@ const classificationAgent = new Agent({
 4. Any other general questions about public contracting should go to "general_information".`,
   model: getOpenAIWorkflowModel(),
   outputType: ClassificationAgentSchema,
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const processGuidanceAgent = new Agent({
@@ -223,12 +231,7 @@ const processGuidanceAgent = new Agent({
   Provide clear, actionable guidance with specific deadlines and requirements.   Prefer information retrieved from the documents over general knowledge.`,
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const contractConsultationAgent = new Agent({
@@ -245,12 +248,7 @@ const contractConsultationAgent = new Agent({
   Always reference the specific legal framework (Ley 80, Decreto 1082) when available in the documents and provide precise citations. Prefer information retrieved from the documents.`,
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const legalResearchAgent = new Agent({
@@ -265,12 +263,7 @@ const legalResearchAgent = new Agent({
   Use file search to find relevant documents and always cite your sources accurately.`,
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const generalInformationAgent = new Agent({
@@ -287,12 +280,7 @@ const generalInformationAgent = new Agent({
   Always respond in Spanish (Colombian) and cite relevant sources.`,
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 /** Paso 1 de /api/assistant: solo RAG; si no basta, el servidor usa generateText con el asesor jurídico. */
@@ -325,12 +313,7 @@ const ragDocumentProbeAgent = new Agent({
   model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
   outputType: RagFirstResultSchema,
-  modelSettings: {
-    temperature: 0,
-    topP: 1,
-    maxTokens: 8192,
-    store: true,
-  },
+  modelSettings: agentModelSettings(0, 8192),
 })
 
 type WorkflowInput = { input_as_text: string }
@@ -535,7 +518,8 @@ export async function runRagFirstThenGeneralChat(
       }
     }
 
-    const openaiModel = openai(getOpenAIModel() as "gpt-4o")
+    const chatModelId = getOpenAIModel()
+    const openaiModel = openai(chatModelId as "gpt-4o")
     const historyMessages = [
       ...conversationHistory.map((m) => ({
         role: m.role as "user" | "assistant",
@@ -548,7 +532,10 @@ export async function runRagFirstThenGeneralChat(
       model: openaiModel,
       system: getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT),
       messages: historyMessages,
-      temperature: getAsesorJuridicoTemperature(ASESOR_JURIDICO_TEMPERATURE_DEFAULT),
+      ...temperatureOptionForModel(
+        chatModelId,
+        getAsesorJuridicoTemperature(ASESOR_JURIDICO_TEMPERATURE_DEFAULT),
+      ),
       maxTokens: 4096,
     })
 

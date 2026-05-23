@@ -35,6 +35,26 @@ export function getOpenAIChatModelString(): string {
 }
 
 /**
+ * Modelos de razonamiento (o1, o3, o4-mini, etc.) y otros que rechazan `temperature` / `top_p`.
+ * Normaliza ids con o sin prefijo `openai/`.
+ */
+export function openAIModelSupportsSamplingParams(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase().replace(/^openai\//, "")
+  if (!id) return true
+  if (/^o\d/.test(id)) return false
+  return true
+}
+
+/** Devuelve `{ temperature }` solo si el modelo lo admite; si no, `{}`. */
+export function temperatureOptionForModel(
+  modelId: string,
+  temperature: number,
+): { temperature?: number } {
+  if (!openAIModelSupportsSamplingParams(modelId)) return {}
+  return { temperature }
+}
+
+/**
  * Temperatura del asesor jurídico. Lee `ASESOR_JURIDICO_TEMPERATURE` (0..2) y cae al default.
  * Si el valor no es numérico o queda fuera de rango, ignora la variable y usa el default.
  */
