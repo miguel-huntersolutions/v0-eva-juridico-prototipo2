@@ -5,7 +5,7 @@
 
 import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
-import { getOpenAIModel, getOpenAIChatModelString } from "@/lib/ai-model-config"
+import { getOpenAIModel, getOpenAIChatModelString, temperatureOptionForModel } from "@/lib/ai-model-config"
 
 export interface AskSimpleOptions {
   /** User question / instruction – ONLY this is used as input (e.g. "convierte 5000 a letras") */
@@ -40,15 +40,16 @@ export async function askSimple(options: AskSimpleOptions): Promise<string> {
   }
   userPrompt += `\n\nResponde con el texto que debe ir en el campo (si pides análisis o código, da el resultado y opcionalmente una breve justificación). No repitas el texto largo de entrada como respuesta.`
 
+  const modelId = model?.startsWith("openai/") ? model.replace("openai/", "") : getOpenAIModel()
   const openaiModel = model?.startsWith("openai/")
-    ? openai(model.replace("openai/", "") as "gpt-4o")
-    : openai(getOpenAIModel() as "gpt-4o")
+    ? openai(modelId as "gpt-4o")
+    : openai(modelId as "gpt-4o")
 
   const result = await generateText({
     model: openaiModel,
     system: SYSTEM_PROMPT,
     prompt: userPrompt,
-    temperature: 0.3,
+    ...temperatureOptionForModel(modelId, 0.3),
     maxTokens: 1000,
   })
 

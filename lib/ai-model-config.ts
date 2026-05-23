@@ -35,13 +35,17 @@ export function getOpenAIChatModelString(): string {
 }
 
 /**
- * Modelos de razonamiento (o1, o3, o4-mini, etc.) y otros que rechazan `temperature` / `top_p`.
+ * Modelos que rechazan `temperature` / `top_p` en la API de OpenAI.
+ * - Serie o* (o1, o3, o4-mini): razonamiento.
+ * - Serie gpt-5* excepto variantes *chat* (gpt-5, gpt-5.5, gpt-5-mini, gpt-5-nano, etc.).
  * Normaliza ids con o sin prefijo `openai/`.
  */
 export function openAIModelSupportsSamplingParams(modelId: string): boolean {
   const id = modelId.trim().toLowerCase().replace(/^openai\//, "")
   if (!id) return true
   if (/^o\d/.test(id)) return false
+  if (id.startsWith("gpt-5-chat")) return true
+  if (id.startsWith("gpt-5")) return false
   return true
 }
 

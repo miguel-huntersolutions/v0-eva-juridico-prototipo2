@@ -7,7 +7,7 @@
  * so user-set values are applied to state and never overwritten by RAG.
  */
 
-import { getOpenAIModel } from "@/lib/ai-model-config"
+import { getOpenAIModel, temperatureOptionForModel } from "@/lib/ai-model-config"
 
 export type InterpretedIntent =
   | { intent: "rag_proactive" }
@@ -48,14 +48,15 @@ export async function interpretIntentWithAI(message: string): Promise<Interprete
   try {
     const OpenAI = (await import("openai")).default
     const client = new OpenAI({ apiKey })
+    const modelId = getOpenAIModel()
     const completion = await client.chat.completions.create({
-      model: getOpenAIModel(),
+      model: modelId,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: message.trim() || "hola" },
       ],
       max_tokens: 150,
-      temperature: 0,
+      ...temperatureOptionForModel(modelId, 0),
     })
     const text = completion.choices?.[0]?.message?.content?.trim()
     if (!text) return null
@@ -97,14 +98,15 @@ export async function parseVariableAssignmentsWithAI(
     const OpenAI = (await import("openai")).default
     const client = new OpenAI({ apiKey })
     const system = ASSIGNMENTS_SYSTEM.replace("TAGS_PLACEHOLDER", availableTags.join(", "))
+    const modelId = getOpenAIModel()
     const completion = await client.chat.completions.create({
-      model: getOpenAIModel(),
+      model: modelId,
       messages: [
         { role: "system", content: system },
         { role: "user", content: trimmed },
       ],
       max_tokens: 300,
-      temperature: 0,
+      ...temperatureOptionForModel(modelId, 0),
     })
     const text = completion.choices?.[0]?.message?.content?.trim()
     if (!text) return null
@@ -211,14 +213,15 @@ export async function interpretProcessWithAI(
       .replace("CHAT_CONTEXT_PLACEHOLDER", chatContextStr)
       .replace("TAGS_PLACEHOLDER", availableTags.join(", "))
       .replace("STATE_PLACEHOLDER", stateStr)
+    const modelId = getOpenAIModel()
     const completion = await client.chat.completions.create({
-      model: getOpenAIModel(),
+      model: modelId,
       messages: [
         { role: "system", content: system },
         { role: "user", content: trimmed },
       ],
       max_tokens: 400,
-      temperature: 0,
+      ...temperatureOptionForModel(modelId, 0),
     })
     const text = completion.choices?.[0]?.message?.content?.trim()
     if (!text) return null
@@ -266,8 +269,9 @@ export async function improveTextWithAI(text: string): Promise<string | null> {
   try {
     const OpenAI = (await import("openai")).default
     const client = new OpenAI({ apiKey })
+    const modelId = getOpenAIModel()
     const completion = await client.chat.completions.create({
-      model: getOpenAIModel(),
+      model: modelId,
       messages: [
         {
           role: "system",
@@ -277,7 +281,7 @@ export async function improveTextWithAI(text: string): Promise<string | null> {
         { role: "user", content: text },
       ],
       max_tokens: 200,
-      temperature: 0.3,
+      ...temperatureOptionForModel(modelId, 0.3),
     })
     const out = completion.choices?.[0]?.message?.content?.trim()
     return out || null
