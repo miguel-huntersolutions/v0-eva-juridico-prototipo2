@@ -26,9 +26,10 @@ EVA Jurídico es una plataforma SaaS (Software as a Service) diseñada para opti
 EVA Jurídico centraliza y automatiza la gestión de procesos contractuales para entidades públicas, permitiendo a los asesores jurídicos:
 
 - Crear y gestionar procesos de contratación de manera estructurada
-- Generar documentos legales asistidos por Inteligencia Artificial
-- Consultar jurisprudencia y normativa a través de un asistente virtual
+- Generar documentos legales (.docx) asistidos por Inteligencia Artificial
+- Consultar jurisprudencia y normativa a través de un asistente virtual especializado
 - Mantener el control de versiones de los documentos generados
+- Integrar el flujo de trabajo con Google Drive y Google Sheets
 
 ### Modelo de Negocio
 
@@ -44,36 +45,42 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 ### Diagrama de Contenedores
 
-\`\`\`
-┌─────────────────────────────────────────────────────────────────┐
-│                    PLATAFORMA EVA JURÍDICO                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────────┐    ┌──────────────────┐                   │
-│  │  Aplicación Web  │───▶│   API Backend    │                   │
-│  │  (Next.js/React) │    │   (Next.js API)  │                   │
-│  └──────────────────┘    └────────┬─────────┘                   │
-│                                   │                              │
-│                    ┌──────────────┼──────────────┐              │
-│                    ▼              ▼              ▼              │
-│           ┌─────────────┐ ┌─────────────┐ ┌─────────────┐       │
-│           │ Base Datos  │ │  Servicio   │ │  Servicio   │       │
-│           │ (PostgreSQL)│ │     IA      │ │   Correo    │       │
-│           └─────────────┘ └─────────────┘ └─────────────┘       │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          PLATAFORMA EVA JURÍDICO                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  ┌──────────────────┐    ┌──────────────────┐                            │
+│  │  Aplicación Web  │───▶│   API Backend    │                            │
+│  │  (Next.js/React) │    │   (Next.js API)  │                            │
+│  └──────────────────┘    └────────┬─────────┘                            │
+│                                    │                                      │
+│            ┌───────────────┬───────┼───────────────┬─────────────┐       │
+│            ▼               ▼       ▼               ▼             ▼       │
+│     ┌────────────┐  ┌────────────┐ ┌───────────┐ ┌──────────┐ ┌────────┐ │
+│     │  Supabase  │  │  Supabase  │ │  OpenAI   │ │  Google  │ │  SMTP  │ │
+│     │  (Auth)    │  │ (Postgres/ │ │  Agents + │ │  Drive / │ │ (correo│ │
+│     │            │  │  Storage)  │ │ Guardrails│ │  Sheets  │ │ invita-│ │
+│     │            │  │            │ │           │ │          │ │ ciones)│ │
+│     └────────────┘  └────────────┘ └───────────┘ └──────────┘ └────────┘ │
+│                                                                            │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Stack Tecnológico
 
 | Capa | Tecnología |
 |------|------------|
-| Frontend | Next.js 15, React 19, TypeScript |
-| Estilos | Tailwind CSS v4, shadcn/ui |
-| Estado | React Context, SWR |
-| IA | Vercel AI SDK, OpenAI GPT-4 |
-| Autenticación | Sistema de roles (RBAC) |
-| Base de Datos | PostgreSQL (preparado) |
+| Frontend | Next.js 16 (Turbopack), React 19, TypeScript |
+| Estilos | Tailwind CSS v4, shadcn/ui (Radix UI) |
+| Estado | React Context, hooks personalizados |
+| Autenticación | Supabase Auth (`@supabase/ssr`) |
+| Base de Datos | Supabase (PostgreSQL) con Row Level Security |
+| Almacenamiento | Supabase Storage (logos, plantillas, documentos) |
+| IA Conversacional | OpenAI Agents SDK (`@openai/agents`) + `@openai/guardrails`, Vercel AI SDK |
+| Generación de Documentos | `docxtemplater`, `pizzip`, `mammoth` |
+| Integraciones Externas | Google Drive y Google Sheets (OAuth2, `googleapis`) |
+| Despliegue | Vercel |
 
 ---
 
@@ -87,6 +94,7 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 - Gestionar organizaciones (tenants) a nivel global
 - Configurar tipos de procesos estándar
 - Administrar plantillas maestras de documentos
+- Aprobar o rechazar usuarios pendientes de activación
 - Supervisar y suplantar organizaciones para soporte
 
 **Acceso**: `/superadmin/*`
@@ -100,6 +108,7 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 - Invitar y gestionar miembros del equipo
 - Asignar miembros a entidades específicas
 - Configurar información de contacto de secretarías
+- Revisar procesos y documentos de toda la organización
 
 **Acceso**: `/admin/*`
 
@@ -125,31 +134,10 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 |---------------|------|-------------|
 | Dashboard | `/superadmin` | Panel con estadísticas globales y accesos rápidos |
 | Gestión de Organizaciones | `/superadmin/organizations` | CRUD completo de organizaciones/tenants |
+| Usuarios Pendientes | `/superadmin/pending-users` | Aprobación/rechazo de cuentas nuevas |
 | Tipos de Proceso | `/superadmin/process-types` | Configuración de tipos de contratación |
 | Plantillas Maestras | `/superadmin/templates` | Gestión de plantillas de documentos |
 | Suplantar Organización | - | Acceder al contexto de cualquier organización |
-
-#### Detalle de Funcionalidades
-
-**Gestión de Organizaciones**
-- Crear nueva organización con nombre, NIT y plan
-- Invitar administrador por correo electrónico
-- Ver estadísticas de uso (entidades, miembros, procesos)
-- Activar/desactivar organizaciones
-- Suplantar para supervisión y soporte
-
-**Gestión de Tipos de Proceso**
-- Crear tipos (Contratación Directa, Licitación Pública, etc.)
-- Definir campos dinámicos por tipo
-- Asociar múltiples plantillas a cada tipo
-- Configurar requisitos y base legal
-
-**Gestión de Plantillas**
-- Subir archivos .docx como plantillas base
-- Definir variables de reemplazo
-- Asociar a tipos de proceso específicos
-- Descargar plantillas de ejemplo
-- Control de versiones
 
 ---
 
@@ -160,26 +148,8 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 | Dashboard | `/admin` | Panel con métricas de la organización |
 | Gestión de Entidades | `/admin/entities` | CRUD de clientes (entidades públicas) |
 | Gestión de Miembros | `/admin/members` | Administración del equipo jurídico |
-
-#### Detalle de Funcionalidades
-
-**Gestión de Entidades**
-- Crear entidad con información básica (nombre, NIT, representante legal)
-- Cargar documentos de contexto (PAA, Plan de Desarrollo, logos)
-- Configurar secretarías con datos de contacto completos:
-  - Nombre de la secretaría
-  - Nombre del secretario
-  - Correo electrónico
-  - Teléfono
-- Asignar miembros a entidades
-- Activar/desactivar entidades
-
-**Gestión de Miembros**
-- Invitar miembros por correo electrónico
-- Asignar permisos y entidades
-- Ver estadísticas de actividad
-- Gestionar estado (activo/inactivo/pendiente)
-- Reasignar entidades
+| Procesos | `/admin/processes` | Vista de procesos de toda la organización |
+| Documentos | `/admin/documents` | Vista de documentos generados |
 
 ---
 
@@ -191,169 +161,83 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 | Dashboard | `/member/dashboard` | Métricas de la entidad seleccionada |
 | Procesos | `/member/processes` | Gestión de procesos contractuales |
 | Documentos | `/member/documents` | Biblioteca de documentos generados |
-| Asistente IA | `/member/assistant` | Chatbot jurídico especializado |
-
-#### Detalle de Funcionalidades
-
-**Gestión de Procesos**
-- Crear nuevo proceso seleccionando:
-  - Entidad
-  - Secretaría supervisora
-  - Tipo de proceso
-- Formulario dinámico según tipo de proceso
-- Asistencia de IA para mejorar redacción de campos
-- Ver requisitos y base legal del tipo seleccionado
-- Filtrar por estado (activo, borrador, completado)
-- Búsqueda avanzada
-
-**Generación de Documentos**
-- Generar documentos a partir de plantillas
-- Sistema de versionamiento (V1, V2, V3...)
-- Exportar a formato Word (.docx)
-- Incluir logos y membretes de la entidad
-- Historial completo de versiones
+| Asistente IA | `/member/assistant` | Chatbot jurídico especializado (EVA) |
 
 **Asistente Jurídico (EVA)**
-- Chat en tiempo real con IA especializada
-- Consultas sobre:
-  - Ley 80 de 1993
-  - Decreto 1082 de 2015
-  - Jurisprudencia del Consejo de Estado
-  - Colombia Compra Eficiente
-- Respuestas con referencias normativas
-- Formato Markdown para mejor legibilidad
+- Chat en tiempo real con un workflow de agentes especializados (clasificación de intención, consultoría de contratos, orientación de procesos, investigación legal, información general)
+- Guardrails de seguridad (jailbreak, PII, moderación) antes de procesar cada mensaje
+- Búsqueda en vector store de documentos normativos (`fileSearchTool`)
+- Respuestas con formato Markdown y referencias normativas
 
 ---
 
 ## Flujos de Proceso
 
-### Flujo 1: Creación de Proceso con Asistencia de IA
+### Flujo 1: Autenticación y Onboarding
 
-\`\`\`
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  AUTENTICACIÓN (SUPABASE AUTH)                   │
+├─────────────────────────────────────────────────────────────────┤
+│  1. Registro en /auth/sign-up                                   │
+│  2. Confirmación de correo (/auth/sign-up-success)               │
+│  3. Callback de verificación (/auth/callback)                   │
+│  4. Cuenta queda en estado "pendiente"                          │
+│  5. Superadmin aprueba en /superadmin/pending-users              │
+│  6. Usuario inicia sesión en /auth/login                         │
+│  7. Middleware redirige según rol (superadmin/admin/member)      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Flujo 2: Creación de Proceso con Asistencia de IA
+
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CREACIÓN DE PROCESO                           │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. SELECCIÓN INICIAL                                           │
-│     └─▶ Elegir Entidad                                          │
-│     └─▶ Elegir Secretaría                                       │
-│     └─▶ Elegir Tipo de Proceso                                  │
-│                                                                  │
-│  2. VISUALIZACIÓN DE REQUISITOS                                 │
-│     └─▶ Ver descripción del tipo de proceso                     │
-│     └─▶ Ver base legal aplicable                                │
-│     └─▶ Ver duración estimada                                   │
-│     └─▶ Ver lista de requisitos                                 │
-│                                                                  │
-│  3. DILIGENCIAMIENTO DE CAMPOS                                  │
-│     └─▶ Campos dinámicos según tipo de proceso                  │
-│     └─▶ Botón "Mejorar con IA" por cada campo                   │
-│     └─▶ IA mejora redacción jurídica automáticamente            │
-│                                                                  │
-│  4. GENERACIÓN DE DOCUMENTOS                                    │
-│     └─▶ Combinar plantilla + datos ingresados                   │
-│     └─▶ Crear versión V1 del documento                          │
-│     └─▶ Almacenar en biblioteca de documentos                   │
-│                                                                  │
+│  1. SELECCIÓN INICIAL                                            │
+│     └─▶ Elegir Entidad / Secretaría / Tipo de Proceso            │
+│  2. VISUALIZACIÓN DE REQUISITOS                                  │
+│     └─▶ Base legal, duración estimada, requisitos                │
+│  3. DILIGENCIAMIENTO DE CAMPOS                                   │
+│     └─▶ Campos dinámicos según tipo de proceso                   │
+│     └─▶ Botón "Mejorar con IA" por cada campo (/api/improve-text)│
+│  4. GENERACIÓN DE DOCUMENTOS                                     │
+│     └─▶ Combinar plantilla + datos (/api/generate-document)      │
+│     └─▶ Crear versión V1, almacenar en Supabase Storage          │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
-### Flujo 2: Suplantación de Organización
+### Flujo 3: Suplantación de Organización
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    SUPLANTACIÓN (SUPERADMIN)                     │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. Superadmin accede a /superadmin/organizations               │
-│                                                                  │
-│  2. Selecciona "Suplantar" en una organización                  │
-│                                                                  │
-│  3. Sistema muestra diálogo de confirmación con:                │
-│     └─▶ Datos de la organización                                │
-│     └─▶ Advertencia de modo supervisión                         │
-│                                                                  │
-│  4. Al confirmar:                                               │
-│     └─▶ Se activa banner de suplantación (amarillo)             │
-│     └─▶ Se redirige a /admin                                    │
-│     └─▶ Se asume rol de Administrador de esa organización       │
-│                                                                  │
-│  5. Para salir:                                                 │
-│     └─▶ Clic en "Volver a mi Sesión" en el banner               │
-│     └─▶ Se restaura sesión de Superadmin                        │
-│     └─▶ Se redirige a /superadmin                               │
-│                                                                  │
+│  1. Superadmin accede a /superadmin/organizations                │
+│  2. Selecciona "Suplantar" en una organización                   │
+│  3. Confirma en diálogo con advertencia de modo supervisión      │
+│  4. Se activa banner de suplantación y se redirige a /admin      │
+│  5. "Volver a mi Sesión" restaura el contexto de Superadmin      │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
-
-### Flujo 3: Gestión de Entidades
-
-\`\`\`
-┌─────────────────────────────────────────────────────────────────┐
-│                    CREAR/EDITAR ENTIDAD                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  PASO 1: INFORMACIÓN BÁSICA                                     │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ • Nombre de la entidad                                   │    │
-│  │ • NIT                                                    │    │
-│  │ • Nombre del representante legal                         │    │
-│  │ • Cargo del representante                                │    │
-│  │ • Dirección                                              │    │
-│  │ • Teléfono                                               │    │
-│  │ • Correo electrónico                                     │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  PASO 2: DOCUMENTOS DE CONTEXTO                                 │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ • Logo de la entidad (PNG/JPG)                          │    │
-│  │ • Plan Anual de Adquisiciones - PAA (PDF)               │    │
-│  │ • Plan de Desarrollo (PDF)                              │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-│  PASO 3: SECRETARÍAS                                            │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ Por cada secretaría:                                     │    │
-│  │ • Nombre de la secretaría                               │    │
-│  │ • Nombre del secretario                                  │    │
-│  │ • Correo electrónico                                     │    │
-│  │ • Teléfono                                               │    │
-│  │                                                          │    │
-│  │ [+ Agregar Secretaría] [Eliminar]                       │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ### Flujo 4: Consulta al Asistente Jurídico
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ASISTENTE JURÍDICO EVA                        │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. Usuario accede a /member/assistant                          │
-│                                                                  │
-│  2. Sistema muestra interfaz de chat con:                       │
-│     └─▶ Preguntas sugeridas                                     │
-│     └─▶ Temas rápidos (panel lateral)                           │
-│     └─▶ Historial de conversación                               │
-│                                                                  │
-│  3. Usuario escribe pregunta en lenguaje natural                │
-│                                                                  │
-│  4. Sistema procesa:                                            │
-│     └─▶ Envía pregunta a API /api/chat                          │
-│     └─▶ API agrega contexto de legislación colombiana           │
-│     └─▶ OpenAI genera respuesta especializada                   │
-│     └─▶ Respuesta en streaming (tiempo real)                    │
-│                                                                  │
-│  5. Sistema muestra respuesta con:                              │
-│     └─▶ Formato Markdown (títulos, listas, tablas)              │
-│     └─▶ Referencias normativas                                  │
-│     └─▶ Opción de copiar respuesta                              │
-│                                                                  │
+│  1. Usuario accede a /member/assistant                           │
+│  2. Escribe pregunta en lenguaje natural                         │
+│  3. POST a /api/assistant                                        │
+│     └─▶ Guardrails (jailbreak/PII/moderación)                    │
+│     └─▶ Agente de clasificación determina intención              │
+│     └─▶ Se enruta al agente especializado correspondiente        │
+│     └─▶ Búsqueda en vector store cuando aplica                   │
+│  4. Respuesta en Markdown con referencias normativas              │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ---
 
@@ -361,20 +245,19 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 ### Seguridad
 
-- **Autenticación**: Sistema de usuarios con roles diferenciados
-- **Autorización**: Control de acceso basado en roles (RBAC)
-- **Aislamiento de datos**: Cada organización (tenant) tiene datos completamente aislados
-- **Sesiones**: Manejo seguro de sesiones con persistencia en localStorage
+- **Autenticación**: Supabase Auth con sesiones gestionadas vía cookies (`@supabase/ssr`)
+- **Autorización**: Control de acceso basado en roles (RBAC), aplicado en `middleware.ts`
+- **Aislamiento de datos**: Row Level Security (RLS) por organización (tenant) en Supabase
+- **Guardrails de IA**: Detección de jailbreak, PII y contenido inapropiado en el asistente jurídico
 
 ### Rendimiento
 
-- **Streaming de IA**: Respuestas en tiempo real del asistente jurídico
-- **Carga optimizada**: Componentes con lazy loading
-- **Estado eficiente**: React Context para estado global, SWR para datos remotos
+- **Streaming de IA**: Respuestas en tiempo real para chat y mejora de texto
+- **Turbopack**: Build y dev server acelerados con Next.js 16
 
 ### Experiencia de Usuario
 
-- **Tema claro/oscuro**: Cambio dinámico con persistencia
+- **Tema claro/oscuro**: Cambio dinámico con persistencia (`next-themes`)
 - **Diseño responsivo**: Adaptado a diferentes tamaños de pantalla
 - **Navegación intuitiva**: Sidebar con menús contextuales por rol
 - **Feedback visual**: Estados de carga, errores y confirmaciones
@@ -383,8 +266,12 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 | Servicio | Uso |
 |----------|-----|
-| OpenAI GPT-4 | Asistente jurídico y mejora de redacción |
-| Vercel AI SDK | Manejo de streaming y chat |
+| OpenAI (Agents SDK + Guardrails) | Asistente jurídico especializado, clasificación de intención |
+| Vercel AI SDK (`ai`, `@ai-sdk/openai`) | Streaming de chat y mejora de redacción de campos |
+| Supabase | Autenticación, base de datos relacional y almacenamiento de archivos |
+| Google Drive / Sheets (`googleapis`) | Sincronización de documentos y hojas de cálculo por entidad |
+| docxtemplater / pizzip / mammoth | Generación y lectura de documentos Word a partir de plantillas |
+| Vercel Analytics | Métricas de uso de la aplicación |
 | next-themes | Sistema de temas claro/oscuro |
 
 ---
@@ -394,113 +281,115 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 ### Requisitos Previos
 
 - Node.js 18+
-- npm o pnpm
+- pnpm (gestor de paquetes del proyecto)
+- Proyecto de Supabase (URL, anon key y service role key)
+- API key de OpenAI con acceso al modelo y al workflow/vector store configurados
+- Credenciales OAuth2 de Google Cloud (Client ID/Secret) si se usa la integración con Drive/Sheets
 
 ### Variables de Entorno
 
-\`\`\`env
-# OpenAI (para el asistente jurídico)
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+
+# OpenAI (asistente jurídico EVA)
 OPENAI_API_KEY=sk-...
+OPENAI_ASSISTANT_WORKFLOW_ID=wf_...
+OPENAI_VECTOR_STORE_ID=vs_...
 
-# Base de datos (cuando se implemente)
-DATABASE_URL=postgresql://...
+# Google OAuth (integración Drive/Sheets)
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=https://tu-dominio.com/api/google/callback
 
-# Correo (cuando se implemente)
-SMTP_HOST=...
-SMTP_PORT=...
-\`\`\`
+# App
+NEXT_PUBLIC_APP_URL=https://tu-dominio.com
+```
 
 ### Instalación
 
-\`\`\`bash
+```bash
 # Clonar repositorio
 git clone [url-del-repositorio]
 
 # Instalar dependencias
-npm install
+pnpm install
 
 # Ejecutar en desarrollo
-npm run dev
+pnpm dev
 
 # Construir para producción
-npm run build
+pnpm build
 
 # Ejecutar en producción
-npm start
-\`\`\`
+pnpm start
+```
+
+### Base de Datos
+
+Las migraciones SQL se encuentran en `scripts/` (numeradas secuencialmente: creación de tablas, políticas RLS, funciones, seeds y ajustes). Deben ejecutarse en orden contra el proyecto de Supabase antes del primer despliegue.
 
 ---
 
 ## Estructura del Proyecto
 
-\`\`\`
+```
 eva-juridico/
 ├── app/
-│   ├── admin/
-│   │   ├── entities/
-│   │   │   └── page.tsx        # Gestión de entidades
-│   │   ├── members/
-│   │   │   └── page.tsx        # Gestión de miembros
-│   │   ├── layout.tsx          # Layout del admin
-│   │   └── page.tsx            # Dashboard admin
-│   ├── member/
-│   │   ├── assistant/
-│   │   │   └── page.tsx        # Asistente jurídico
-│   │   ├── dashboard/
-│   │   │   └── page.tsx        # Dashboard de entidad
+│   ├── admin/                  # Vistas del Administrador de Organización
 │   │   ├── documents/
-│   │   │   └── page.tsx        # Biblioteca de documentos
-│   │   ├── processes/
-│   │   │   └── page.tsx        # Gestión de procesos
-│   │   ├── layout.tsx          # Layout del member
-│   │   └── page.tsx            # Selector de entidades
-│   ├── superadmin/
+│   │   ├── entities/
+│   │   ├── members/
+│   │   └── processes/
+│   ├── member/                 # Vistas del Asesor Jurídico
+│   │   ├── assistant/
+│   │   ├── dashboard/
+│   │   ├── documents/
+│   │   └── processes/
+│   ├── superadmin/             # Vistas del Superadministrador
 │   │   ├── organizations/
-│   │   │   └── page.tsx        # Gestión de organizaciones
+│   │   ├── pending-users/
 │   │   ├── process-types/
-│   │   │   └── page.tsx        # Tipos de proceso
-│   │   ├── templates/
-│   │   │   └── page.tsx        # Plantillas maestras
-│   │   └── page.tsx            # Dashboard superadmin
-│   ├── api/
-│   │   └── chat/
-│   │       └── route.ts        # API del asistente IA
-│   ├── login/
-│   │   └── page.tsx            # Selector de perfiles
-│   ├── globals.css             # Estilos globales
-│   ├── layout.tsx              # Layout principal
-│   └── page.tsx                # Página inicial
+│   │   └── templates/
+│   ├── account/                # Perfil y configuración de cuenta
+│   ├── auth/                   # Flujo de autenticación (Supabase)
+│   │   ├── callback/
+│   │   ├── login/
+│   │   ├── sign-up/
+│   │   └── update-password/
+│   ├── api/                    # API routes (Next.js Route Handlers)
+│   │   ├── assistant/          # Workflow de agentes OpenAI (EVA)
+│   │   ├── chat/               # Chat streaming (Vercel AI SDK)
+│   │   ├── improve-text/       # Mejora de redacción asistida por IA
+│   │   ├── generate-document/  # Generación de .docx desde plantillas
+│   │   ├── google/             # OAuth2 de Google (auth/callback)
+│   │   └── ...                 # CRUD de miembros, entidades, plantillas, etc.
+│   ├── docs/                   # Documentación interna de la app
+│   ├── login/                  # Selector de perfiles
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
 ├── components/
 │   ├── admin/
-│   │   ├── dashboard.tsx
-│   │   ├── entities-page.tsx
-│   │   └── members-page.tsx
 │   ├── member/
-│   │   ├── assistant-page.tsx
-│   │   ├── create-process-dialog.tsx
-│   │   ├── dashboard.tsx
-│   │   ├── documents-page.tsx
-│   │   ├── entity-selector.tsx
-│   │   └── processes-page.tsx
 │   ├── superadmin/
-│   │   ├── dashboard.tsx
-│   │   ├── organizations-page.tsx
-│   │   ├── process-types-page.tsx
-│   │   └── templates-page.tsx
-│   ├── ui/                     # Componentes shadcn/ui
-│   ├── app-sidebar.tsx         # Navegación principal
-│   ├── impersonation-banner.tsx
-│   ├── page-header.tsx
-│   ├── stats-card.tsx
-│   ├── status-badge.tsx
-│   ├── theme-provider.tsx
-│   └── theme-toggle.tsx
+│   └── ui/                     # Componentes shadcn/ui
 ├── lib/
-│   ├── impersonation-context.tsx
-│   ├── mock-data.ts            # Datos de prueba
-│   └── utils.ts
+│   ├── ai-chat/                 # Hooks y runner del workflow de agentes
+│   │   ├── workflow-runner.ts   # Orquestación de agentes + guardrails
+│   │   ├── create-chat-api-route.ts
+│   │   └── use-ai-chat.ts / use-assistant-chat.ts
+│   ├── google/                  # Cliente OAuth, Drive y Sheets
+│   ├── supabase/                 # Clientes server/browser y data access
+│   ├── types/database.ts        # Tipos generados del esquema Supabase
+│   ├── utils/                    # Generación de documentos, helpers de plantillas
+│   └── impersonation-context.tsx
+├── scripts/                     # Migraciones SQL (Supabase/PostgreSQL)
+├── middleware.ts                # Enrutamiento por rol y protección de sesión
 └── README.md
-\`\`\`
+```
 
 ---
 
@@ -515,15 +404,15 @@ eva-juridico/
 | **Secretaría** | Dependencia de una entidad (ej. Secretaría de Obras) |
 | **Plantilla** | Documento base (.docx) con variables para generar documentos |
 | **Suplantación** | Acción del Superadmin para acceder al contexto de una organización |
+| **Workflow (EVA)** | Conjunto de agentes de OpenAI que clasifican y responden consultas jurídicas |
 
 ---
 
 ## Contacto y Soporte
 
-**Proyecto**: EVA Jurídico  
-**Versión**: 1.0  
-**Estado**: En Desarrollo  
+**Proyecto**: EVA Jurídico
+**Estado**: En Desarrollo
 
 ---
 
-© 2025 - EVA Jurídico. Todos los derechos reservados.
+© 2026 - EVA Jurídico. Todos los derechos reservados.
