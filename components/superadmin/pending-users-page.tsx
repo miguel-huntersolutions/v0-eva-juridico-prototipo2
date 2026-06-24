@@ -68,10 +68,7 @@ export function PendingUsersPage() {
       }
       const data = await res.json()
       setUsers(data.users || [])
-      console.info("[pending-users] API response:", {
-        count: data.users?.length ?? 0,
-        source: data.meta?.source ?? "unknown",
-      })
+      console.info("[pending-users] API response:", { count: data.users?.length ?? 0 })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar")
       setUsers([])

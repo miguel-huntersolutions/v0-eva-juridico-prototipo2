@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 
+export const dynamic = "force-dynamic"
+
 /**
  * POST /api/update-user-status
- * Updates the status of a user profile (pending, approved, rejected)
- * Only superadmins and admins can update user status
+ * Updates profile status (pending / approved / rejected).
+ * Superadmin: session + RLS (profiles_update_superadmin). No service_role required.
+ * Admin: service_role fallback if configured (org-scoped checks).
  */
 export async function POST(request: NextRequest) {
   try {
-    // Get authenticated user
     const supabase = await createServerClient()
     const {
       data: { user },
@@ -19,10 +21,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Verify user is superadmin or admin
-    const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single()
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role, organization_id")
+      .eq("id", user.id)
+      .single()
 
-    if (!profile || (profile.role !== "superadmin" && profile.role !== "admin")) {
+    if (profileError || !profile || (profile.role !== "superadmin" && profile.role !== "admin")) {
       return NextResponse.json(
         { error: "Forbidden: Only superadmins and admins can update user status" },
         { status: 403 },
@@ -46,24 +51,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Use service role client to bypass RLS (needed to check profile even if user is pending)
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
+    const isSuperadmin = profile.role === "superadmin"
+    const db = isSuperadmin ? supabase : await getServiceRoleClient()
+    if (!db) {
       return NextResponse.json(
-        { error: "Server configuration error: Service role key not configured" },
+        {
+          error: "Server configuration error",
+          message: "SUPABASE_SERVICE_ROLE_KEY not configured (required for admin actions)",
+        },
         { status: 500 },
       )
     }
 
-    const serviceRoleClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    })
-
-    // Get target profile using service role (bypasses RLS)
-    const { data: targetProfile, error: targetProfileError } = await serviceRoleClient
+    const { data: targetProfile, error: targetProfileError } = await db
       .from("profiles")
       .select("organization_id, status")
       .eq("id", userId)
@@ -72,14 +72,18 @@ export async function POST(request: NextRequest) {
     if (targetProfileError || !targetProfile) {
       console.error("[update-user-status] Error fetching target profile:", targetProfileError)
       return NextResponse.json(
-        { error: "User profile not found", message: targetProfileError?.message || "Profile does not exist" },
+        {
+          error: "User profile not found",
+          message: targetProfileError?.message || "Profile does not exist",
+          hint: isSuperadmin
+            ? "Ejecuta scripts/021-allow-superadmin-view-profiles.sql en Supabase."
+            : undefined,
+        },
         { status: 404 },
       )
     }
 
-    // If user is admin (not superadmin), verify they can only update users in their own organization
     if (profile.role === "admin") {
-      // If approving a user and providing organizationId, verify it matches admin's organization
       if (status === "approved" && organizationId) {
         if (organizationId !== profile.organization_id) {
           return NextResponse.json(
@@ -87,28 +91,20 @@ export async function POST(request: NextRequest) {
             { status: 403 },
           )
         }
-      } else if (targetProfile.organization_id) {
-        // If user already has an organization, verify it matches admin's organization
-        if (targetProfile.organization_id !== profile.organization_id) {
-          return NextResponse.json(
-            { error: "Forbidden: Admins can only update users in their own organization" },
-            { status: 403 },
-          )
-        }
+      } else if (targetProfile.organization_id && targetProfile.organization_id !== profile.organization_id) {
+        return NextResponse.json(
+          { error: "Forbidden: Admins can only update users in their own organization" },
+          { status: 403 },
+        )
       }
-      // If user has no organization_id and we're not approving with one, allow the update
-      // (this handles cases where we're just changing status without assigning organization)
     }
 
-    // Update the user's status
     const updateData: { status: string; organization_id?: string } = { status }
-    
-    // If approving and organizationId is provided, also assign the organization
     if (status === "approved" && organizationId) {
       updateData.organization_id = organizationId
     }
 
-    const { data: updatedProfile, error: updateError } = await serviceRoleClient
+    const { data: updatedProfile, error: updateError } = await db
       .from("profiles")
       .update(updateData)
       .eq("id", userId)
@@ -118,15 +114,18 @@ export async function POST(request: NextRequest) {
     if (updateError) {
       console.error("[update-user-status] Error updating profile:", updateError)
       return NextResponse.json(
-        { error: "Failed to update user status", message: updateError.message },
+        {
+          error: "Failed to update user status",
+          message: updateError.message,
+          hint: isSuperadmin
+            ? "Ejecuta scripts/020-allow-superadmin-insert-profiles.sql en Supabase."
+            : "Revisa SUPABASE_SERVICE_ROLE_KEY en Vercel.",
+        },
         { status: 500 },
       )
     }
 
-    return NextResponse.json({
-      success: true,
-      profile: updatedProfile,
-    })
+    return NextResponse.json({ success: true, profile: updatedProfile })
   } catch (error) {
     console.error("Error updating user status:", error)
     return NextResponse.json(
@@ -139,3 +138,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
+async function getServiceRoleClient() {
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!serviceRoleKey || !supabaseUrl) return null
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}

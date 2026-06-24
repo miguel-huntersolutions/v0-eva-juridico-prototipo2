@@ -1,23 +1,62 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 
+export const dynamic = "force-dynamic"
+
 /**
  * GET /api/pending-users
  * Returns all profiles with status = 'pending'. Superadmin only.
- * Uses the authenticated session + RLS (profiles_superadmin_select, organizations_select).
+ * Uses session + RLS (profiles_superadmin_select). No service_role key required.
  */
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return NextResponse.json(
+        {
+          error: "Server configuration error",
+          message: "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY on Vercel",
+        },
+        { status: 500 },
+      )
+    }
+
     const supabase = await createServerClient()
     const {
       data: { user },
+      error: authError,
     } = await supabase.auth.getUser()
+
+    if (authError) {
+      console.error("[pending-users] auth.getUser failed:", authError)
+      return NextResponse.json(
+        { error: "Unauthorized", message: authError.message },
+        { status: 401 },
+      )
+    }
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single()
+
+    if (profileError) {
+      console.error("[pending-users] profile lookup failed:", profileError)
+      return NextResponse.json(
+        {
+          error: "Failed to fetch pending users",
+          message: profileError.message,
+          hint: "Revisa NEXT_PUBLIC_SUPABASE_* en Vercel (Preview) y ejecuta scripts/033-grant-supabase-roles.sql.",
+        },
+        { status: 500 },
+      )
+    }
 
     if (!profile || profile.role !== "superadmin") {
       return NextResponse.json(
@@ -26,55 +65,37 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const { data: pendingProfiles, error: profilesError } = await supabase.rpc("list_pending_profiles")
+    const { data: pendingProfiles, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id, name, email, role, status, organization_id, created_at, updated_at")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
 
     if (profilesError) {
-      const rpcMissing =
-        profilesError.code === "PGRST202" ||
-        profilesError.message?.includes("list_pending_profiles") ||
-        profilesError.message?.includes("Could not find the function")
-
-      if (rpcMissing) {
-        const fallback = await supabase
-          .from("profiles")
-          .select("id, name, email, role, status, organization_id, created_at, updated_at")
-          .eq("status", "pending")
-          .order("created_at", { ascending: false })
-
-        if (fallback.error) {
-          console.error("[pending-users] Fallback query failed:", fallback.error)
-          return NextResponse.json(
-            {
-              error: "Failed to fetch pending users",
-              message: fallback.error.message,
-              hint: "Ejecuta scripts/021-allow-superadmin-view-profiles.sql y scripts/033-grant-supabase-roles.sql en Supabase.",
-            },
-            { status: 500 },
-          )
-        }
-
-        return buildPendingUsersResponse(supabase, fallback.data || [], "fallback")
-      }
-
-      if (profilesError.message?.includes("Forbidden: superadmin only")) {
-        return NextResponse.json(
-          { error: "Forbidden: Only superadmins can view pending users" },
-          { status: 403 },
-        )
-      }
-
-      console.error("[pending-users] RPC list_pending_profiles failed:", profilesError)
+      console.error("[pending-users] pending query failed:", profilesError)
       return NextResponse.json(
         {
           error: "Failed to fetch pending users",
           message: profilesError.message,
-          hint: "Ejecuta scripts/034-list-pending-profiles-rpc.sql en el SQL Editor de Supabase.",
+          hint: "Ejecuta scripts/021-allow-superadmin-view-profiles.sql y scripts/033-grant-supabase-roles.sql en Supabase.",
         },
         { status: 500 },
       )
     }
 
-    return buildPendingUsersResponse(supabase, pendingProfiles || [], "rpc")
+    const orgIds = [...new Set((pendingProfiles || []).map((p) => p.organization_id).filter(Boolean))] as string[]
+    let orgMap: Record<string, { name: string }> = {}
+    if (orgIds.length > 0) {
+      const { data: orgs } = await supabase.from("organizations").select("id, name").in("id", orgIds)
+      orgMap = (orgs || []).reduce((acc, o) => ({ ...acc, [o.id]: { name: o.name } }), {})
+    }
+
+    const users = (pendingProfiles || []).map((p) => ({
+      ...p,
+      organizationName: p.organization_id ? orgMap[p.organization_id]?.name ?? null : null,
+    }))
+
+    return NextResponse.json({ users, meta: { count: users.length } })
   } catch (error) {
     console.error("Error in pending-users:", error)
     return NextResponse.json(
@@ -82,33 +103,4 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     )
   }
-}
-
-async function buildPendingUsersResponse(
-  supabase: Awaited<ReturnType<typeof createServerClient>>,
-  pendingProfiles: Array<{
-    id: string
-    name: string | null
-    email: string
-    role: string
-    status: string
-    organization_id: string | null
-    created_at: string
-    updated_at: string
-  }>,
-  source: "rpc" | "fallback",
-) {
-  const orgIds = [...new Set(pendingProfiles.map((p) => p.organization_id).filter(Boolean))] as string[]
-  let orgMap: Record<string, { name: string }> = {}
-  if (orgIds.length > 0) {
-    const { data: orgs } = await supabase.from("organizations").select("id, name").in("id", orgIds)
-    orgMap = (orgs || []).reduce((acc, o) => ({ ...acc, [o.id]: { name: o.name } }), {})
-  }
-
-  const users = pendingProfiles.map((p) => ({
-    ...p,
-    organizationName: p.organization_id ? orgMap[p.organization_id]?.name ?? null : null,
-  }))
-
-  return NextResponse.json({ users, meta: { source, count: users.length } })
 }
