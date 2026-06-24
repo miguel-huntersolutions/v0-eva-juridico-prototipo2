@@ -34,3 +34,6 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.list_pending_profiles() TO authenticated;
+
+-- Refrescar caché de PostgREST para que el API vea la función de inmediato
+NOTIFY pgrst, 'reload schema';

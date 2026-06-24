@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
           )
         }
 
-        return buildPendingUsersResponse(supabase, fallback.data || [])
+        return buildPendingUsersResponse(supabase, fallback.data || [], "fallback")
       }
 
       if (profilesError.message?.includes("Forbidden: superadmin only")) {
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    return buildPendingUsersResponse(supabase, pendingProfiles || [])
+    return buildPendingUsersResponse(supabase, pendingProfiles || [], "rpc")
   } catch (error) {
     console.error("Error in pending-users:", error)
     return NextResponse.json(
@@ -96,6 +96,7 @@ async function buildPendingUsersResponse(
     created_at: string
     updated_at: string
   }>,
+  source: "rpc" | "fallback",
 ) {
   const orgIds = [...new Set(pendingProfiles.map((p) => p.organization_id).filter(Boolean))] as string[]
   let orgMap: Record<string, { name: string }> = {}
@@ -109,5 +110,5 @@ async function buildPendingUsersResponse(
     organizationName: p.organization_id ? orgMap[p.organization_id]?.name ?? null : null,
   }))
 
-  return NextResponse.json({ users })
+  return NextResponse.json({ users, meta: { source, count: users.length } })
 }
