@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
-import { createClient } from "@supabase/supabase-js"
 
 /**
  * GET /api/pending-users
  * Returns all profiles with status = 'pending'. Superadmin only.
+ * Uses the authenticated session + RLS (profiles_superadmin_select, organizations_select).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -26,19 +26,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!serviceRoleKey) {
-      return NextResponse.json(
-        { error: "Server configuration error: Service role key not configured" },
-        { status: 500 },
-      )
-    }
-
-    const serviceRoleClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
-
-    const { data: pendingProfiles, error: profilesError } = await serviceRoleClient
+    const { data: pendingProfiles, error: profilesError } = await supabase
       .from("profiles")
       .select("id, name, email, role, status, organization_id, created_at, updated_at")
       .eq("status", "pending")
@@ -55,10 +43,7 @@ export async function GET(request: NextRequest) {
     const orgIds = [...new Set((pendingProfiles || []).map((p) => p.organization_id).filter(Boolean))] as string[]
     let orgMap: Record<string, { name: string }> = {}
     if (orgIds.length > 0) {
-      const { data: orgs } = await serviceRoleClient
-        .from("organizations")
-        .select("id, name")
-        .in("id", orgIds)
+      const { data: orgs } = await supabase.from("organizations").select("id, name").in("id", orgIds)
       orgMap = (orgs || []).reduce((acc, o) => ({ ...acc, [o.id]: { name: o.name } }), {})
     }
 
