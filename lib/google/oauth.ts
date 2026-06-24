@@ -6,13 +6,30 @@
 import { google } from "googleapis"
 import { createServerClient } from "@/lib/supabase/server"
 
+function getGoogleOAuthEnv() {
+  return {
+    clientId: process.env.GOOGLE_CLIENT_ID?.trim(),
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim(),
+    redirectUri: process.env.GOOGLE_REDIRECT_URI?.trim(),
+  }
+}
+
+/** Masked config for debugging invalid_client (no secrets exposed). */
+export function getGoogleOAuthConfigCheck() {
+  const { clientId, clientSecret, redirectUri } = getGoogleOAuthEnv()
+  return {
+    hasClientId: Boolean(clientId),
+    clientIdHint: clientId ? `${clientId.slice(0, 8)}...${clientId.slice(-12)}` : null,
+    hasClientSecret: Boolean(clientSecret),
+    clientSecretLength: clientSecret?.length ?? 0,
+    redirectUri: redirectUri ?? null,
+  }
+}
+
 // Initialize OAuth2 client
 export function getOAuth2Client() {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI,
-  )
+  const { clientId, clientSecret, redirectUri } = getGoogleOAuthEnv()
+  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri)
 
   return oauth2Client
 }
