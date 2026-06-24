@@ -14,16 +14,31 @@ function getGoogleOAuthEnv() {
   }
 }
 
+const EXPECTED_GOOGLE_CLIENT_ID_SUFFIX = ".apps.googleusercontent.com"
+
 /** Masked config for debugging invalid_client (no secrets exposed). */
 export function getGoogleOAuthConfigCheck() {
   const { clientId, clientSecret, redirectUri } = getGoogleOAuthEnv()
   return {
     hasClientId: Boolean(clientId),
-    clientIdHint: clientId ? `${clientId.slice(0, 8)}...${clientId.slice(-12)}` : null,
+    clientIdSuffixOk: clientId?.endsWith(EXPECTED_GOOGLE_CLIENT_ID_SUFFIX) ?? false,
+    clientIdHint: clientId ? `${clientId.slice(0, 12)}...${clientId.slice(-24)}` : null,
     hasClientSecret: Boolean(clientSecret),
     clientSecretLength: clientSecret?.length ?? 0,
+    clientSecretPrefixOk: clientSecret?.startsWith("GOCSPX-") ?? false,
     redirectUri: redirectUri ?? null,
+    redirectUriOk: Boolean(redirectUri?.includes("/api/google/callback")),
   }
+}
+
+function formatGoogleTokenError(error: unknown): string {
+  const err = error as { message?: string; response?: { data?: { error?: string; error_description?: string } } }
+  const googleError = err.response?.data?.error
+  const googleDesc = err.response?.data?.error_description
+  if (googleError || googleDesc) {
+    return [googleError, googleDesc].filter(Boolean).join(": ")
+  }
+  return err.message ?? "Error desconocido"
 }
 
 // Initialize OAuth2 client
@@ -59,9 +74,18 @@ export function getAuthUrl(): string {
  * @returns The tokens (access_token, refresh_token, etc.)
  */
 export async function getTokensFromCode(code: string) {
+  const { redirectUri } = getGoogleOAuthEnv()
   const oauth2Client = getOAuth2Client()
-  const { tokens } = await oauth2Client.getToken(code)
-  return tokens
+  try {
+    const { tokens } = await oauth2Client.getToken({
+      code,
+      redirect_uri: redirectUri,
+    })
+    return tokens
+  } catch (error) {
+    console.error("[google/oauth] getToken failed:", formatGoogleTokenError(error))
+    throw new Error(formatGoogleTokenError(error))
+  }
 }
 
 /** Normalize DB row to tokens shape */

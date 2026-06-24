@@ -26,9 +26,11 @@ export async function GET() {
   const config = getGoogleOAuthConfigCheck()
   const ok =
     config.hasClientId &&
+    config.clientIdSuffixOk &&
     config.hasClientSecret &&
+    config.clientSecretPrefixOk &&
     config.clientSecretLength >= 20 &&
-    Boolean(config.redirectUri?.includes("/api/google/callback"))
+    config.redirectUriOk
 
   return NextResponse.json({
     ok,
