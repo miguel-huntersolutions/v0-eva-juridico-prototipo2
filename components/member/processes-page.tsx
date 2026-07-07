@@ -26,6 +26,7 @@ import {
   CheckCircle,
   RotateCcw,
   Files,
+  Sparkles,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -455,6 +456,12 @@ export function ProcessesPage() {
                             >
                               <Play className="mr-2 h-4 w-4" />
                               Generar documentos
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => router.push(`/member/processes/${process.id}/generate-smart`)}
+                            >
+                              <Sparkles className="mr-2 h-4 w-4" />
+                              Generar con IA (contexto)
                             </DropdownMenuItem>
                             {process.spreadsheetUrl && (
                               <DropdownMenuItem

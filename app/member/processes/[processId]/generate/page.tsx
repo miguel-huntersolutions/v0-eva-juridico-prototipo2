@@ -2,15 +2,14 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
-import { ArrowLeft, FileText, Bot, Loader2, Sparkles } from "lucide-react"
+import { useParams, useRouter } from "next/navigation"
+import { ArrowLeft, FileText, Sparkles, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getProcessMapped, getProcessMappedForImpersonation, getEntities, getEntitiesForImpersonation, type ProcessMapped, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { GenerateDocumentsDialog } from "@/components/member/generate-documents-dialog"
-import { DocumentAssistantDialog } from "@/components/member/document-assistant-dialog"
 
 const LOADING_MESSAGES = [
   "Preparando el agente…",
@@ -121,19 +120,27 @@ export default function ProcessGeneratePage() {
 
   return (
     <div className="container py-6 flex flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/member/processes">
-            <ArrowLeft className="h-4 w-4" />
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/member/processes">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-xl font-semibold">Generar documentos</h1>
+            <p className="text-sm text-muted-foreground">
+              Proceso <span className="font-mono">{process.code}</span>
+              {process.entityName && ` · ${process.entityName}`}
+            </p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <Link href={`/member/processes/${process.id}/generate-smart`}>
+            <Sparkles className="h-4 w-4 mr-2" />
+            Completar con IA
           </Link>
         </Button>
-        <div>
-          <h1 className="text-xl font-semibold">Generar documentos</h1>
-          <p className="text-sm text-muted-foreground">
-            Proceso <span className="font-mono">{process.code}</span>
-            {process.entityName && ` · ${process.entityName}`}
-          </p>
-        </div>
       </div>
 
       <Card className="flex flex-col min-h-[500px]">

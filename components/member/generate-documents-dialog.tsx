@@ -72,6 +72,10 @@ interface GenerateDocumentsDialogProps {
   onDocumentsGenerated?: () => void // Callback to refresh processes list
   /** When true, render content inline (no modal); use on generate page */
   embedded?: boolean
+  /** Pre-filled scalar tag values (smart fill flow). Merged over defaults when templates load. */
+  prefilledFormData?: Record<string, string> | null
+  /** Pre-filled dynamic table rows (smart fill flow). Merged over defaults when templates load. */
+  prefilledTableData?: Record<string, Array<Record<string, string>>> | null
 }
 
 type DynamicTableDef = {
@@ -100,6 +104,8 @@ export function GenerateDocumentsDialog({
   onProcessCreated,
   onDocumentsGenerated,
   embedded = false,
+  prefilledFormData = null,
+  prefilledTableData = null,
 }: GenerateDocumentsDialogProps) {
   const router = useRouter()
   const { profile } = useProfile()
@@ -220,6 +226,21 @@ export function GenerateDocumentsDialog({
         if (tags.includes("SECRETARIA") && secretaryName) {
           initialData.SECRETARIA = secretaryName
         }
+
+        if (prefilledFormData) {
+          Object.entries(prefilledFormData).forEach(([tag, value]) => {
+            if (value != null && String(value).trim() !== "" && tag in initialData) {
+              initialData[tag] = String(value).trim()
+            }
+          })
+        }
+        if (prefilledTableData) {
+          Object.entries(prefilledTableData).forEach(([family, rows]) => {
+            if (Array.isArray(rows) && rows.length > 0 && family in initialTableData) {
+              initialTableData[family] = rows
+            }
+          })
+        }
         
         setFormData(initialData)
         setTableData(initialTableData)
@@ -235,7 +256,7 @@ export function GenerateDocumentsDialog({
     }
 
     loadTemplates()
-  }, [open, process?.processTypeId, processData?.processTypeId, process?.entityId, processData?.entityId, entity?.name, secretaryName])
+  }, [open, process?.processTypeId, processData?.processTypeId, process?.entityId, processData?.entityId, entity?.name, secretaryName, prefilledFormData, prefilledTableData])
 
   const handleClose = () => {
     setFormData({})
