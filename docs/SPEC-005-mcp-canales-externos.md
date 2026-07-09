@@ -29,6 +29,8 @@ EVA_MCP_INTEGRATION_USER_ID=uuid-usuario-con-google-vinculado
 |--------|------|-------------|
 | POST | `/api/mcp/link-user` | Vincula teléfono ↔ canal |
 | GET | `/api/mcp/entities` | Entidades, secretarías y tipos permitidos |
+| GET | `/api/mcp/processes` | Lista procesos del usuario (por entidad asignada) |
+| GET | `/api/mcp/processes/[processId]` | Detalle del proceso + documentos y enlaces Drive |
 | POST | `/api/mcp/generate-smart` | Contexto → fill → generar todo → URLs |
 
 Auth: `Authorization: Bearer <EVA_MCP_API_KEY>`
@@ -67,6 +69,28 @@ También acepta `(MIA)` como alias. La fase `mia` ejecuta `improveText` y reempl
 Respuesta: `processCode`, `driveFolderUrl`, `documents[]`, `documentUrls[]`, `portalProcessUrl`, `gaps[]`, `miaExpansions[]`, `status`.
 
 Tablas: no se autocompletan (`gaps` con `mcp_tables_not_supported`).
+
+---
+
+## 5b. Listar procesos
+
+```
+GET /api/mcp/processes?channel=telegram&externalUserId=123&entityId=uuid&processCode=CD-2026&limit=20
+```
+
+Respuesta: `processes[]` con `code`, `object`, `documentCount`, `driveFolderUrl`, `portalProcessUrl`, etc.
+
+Filtros opcionales: `entityId`, `processCode` (búsqueda parcial), `limit` (máx. 50).
+
+---
+
+## 5c. Detalle y documentos de un proceso
+
+```
+GET /api/mcp/processes/{processId}?channel=telegram&externalUserId=123
+```
+
+Respuesta: `process` con `documents[]` (`name`, `webViewLink`), `documentUrls[]`, `driveFolderUrl`, `spreadsheetUrl`, `portalProcessUrl`.
 
 ---
 

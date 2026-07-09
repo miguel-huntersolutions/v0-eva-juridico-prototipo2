@@ -14,6 +14,20 @@ export const McpEntitiesQuerySchema = z.object({
   phone: z.string().optional(),
 })
 
+export const McpChannelUserQuerySchema = z.object({
+  channel: McpChannelSchema,
+  externalUserId: z.string().min(1),
+  phone: z.string().optional(),
+})
+
+export const McpProcessesQuerySchema = McpChannelUserQuerySchema.extend({
+  entityId: z.string().uuid().optional(),
+  processCode: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
+export const McpProcessDetailQuerySchema = McpChannelUserQuerySchema
+
 export const McpGenerateSmartSchema = z.object({
   mode: z.literal("auto_generate").default("auto_generate"),
   channel: McpChannelSchema,
