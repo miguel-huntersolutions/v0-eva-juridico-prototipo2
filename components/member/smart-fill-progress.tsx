@@ -5,6 +5,7 @@ import { Sparkles, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const DEFAULT_PHASES = [
+  { id: "mia", label: "Ampliando segmentos (MIA)" },
   { id: "direct", label: "Aplicando datos del proceso" },
   { id: "extract", label: "Extrayendo datos del contexto" },
   { id: "classify", label: "Clasificando etiquetas" },

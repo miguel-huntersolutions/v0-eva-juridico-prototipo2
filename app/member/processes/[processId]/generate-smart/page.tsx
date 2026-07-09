@@ -43,6 +43,7 @@ export default function ProcessGenerateSmartPage() {
     Record<string, Array<Record<string, string>>> | null
   >(null)
   const [fillStats, setFillStats] = React.useState<SmartFillResult["stats"] | null>(null)
+  const [miaExpansions, setMiaExpansions] = React.useState<SmartFillResult["miaExpansions"]>(undefined)
   const [analyzeError, setAnalyzeError] = React.useState<string | null>(null)
   const [isAnalyzing, setIsAnalyzing] = React.useState(false)
 
@@ -137,6 +138,7 @@ export default function ProcessGenerateSmartPage() {
       setPrefilledFormData(result.formData)
       setPrefilledTableData(result.tableData)
       setFillStats(result.stats)
+      setMiaExpansions(result.miaExpansions)
       setStep("form")
     } catch (err) {
       setAnalyzeError(err instanceof Error ? err.message : "Error al analizar el contexto")
@@ -246,8 +248,24 @@ export default function ProcessGenerateSmartPage() {
               <Sparkles className="h-4 w-4" />
               <AlertDescription>
                 Se completaron automáticamente {fillStats.filled} de {fillStats.total} etiquetas
-                {fillStats.ragCount > 0 && ` (${fillStats.ragCount} desde documentos)`}.
+                {fillStats.ragCount > 0 && ` (${fillStats.ragCount} desde documentos)`}
+                {fillStats.miaCount > 0 && ` · ${fillStats.miaCount} segmento(s) ampliados con (MIA)`}.
                 Revise y edite los campos antes de generar.
+              </AlertDescription>
+            </Alert>
+          )}
+          {miaExpansions && miaExpansions.length > 0 && (
+            <Alert>
+              <AlertDescription className="text-sm space-y-2">
+                <p className="font-medium text-foreground">Textos ampliados con (MIA):</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {miaExpansions.map((e, i) => (
+                    <li key={i}>
+                      {e.label && <span className="font-medium">{e.label}: </span>}
+                      <span className="text-muted-foreground line-clamp-2">{e.expandedText}</span>
+                    </li>
+                  ))}
+                </ul>
               </AlertDescription>
             </Alert>
           )}

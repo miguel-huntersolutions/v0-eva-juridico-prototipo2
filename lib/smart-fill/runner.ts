@@ -12,6 +12,7 @@ import {
   extractFromUserContext,
   generateFieldValues,
 } from "./ai-steps"
+import { contextHasMiaMarker, preprocessMiaContext } from "./mia-context"
 import type { SmartFillContext, SmartFillPhase, SmartFillResult } from "./types"
 
 const USE_ASSISTANT_RAG = !!process.env.OPENAI_ASSISTANT_WORKFLOW_ID
@@ -34,6 +35,30 @@ export async function runSmartFill(
   let ragCount = 0
   let generatedCount = 0
   let enrichedCount = 0
+  let miaCount = 0
+  let workingContext = userContext
+  let miaExpansions: SmartFillResult["miaExpansions"] = []
+
+  // Phase 0: expand (MIA) markers in user context
+  if (contextHasMiaMarker(userContext)) {
+    const mia = await preprocessMiaContext(userContext, ctx)
+    workingContext = mia.processedContext
+    miaExpansions = mia.expansions.map((e) => ({
+      label: e.label,
+      originalText: e.originalText,
+      expandedText: e.expandedText,
+    }))
+    miaCount = mia.expansions.length
+    phases.push(
+      phase(
+        "mia",
+        "Ampliando segmentos (MIA)",
+        miaCount > 0 ? "done" : "skipped",
+      ),
+    )
+  } else {
+    phases.push(phase("mia", "Ampliando segmentos (MIA)", "skipped"))
+  }
 
   // Phase 1: direct mappings
   const direct = applyDirectMappings(scalarTags, {
@@ -54,8 +79,8 @@ export async function runSmartFill(
   // Phase 2: extract from user context
   const unfilledForExtract = scalarTags.filter((t) => !formData[t]?.trim())
   let extracted: Record<string, string> = {}
-  if (unfilledForExtract.length > 0 && userContext.trim()) {
-    extracted = await extractFromUserContext(userContext, unfilledForExtract, ctx)
+  if (unfilledForExtract.length > 0 && workingContext.trim()) {
+    extracted = await extractFromUserContext(workingContext, unfilledForExtract, ctx)
     formData = mergeFormData(formData, extracted)
   }
   phases.push(
@@ -100,7 +125,7 @@ export async function runSmartFill(
         processTypeName: ctx.processTypeName,
       },
       ragTags,
-      userContext,
+      workingContext,
     )
     formData = mergeFormData(formData, ragResult)
     ragCount = Object.keys(ragResult).length
@@ -123,7 +148,7 @@ export async function runSmartFill(
 
   let generated: Record<string, string> = {}
   if (generateTags.length > 0) {
-    generated = await generateFieldValues(generateTags, userContext, ctx, formData)
+    generated = await generateFieldValues(generateTags, workingContext, ctx, formData)
     formData = mergeFormData(formData, generated)
     generatedCount = Object.keys(generated).length
   }
@@ -163,6 +188,9 @@ export async function runSmartFill(
       ragCount,
       generatedCount,
       enrichedCount,
+      miaCount,
     },
+    processedUserContext: workingContext !== userContext ? workingContext : undefined,
+    miaExpansions: miaExpansions && miaExpansions.length > 0 ? miaExpansions : undefined,
   }
 }

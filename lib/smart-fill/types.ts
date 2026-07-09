@@ -29,12 +29,19 @@ export type SmartFillPhase = {
   status: SmartFillPhaseStatus
 }
 
+export type MiaExpansionSummary = {
+  label?: string
+  originalText: string
+  expandedText: string
+}
+
 export type SmartFillStats = {
   filled: number
   total: number
   ragCount: number
   generatedCount: number
   enrichedCount: number
+  miaCount: number
 }
 
 export type SmartFillResult = {
@@ -42,6 +49,9 @@ export type SmartFillResult = {
   tableData: Record<string, Array<Record<string, string>>>
   phases: SmartFillPhase[]
   stats: SmartFillStats
+  /** Contexto tras expandir segmentos (MIA), si aplica */
+  processedUserContext?: string
+  miaExpansions?: MiaExpansionSummary[]
 }
 
 export type TagClassification = {
