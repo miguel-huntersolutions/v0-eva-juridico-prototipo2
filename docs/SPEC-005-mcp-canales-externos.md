@@ -10,7 +10,7 @@
 
 API HTTP para OpenClaw y otros agentes. **Web smart** sigue con revisión manual; **canales** usan `auto_generate` (one-shot).
 
-Marcador **`(MIA)`** en el contexto: amplía un segmento con IA antes del smart fill (web y MCP).
+Marcador **`...`** en el contexto: amplía un segmento con IA antes del smart fill (web y MCP). Alias legacy: `(MIA)`.
 
 ---
 
@@ -35,15 +35,16 @@ Auth: `Authorization: Bearer <EVA_MCP_API_KEY>`
 
 ---
 
-## 4. Marcador (MIA)
+## 4. Marcador de ampliación (`...`)
 
 | Formato | Ejemplo |
 |---------|---------|
-| Sufijo | `OBJETO: compra de equipos (MIA)` |
-| Prefijo | `(MIA) El contrato es necesario porque…` |
-| Línea | `Justificación breve (MIA)` |
+| Sufijo | `OBJETO: compra de equipos ...` |
+| Sufijo + resto en línea | `OBJETO: compra de equipos .... Monto: 2500000` |
+| Prefijo | `... El contrato es necesario porque…` |
+| Línea | `Justificación breve ...` |
 
-La fase `mia` ejecuta `improveText` y reemplaza el segmento en el contexto antes de extract/RAG/generate.
+También acepta `(MIA)` como alias. La fase `mia` ejecuta `improveText` y reemplaza el segmento en el contexto antes de extract/RAG/generate.
 
 ---
 
@@ -58,12 +59,12 @@ La fase `mia` ejecuta `improveText` y reemplaza el segmento en el contexto antes
   "entityId": "uuid",
   "secretaryId": "uuid",
   "processTypeId": "uuid",
-  "userContext": "OBJETO: compra de equipos (MIA). Monto: 2500000",
+  "userContext": "OBJETO: compra de equipos .... Monto: 2500000",
   "allowPartial": true
 }
 ```
 
-Respuesta: `processCode`, `driveFolderUrl`, `documents[]`, `gaps[]`, `miaExpansions[]`, `status`.
+Respuesta: `processCode`, `driveFolderUrl`, `documents[]`, `documentUrls[]`, `portalProcessUrl`, `gaps[]`, `miaExpansions[]`, `status`.
 
 Tablas: no se autocompletan (`gaps` con `mcp_tables_not_supported`).
 
@@ -84,4 +85,4 @@ Tablas: no se autocompletan (`gaps` con `mcp_tables_not_supported`).
 |--|----------------------|---------------------|
 | Revisión | Sí (formulario) | No |
 | Generación | Usuario pulsa Generar | Automática |
-| (MIA) | Sí | Sí |
+| `...` / `(MIA)` | Sí | Sí |

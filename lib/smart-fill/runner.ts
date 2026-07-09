@@ -12,7 +12,7 @@ import {
   extractFromUserContext,
   generateFieldValues,
 } from "./ai-steps"
-import { contextHasMiaMarker, preprocessMiaContext } from "./mia-context"
+import { contextHasMiaMarker, preprocessMiaContext, stripExpandMarkersFromValue } from "./mia-context"
 import type { SmartFillContext, SmartFillPhase, SmartFillResult } from "./types"
 
 const USE_ASSISTANT_RAG = !!process.env.OPENAI_ASSISTANT_WORKFLOW_ID
@@ -39,7 +39,7 @@ export async function runSmartFill(
   let workingContext = userContext
   let miaExpansions: SmartFillResult["miaExpansions"] = []
 
-  // Phase 0: expand (MIA) markers in user context
+  // Phase 0: expand ... / (MIA) markers in user context
   if (contextHasMiaMarker(userContext)) {
     const mia = await preprocessMiaContext(userContext, ctx)
     workingContext = mia.processedContext
@@ -52,12 +52,12 @@ export async function runSmartFill(
     phases.push(
       phase(
         "mia",
-        "Ampliando segmentos (MIA)",
+        "Ampliando textos marcados con ...",
         miaCount > 0 ? "done" : "skipped",
       ),
     )
   } else {
-    phases.push(phase("mia", "Ampliando segmentos (MIA)", "skipped"))
+    phases.push(phase("mia", "Ampliando textos marcados con ...", "skipped"))
   }
 
   // Phase 1: direct mappings
@@ -177,6 +177,12 @@ export async function runSmartFill(
   )
 
   const filled = countFilled(scalarTags, formData)
+
+  for (const tag of scalarTags) {
+    if (formData[tag]) {
+      formData[tag] = stripExpandMarkersFromValue(formData[tag])
+    }
+  }
 
   return {
     formData,

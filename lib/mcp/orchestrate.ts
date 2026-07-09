@@ -1,5 +1,6 @@
 import { runSmartFill } from "@/lib/smart-fill/runner"
 import type { SmartFillContext } from "@/lib/smart-fill/types"
+import { contextHasMiaMarker, preprocessMiaContext } from "@/lib/smart-fill/mia-context"
 import { getAllUniqueTags, generateAllTemplates } from "@/lib/document-generation/generate-batch"
 import { hasValidTokensWithServiceRole } from "@/lib/google/oauth"
 import { getMcpIntegrationUserId } from "./config"
@@ -11,6 +12,7 @@ import {
   getProcessTypeById,
 } from "./entity-access"
 import { createProcessServer, generateProcessCodeServer } from "./process-helpers"
+import { resolveMcpGenerationLinks } from "./resolve-links"
 import { getTemplatesForMcp } from "./templates"
 import { resolveChannelUser, type ResolvedMcpUser } from "./resolve-user"
 import type { McpGenerateSmartRequest } from "./types"
@@ -22,13 +24,17 @@ export type McpAutoGenerateResult = {
   processCode: string
   driveFolderUrl: string | null
   spreadsheetUrl: string | null
+  portalProcessUrl: string
   documents: Array<{
-    templateId: string
-    templateName: string
+    templateId?: string
+    templateName?: string
     documentName: string
     webViewLink: string
-    drivePath: string
+    directLink?: string
+    drivePath?: string
   }>
+  /** URLs listas para mostrar al usuario (documentos + carpeta + hoja) */
+  documentUrls: string[]
   gaps: ReturnType<typeof buildGenerationGaps>
   miaExpansions?: Array<{ label?: string; originalText: string; expandedText: string }>
   fillStats: {
@@ -95,12 +101,39 @@ export async function mcpAutoGenerateSmart(
   const allTags = getAllUniqueTags(templates)
 
   const processCode = await generateProcessCodeServer(body.processTypeId)
-  const processObject = inferProcessObject(body.userContext)
+
+  const miaPreCtx: SmartFillContext = {
+    processId: "",
+    entityId: body.entityId,
+    entityName: entity.name,
+    secretaryId: body.secretaryId,
+    secretaryName: secretaryCheck.name,
+    processTypeId: body.processTypeId,
+    processTypeName: processType.name,
+    processObject: inferProcessObject(body.userContext),
+    processDescription: body.userContext.slice(0, 2000),
+  }
+
+  let userContext = body.userContext
+  let preMiaExpansions: McpAutoGenerateResult["miaExpansions"]
+  if (contextHasMiaMarker(userContext)) {
+    const mia = await preprocessMiaContext(userContext, miaPreCtx)
+    userContext = mia.processedContext
+    if (mia.expansions.length > 0) {
+      preMiaExpansions = mia.expansions.map((e) => ({
+        label: e.label,
+        originalText: e.originalText,
+        expandedText: e.expandedText,
+      }))
+    }
+  }
+
+  const processObject = inferProcessObject(userContext)
 
   const process = await createProcessServer({
     code: processCode,
     object: processObject,
-    description: body.userContext.slice(0, 2000),
+    description: userContext.slice(0, 2000),
     entityId: body.entityId,
     secretaryId: body.secretaryId,
     processTypeId: body.processTypeId,
@@ -117,27 +150,37 @@ export async function mcpAutoGenerateSmart(
     processTypeId: body.processTypeId,
     processTypeName: processType.name,
     processObject,
-    processDescription: body.userContext.slice(0, 2000),
+    processDescription: userContext.slice(0, 2000),
   }
 
-  const fill = await runSmartFill(body.userContext, allTags, smartCtx)
+  const fill = await runSmartFill(userContext, allTags, smartCtx)
   const gaps = buildGenerationGaps(allTags, fill.formData)
+
+  const miaExpansions = fill.miaExpansions ?? preMiaExpansions
 
   const criticalGaps = gaps.filter((g) => g.type === "image" || isImageTag(g.tag || ""))
   if (!body.allowPartial && criticalGaps.length > 0) {
+    const links = await resolveMcpGenerationLinks(process.id, {
+      documents: [],
+      driveFolderUrl: null,
+      spreadsheetUrl: null,
+      errors: [],
+    })
     return {
       status: "blocked",
       processId: process.id,
       processCode: process.code,
-      driveFolderUrl: null,
-      spreadsheetUrl: null,
-      documents: [],
+      driveFolderUrl: links.driveFolderUrl,
+      spreadsheetUrl: links.spreadsheetUrl,
+      portalProcessUrl: links.portalProcessUrl,
+      documents: links.documents,
+      documentUrls: links.documentUrls,
       gaps,
-      miaExpansions: fill.miaExpansions,
+      miaExpansions,
       fillStats: {
         filled: fill.stats.filled,
         total: fill.stats.total,
-        miaCount: fill.stats.miaCount,
+        miaCount: fill.stats.miaCount || (preMiaExpansions?.length ?? 0),
       },
     }
   }
@@ -158,20 +201,23 @@ export async function mcpAutoGenerateSmart(
 
   const hasErrors = batch.errors.length > 0
   const hasDocs = batch.documents.length > 0
+  const links = await resolveMcpGenerationLinks(process.id, batch)
 
   return {
     status: hasErrors && !hasDocs ? "blocked" : hasErrors || gaps.length > 0 ? "partial" : "complete",
     processId: process.id,
     processCode: process.code,
-    driveFolderUrl: batch.driveFolderUrl,
-    spreadsheetUrl: batch.spreadsheetUrl,
-    documents: batch.documents,
+    driveFolderUrl: links.driveFolderUrl,
+    spreadsheetUrl: links.spreadsheetUrl,
+    portalProcessUrl: links.portalProcessUrl,
+    documents: links.documents,
+    documentUrls: links.documentUrls,
     gaps,
-    miaExpansions: fill.miaExpansions,
+    miaExpansions,
     fillStats: {
       filled: fill.stats.filled,
       total: fill.stats.total,
-      miaCount: fill.stats.miaCount,
+      miaCount: fill.stats.miaCount || (preMiaExpansions?.length ?? 0),
     },
     errors: batch.errors.length > 0 ? batch.errors : undefined,
   }

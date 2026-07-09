@@ -249,7 +249,7 @@ export default function ProcessGenerateSmartPage() {
               <AlertDescription>
                 Se completaron automáticamente {fillStats.filled} de {fillStats.total} etiquetas
                 {fillStats.ragCount > 0 && ` (${fillStats.ragCount} desde documentos)`}
-                {fillStats.miaCount > 0 && ` · ${fillStats.miaCount} segmento(s) ampliados con (MIA)`}.
+                {fillStats.miaCount > 0 && ` · ${fillStats.miaCount} texto(s) ampliado(s) con ...`}.
                 Revise y edite los campos antes de generar.
               </AlertDescription>
             </Alert>
@@ -257,7 +257,7 @@ export default function ProcessGenerateSmartPage() {
           {miaExpansions && miaExpansions.length > 0 && (
             <Alert>
               <AlertDescription className="text-sm space-y-2">
-                <p className="font-medium text-foreground">Textos ampliados con (MIA):</p>
+                <p className="font-medium text-foreground">Textos ampliados con ...:</p>
                 <ul className="list-disc pl-4 space-y-1">
                   {miaExpansions.map((e, i) => (
                     <li key={i}>

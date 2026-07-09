@@ -23,6 +23,7 @@ export type GeneratedDocumentInfo = {
   templateName: string
   documentName: string
   webViewLink: string
+  directLink: string
   drivePath: string
 }
 
@@ -66,6 +67,7 @@ export async function generateAllTemplates(input: GenerateBatchInput): Promise<G
         templateName: template.name,
         documentName: result.documentName,
         webViewLink: result.webViewLink,
+        directLink: result.directLink,
         drivePath: result.drivePath,
       })
 

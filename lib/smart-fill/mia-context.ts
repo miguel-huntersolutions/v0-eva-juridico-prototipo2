@@ -1,20 +1,27 @@
 /**
- * Marcador (MIA) = "Mejorar / ampliar con IA" en el contexto libre.
+ * Marcador de ampliación con IA en el contexto libre.
+ *
+ * Marcador principal: `...` (tres puntos)
+ * Alias legacy: `(MIA)`
  *
  * Ejemplos:
- *   OBJETO: compra de equipos (MIA)
- *   (MIA) El contrato es necesario porque...
- *   Justificación breve (MIA)
+ *   OBJETO: compra de equipos ...
+ *   OBJETO: compra de equipos (MIA). Monto: 2500000
+ *   ... El contrato es necesario porque...
+ *   Justificación breve ...
  */
 
 import type { SmartFillContext } from "@/lib/smart-fill/types"
 
-const MIA_MARKER = /\(MIA\)/i
+/** Token que indica “ampliar con IA” (sufijo o prefijo en la línea). */
+const EXPAND_TOKEN = /(?:\(MIA\)|\.{3})/i
 
 export type MiaSegment = {
   label?: string
   originalText: string
-  /** Fragmento original en el contexto incluyendo (MIA) */
+  /** Texto que sigue al marcador en la misma línea (si hay). */
+  trailingText?: string
+  /** Línea original completa */
   sourceSpan: string
 }
 
@@ -27,53 +34,61 @@ export type MiaPreprocessResult = {
   expansions: MiaExpansion[]
 }
 
-/** Detecta si el contexto usa el marcador (MIA). */
 export function contextHasMiaMarker(userContext: string): boolean {
-  return MIA_MARKER.test(userContext)
+  return userContext.split(/\r?\n/).some((line) => EXPAND_TOKEN.test(line))
 }
 
-/** Extrae segmentos marcados con (MIA) línea por línea. */
-export function extractMiaSegments(userContext: string): MiaSegment[] {
-  const segments: MiaSegment[] = []
-  const lines = userContext.split(/\r?\n/)
+function parseExpandLine(line: string): MiaSegment | null {
+  const trimmed = line.trim()
+  if (!trimmed || !EXPAND_TOKEN.test(trimmed)) return null
 
-  for (const line of lines) {
-    if (!MIA_MARKER.test(line)) continue
-    const trimmed = line.trim()
-    if (!trimmed) continue
-
-    // label: texto (MIA)
-    const labeled = trimmed.match(/^([^:]+):\s*(.+)\(MIA\)\s*$/i)
-    if (labeled) {
-      segments.push({
-        label: labeled[1].trim(),
-        originalText: labeled[2].trim(),
-        sourceSpan: trimmed,
-      })
-      continue
-    }
-
-    // (MIA) texto
-    const prefix = trimmed.match(/^\(MIA\)\s*(.+)$/i)
-    if (prefix) {
-      segments.push({
-        originalText: prefix[1].trim(),
-        sourceSpan: trimmed,
-      })
-      continue
-    }
-
-    // texto (MIA)
-    const suffix = trimmed.match(/^(.+?)\s*\(MIA\)\s*$/i)
-    if (suffix) {
-      segments.push({
-        originalText: suffix[1].trim(),
-        sourceSpan: trimmed,
-      })
+  // label: texto ... | (MIA) [resto de línea]
+  const labeled = trimmed.match(/^([^:]+):\s*(.+?)\s*(?:\(MIA\)|\.{3})\s*(.*)$/i)
+  if (labeled) {
+    const originalText = labeled[2].trim()
+    if (!originalText) return null
+    return {
+      label: labeled[1].trim(),
+      originalText,
+      trailingText: labeled[3]?.trim() || undefined,
+      sourceSpan: trimmed,
     }
   }
 
-  return segments.filter((s) => s.originalText.length > 0)
+  // ... texto | (MIA) texto
+  const prefix = trimmed.match(/^(?:\(MIA\)|\.{3})\s*(.+)$/i)
+  if (prefix) {
+    const originalText = prefix[1].trim()
+    if (!originalText) return null
+    return {
+      originalText,
+      sourceSpan: trimmed,
+    }
+  }
+
+  // texto ... | texto (MIA) [resto]
+  const suffix = trimmed.match(/^(.+?)\s*(?:\(MIA\)|\.{3})\s*(.*)$/i)
+  if (suffix) {
+    const originalText = suffix[1].trim()
+    if (!originalText) return null
+    return {
+      originalText,
+      trailingText: suffix[2]?.trim() || undefined,
+      sourceSpan: trimmed,
+    }
+  }
+
+  return null
+}
+
+/** Extrae segmentos marcados para ampliar con IA, línea por línea. */
+export function extractMiaSegments(userContext: string): MiaSegment[] {
+  const segments: MiaSegment[] = []
+  for (const line of userContext.split(/\r?\n/)) {
+    const seg = parseExpandLine(line)
+    if (seg) segments.push(seg)
+  }
+  return segments
 }
 
 function labelToFieldName(label?: string): string | undefined {
@@ -88,7 +103,15 @@ function labelToFieldName(label?: string): string | undefined {
   return undefined
 }
 
-/** Expande segmentos (MIA) con improveText y reemplaza en el contexto. */
+function buildReplacement(seg: MiaSegment, expandedText: string): string {
+  const trailing = seg.trailingText ? (seg.trailingText.startsWith(".") ? seg.trailingText : `. ${seg.trailingText}`) : ""
+  if (seg.label) {
+    return trailing ? `${seg.label}: ${expandedText}${trailing}` : `${seg.label}: ${expandedText}`
+  }
+  return expandedText
+}
+
+/** Expande segmentos marcados con improveText y reemplaza en el contexto. */
 export async function preprocessMiaContext(
   userContext: string,
   ctx: SmartFillContext,
@@ -117,17 +140,24 @@ export async function preprocessMiaContext(
       const finalText = expandedText?.trim() || seg.originalText
       expansions.push({ ...seg, expandedText: finalText })
 
-      // Reemplazar solo la primera ocurrencia del span en el contexto
-      const replacement = seg.label
-        ? `${seg.label}: ${finalText}`
-        : finalText
+      const replacement = buildReplacement(seg, finalText)
       processedContext = processedContext.replace(seg.sourceSpan, replacement)
     } catch (err) {
       console.error("[mia-context] expand error:", err)
+      const fallback = buildReplacement(seg, seg.originalText)
       expansions.push({ ...seg, expandedText: seg.originalText })
-      processedContext = processedContext.replace(seg.sourceSpan, seg.originalText)
+      processedContext = processedContext.replace(seg.sourceSpan, fallback)
     }
   }
 
   return { processedContext, expansions }
+}
+
+/** Quita marcadores de ampliación que hayan quedado en valores de campos. */
+export function stripExpandMarkersFromValue(value: string): string {
+  return value
+    .replace(/\(MIA\)/gi, "")
+    .replace(/\.{3}/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
 }

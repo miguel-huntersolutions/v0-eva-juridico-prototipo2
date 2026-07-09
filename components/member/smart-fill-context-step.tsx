@@ -107,10 +107,10 @@ export function SmartFillContextStep({
           Incluya montos, fechas, objeto, instrucciones o cualquier dato que deba reflejarse en los documentos.
         </p>
         <p className="text-xs text-muted-foreground border-l-2 border-primary/40 pl-3 mt-2">
-          Use <span className="font-mono font-medium text-foreground">(MIA)</span> junto a un texto breve para que la IA lo
+          Escriba <span className="font-mono font-medium text-foreground">...</span> junto a un texto breve para que la IA lo
           amplíe con redacción jurídica antes de completar los campos. Ejemplos:{" "}
-          <span className="font-mono">OBJETO: compra de equipos (MIA)</span> o{" "}
-          <span className="font-mono">(MIA) El contrato es necesario porque…</span>
+          <span className="font-mono">OBJETO: compra de equipos ...</span> o{" "}
+          <span className="font-mono">... El contrato es necesario porque…</span>
         </p>
       </div>
 
