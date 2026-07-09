@@ -4,11 +4,18 @@
  */
 
 import { google } from "googleapis"
-import { getAuthenticatedOAuth2Client } from "./oauth"
+import { getAuthenticatedOAuth2Client, getAuthenticatedOAuth2ClientForServer } from "./oauth"
+import type { GoogleAuthMode } from "./drive"
+
+async function resolveSheetsAuth(userId: string, authMode: GoogleAuthMode = "session") {
+  return authMode === "service-role"
+    ? getAuthenticatedOAuth2ClientForServer(userId)
+    : getAuthenticatedOAuth2Client(userId)
+}
 
 // Initialize Google Sheets API with OAuth2
-export async function getSheetsClient(userId: string) {
-  const auth = await getAuthenticatedOAuth2Client(userId)
+export async function getSheetsClient(userId: string, authMode: GoogleAuthMode = "session") {
+  const auth = await resolveSheetsAuth(userId, authMode)
   return google.sheets({ version: "v4", auth })
 }
 
@@ -17,7 +24,11 @@ export async function getSheetsClient(userId: string) {
  * @param processCode - The process code (used as spreadsheet name)
  * @returns The spreadsheet ID
  */
-export async function getOrCreateProcessSpreadsheet(userId: string, processCode: string): Promise<string> {
+export async function getOrCreateProcessSpreadsheet(
+  userId: string,
+  processCode: string,
+  authMode: GoogleAuthMode = "session",
+): Promise<string> {
   // Check cache first to avoid duplicate creation during parallel requests
   const cacheKey = `spreadsheet:${userId}:${processCode}`
   const { getCached, setCached, getLock, setLock } = await import("./cache")
@@ -36,16 +47,14 @@ export async function getOrCreateProcessSpreadsheet(userId: string, processCode:
 
   // Create a promise for this creation and lock it
   const creationPromise = (async () => {
-    const auth = await getAuthenticatedOAuth2Client(userId)
-    const sheets = await getSheetsClient(userId)
+    const auth = await resolveSheetsAuth(userId, authMode)
+    const sheets = await getSheetsClient(userId, authMode)
     const drive = google.drive({ version: "v3", auth })
 
     try {
-      // First, get or create the folder structure: plantillas/{processCode}
-      // This ensures the spreadsheet is created in the right place from the start
       const { getOrCreateFolder } = await import("./drive")
-      const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
-      const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId)
+      const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
+      const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
       
       // Search for existing spreadsheet in the specific folder to avoid duplicates
       const escapedProcessCode = processCode.replace(/'/g, "\\'")
@@ -276,8 +285,9 @@ export async function updateSheetData(
   sheetName: string,
   headers: string[],
   data: Record<string, unknown>[],
+  authMode: GoogleAuthMode = "session",
 ): Promise<void> {
-  const sheets = await getSheetsClient(userId)
+  const sheets = await getSheetsClient(userId, authMode)
 
   try {
     // Ensure the sheet exists

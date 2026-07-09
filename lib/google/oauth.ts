@@ -346,3 +346,31 @@ export async function hasValidTokens(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Like hasValidTokens but reads/refreshes tokens with service role (no user session).
+ * Use in MCP and other server-side flows where RLS would block google_oauth_tokens.
+ */
+export async function hasValidTokensWithServiceRole(userId: string): Promise<boolean> {
+  try {
+    const tokens = await getStoredTokensWithServiceRole(userId)
+    if (!tokens) return false
+
+    const now = new Date()
+    const expiryDate = new Date(tokens.expiry_date)
+    const bufferTime = 5 * 60 * 1000
+
+    if (expiryDate.getTime() - now.getTime() < bufferTime) {
+      try {
+        await refreshAccessTokenWithServiceRole(userId)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    return true
+  } catch {
+    return false
+  }
+}
+

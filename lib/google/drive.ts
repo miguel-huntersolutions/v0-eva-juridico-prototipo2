@@ -8,6 +8,15 @@ import { Readable } from "stream"
 import { getDriveRequestTimeoutMs } from "@/lib/app-config"
 import { getAuthenticatedOAuth2Client, getAuthenticatedOAuth2ClientForServer } from "./oauth"
 
+export type GoogleAuthMode = "session" | "service-role"
+
+async function resolveDriveClient(userId: string, authMode: GoogleAuthMode = "session") {
+  if (authMode === "service-role") {
+    return getDriveClientForServer(userId)
+  }
+  return getDriveClient(userId)
+}
+
 // Initialize Google Drive API with OAuth2
 export async function getDriveClient(userId: string) {
   const auth = await getAuthenticatedOAuth2Client(userId)
@@ -32,6 +41,7 @@ export async function getOrCreateFolder(
   folderName: string,
   parentFolderId?: string,
   supportsAllDrives: boolean = true,
+  authMode: GoogleAuthMode = "session",
 ): Promise<string> {
   // Check cache first to avoid duplicate creation during parallel requests
   const cacheKey = `folder:${userId}:${folderName}:${parentFolderId || "root"}`
@@ -44,7 +54,7 @@ export async function getOrCreateFolder(
 
   // Create a promise for this creation and lock it
   const creationPromise = (async () => {
-    const drive = await getDriveClient(userId)
+    const drive = await resolveDriveClient(userId, authMode)
     
     // With OAuth2, each user has their own Drive unless we use Shared Drive or una carpeta (organization)
     const driveId = process.env.GOOGLE_DRIVE_ID
@@ -160,7 +170,7 @@ export async function getOrCreateFolder(
         return result
       }
       // Recursively call with root, which will create a new lock
-      const result = await getOrCreateFolder(userId, folderName, "root", supportsAllDrives)
+      const result = await getOrCreateFolder(userId, folderName, "root", supportsAllDrives, authMode)
       // Cache it with the original key too
       setCached(cacheKey, result)
       return result
@@ -181,13 +191,13 @@ export async function getOrCreateFolder(
  * @param processTypeName - Name of the process type
  * @returns The process type folder ID
  */
-export async function getOrCreateProcessTypeFolder(userId: string, processTypeName: string): Promise<string> {
-  // First, get or create the "plantillas" folder
-  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
-  
-  // Then, get or create the process type folder inside "plantillas"
-  const processTypeFolderId = await getOrCreateFolder(userId, processTypeName, plantillasFolderId)
-  
+export async function getOrCreateProcessTypeFolder(
+  userId: string,
+  processTypeName: string,
+  authMode: GoogleAuthMode = "session",
+): Promise<string> {
+  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
+  const processTypeFolderId = await getOrCreateFolder(userId, processTypeName, plantillasFolderId, true, authMode)
   return processTypeFolderId
 }
 
@@ -303,8 +313,12 @@ export async function uploadFileToDrive(
  * @param drivePath - The path to the file in Drive
  * @returns The file ID if found, null otherwise
  */
-export async function findFileByPath(userId: string, drivePath: string): Promise<string | null> {
-  const drive = await getDriveClient(userId)
+export async function findFileByPath(
+  userId: string,
+  drivePath: string,
+  authMode: GoogleAuthMode = "session",
+): Promise<string | null> {
+  const drive = await resolveDriveClient(userId, authMode)
   
   try {
     // Parse the path: plantillas/{processTypeName}/{fileName}
@@ -317,7 +331,7 @@ export async function findFileByPath(userId: string, drivePath: string): Promise
     const fileName = pathParts[2]
 
     // Get the process type folder
-    const processTypeFolderId = await getOrCreateProcessTypeFolder(userId, processTypeName)
+    const processTypeFolderId = await getOrCreateProcessTypeFolder(userId, processTypeName, authMode)
 
     // Search for the file in that folder
     const query = `name='${fileName}' and '${processTypeFolderId}' in parents and trashed=false`
@@ -343,7 +357,14 @@ export async function findFileByPath(userId: string, drivePath: string): Promise
  * @param fileId - The Google Drive file ID
  * @returns Promise resolving to the file buffer
  */
-export async function downloadFileFromDrive(userId: string, fileId: string): Promise<Buffer> {
+export async function downloadFileFromDrive(
+  userId: string,
+  fileId: string,
+  authMode: GoogleAuthMode = "session",
+): Promise<Buffer> {
+  if (authMode === "service-role") {
+    return downloadFileFromDriveForServer(userId, fileId)
+  }
   const drive = await getDriveClient(userId)
   return downloadFileWithDriveClient(drive, fileId)
 }
@@ -380,6 +401,7 @@ export async function uploadDocumentToDriveFromStream(
   fileName: string,
   mimeType: string,
   processCode: string,
+  authMode: GoogleAuthMode = "session",
 ): Promise<{
   fileId: string
   webViewLink: string
@@ -388,9 +410,9 @@ export async function uploadDocumentToDriveFromStream(
   processFolderId: string
   processFolderUrl: string
 }> {
-  const drive = await getDriveClient(userId)
-  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
-  const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId)
+  const drive = await resolveDriveClient(userId, authMode)
+  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
+  const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
   const driveId = process.env.GOOGLE_DRIVE_ID
   const supportsAllDrives = !!driveId
 
@@ -448,6 +470,7 @@ export async function uploadDocumentToDrive(
   fileName: string,
   mimeType: string,
   processCode: string,
+  authMode: GoogleAuthMode = "session",
 ): Promise<{ 
   fileId: string
   webViewLink: string
@@ -456,12 +479,11 @@ export async function uploadDocumentToDrive(
   processFolderId: string
   processFolderUrl: string
 }> {
-  const drive = await getDriveClient(userId)
+  const drive = await resolveDriveClient(userId, authMode)
 
   try {
-    // Get or create the folder structure: plantillas/{processCode}
-    const plantillasFolderId = await getOrCreateFolder(userId, "plantillas")
-    const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId)
+    const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
+    const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
 
     // Convert Buffer to Stream for Google Drive API
     const bufferStream = Readable.from(fileBuffer)

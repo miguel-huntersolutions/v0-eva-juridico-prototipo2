@@ -1,7 +1,7 @@
 import { runSmartFill } from "@/lib/smart-fill/runner"
 import type { SmartFillContext } from "@/lib/smart-fill/types"
 import { getAllUniqueTags, generateAllTemplates } from "@/lib/document-generation/generate-batch"
-import { hasValidTokens } from "@/lib/google/oauth"
+import { hasValidTokensWithServiceRole } from "@/lib/google/oauth"
 import { getMcpIntegrationUserId } from "./config"
 import { buildGenerationGaps } from "./gaps"
 import {
@@ -82,7 +82,7 @@ export async function mcpAutoGenerateSmart(
     throw new Error("EVA_MCP_INTEGRATION_USER_ID no configurado.")
   }
 
-  const hasGoogle = await hasValidTokens(integrationUserId)
+  const hasGoogle = await hasValidTokensWithServiceRole(integrationUserId)
   if (!hasGoogle) {
     throw new Error("Usuario de integración sin Google vinculado.")
   }
@@ -153,6 +153,7 @@ export async function mcpAutoGenerateSmart(
     entityName: entity.name,
     entityId: body.entityId,
     secretaryName: secretaryCheck.name,
+    googleAuthMode: "service-role",
   })
 
   const hasErrors = batch.errors.length > 0

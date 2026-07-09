@@ -7,10 +7,12 @@ import {
   uploadDocumentToDrive,
   uploadDocumentToDriveFromStream,
   findFileByPath,
+  type GoogleAuthMode,
 } from "@/lib/google/drive"
 import { replaceTagsInDocx } from "@/lib/utils/document-generator"
 import { getOrCreateProcessSpreadsheet, updateSheetData } from "@/lib/google/sheets"
 import { getTemplateById, getProcess, getEntity, createDocument, updateProcess } from "@/lib/supabase/data-access"
+import { getMcpServiceClient } from "@/lib/mcp/service-client"
 
 export type GenerateSingleDocumentInput = {
   googleUserId: string
@@ -25,6 +27,7 @@ export type GenerateSingleDocumentInput = {
   entityName?: string
   entityId?: string
   secretaryName?: string
+  googleAuthMode?: GoogleAuthMode
 }
 
 export type GenerateSingleDocumentResult = {
@@ -53,15 +56,36 @@ export async function generateSingleDocument(
     entityName,
     entityId,
     secretaryName,
+    googleAuthMode = "session",
   } = input
 
-  const tpl = await getTemplateById(templateId)
+  const useServiceRole = googleAuthMode === "service-role"
+  const supabase = useServiceRole ? getMcpServiceClient() : null
+
+  const tpl = useServiceRole
+    ? await (async () => {
+        const { data, error } = await supabase!
+          .from("templates")
+          .select("*")
+          .eq("id", templateId)
+          .single()
+        if (error) throw error
+        return data
+      })()
+    : await getTemplateById(templateId)
+
   if (tpl.file_url !== templatePath) {
     throw new Error("Los datos de la plantilla no coinciden con la selección.")
   }
 
   if (tpl.entity_id && processId) {
-    const proc = await getProcess(processId)
+    const proc = useServiceRole
+      ? await (async () => {
+          const { data, error } = await supabase!.from("processes").select("*").eq("id", processId).single()
+          if (error) throw error
+          return data
+        })()
+      : await getProcess(processId)
     if (proc.entity_id !== tpl.entity_id) {
       throw new Error("Esta plantilla no corresponde a la entidad del proceso.")
     }
@@ -73,18 +97,23 @@ export async function generateSingleDocument(
     if (fileIdMatch?.[1]) templateFileId = fileIdMatch[1]
   }
   if (!templateFileId) {
-    templateFileId = await findFileByPath(googleUserId, templatePath)
+    templateFileId = await findFileByPath(googleUserId, templatePath, googleAuthMode)
   }
   if (!templateFileId) {
     throw new Error("Plantilla no encontrada en Google Drive.")
   }
 
-  const templateBuffer = await downloadFileFromDrive(googleUserId, templateFileId)
+  const templateBuffer = await downloadFileFromDrive(googleUserId, templateFileId, googleAuthMode)
 
   let entityLogoUrl: string | null = null
   if (entityId) {
     try {
-      const entity = await getEntity(entityId)
+      const entity = useServiceRole
+        ? await (async () => {
+            const { data } = await supabase!.from("entities").select("*").eq("id", entityId).single()
+            return data
+          })()
+        : await getEntity(entityId)
       if (entity?.logo_url) entityLogoUrl = entity.logo_url
     } catch {
       // continue without logo
@@ -117,6 +146,7 @@ export async function generateSingleDocument(
         documentName,
         mimeType,
         processCode,
+        googleAuthMode,
       )
     } finally {
       await unlink(tmpPath).catch(() => {})
@@ -128,11 +158,12 @@ export async function generateSingleDocument(
       documentName,
       mimeType,
       processCode,
+      googleAuthMode,
     )
   }
 
   try {
-    await createDocument({
+    const docPayload = {
       process_id: processId,
       name: documentName,
       type: "generated",
@@ -141,7 +172,12 @@ export async function generateSingleDocument(
       file_url: uploadResult.webViewLink,
       file_size: generatedBuffer.length,
       created_by: createdBy,
-    })
+    }
+    if (useServiceRole) {
+      await supabase!.from("documents").insert(docPayload)
+    } else {
+      await createDocument(docPayload)
+    }
   } catch {
     // non-fatal
   }
@@ -160,23 +196,33 @@ export async function generateSingleDocument(
         "Tags Utilizados": tagsUsed,
       },
     ]
-    const spreadsheetId = await getOrCreateProcessSpreadsheet(googleUserId, processCode)
+    const spreadsheetId = await getOrCreateProcessSpreadsheet(googleUserId, processCode, googleAuthMode)
     spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`
-    await updateSheetData(googleUserId, spreadsheetId, "Documentos", headers, data)
-    await updateProcess(processId, {
+    await updateSheetData(googleUserId, spreadsheetId, "Documentos", headers, data, googleAuthMode)
+    const processUpdate = {
       spreadsheet_id: spreadsheetId,
       spreadsheet_url: spreadsheetUrl,
-    } as any)
+    }
+    if (useServiceRole) {
+      await supabase!.from("processes").update(processUpdate).eq("id", processId)
+    } else {
+      await updateProcess(processId, processUpdate as any)
+    }
   } catch {
     // non-fatal
   }
 
   if (uploadResult.processFolderId) {
     try {
-      await updateProcess(processId, {
+      const folderUpdate = {
         drive_folder_id: uploadResult.processFolderId,
         drive_folder_url: uploadResult.processFolderUrl,
-      } as any)
+      }
+      if (useServiceRole) {
+        await supabase!.from("processes").update(folderUpdate).eq("id", processId)
+      } else {
+        await updateProcess(processId, folderUpdate as any)
+      }
     } catch {
       // non-fatal
     }

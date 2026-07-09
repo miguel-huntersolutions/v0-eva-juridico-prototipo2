@@ -1,5 +1,5 @@
 import { getMcpServiceClient } from "./service-client"
-import { normalizePhoneE164 } from "./phone"
+import { normalizePhoneE164, phoneLookupVariants } from "./phone"
 
 export type ChannelType = "telegram" | "whatsapp" | "other"
 
@@ -17,21 +17,44 @@ export async function linkChannelUser(params: {
   externalId: string
   phone: string
 }): Promise<{ ok: true; user: ResolvedMcpUser } | { ok: false; error: string }> {
-  const phone = normalizePhoneE164(params.phone)
-  if (!phone) {
+  const variants = phoneLookupVariants(params.phone)
+  const phone = variants[0] ?? normalizePhoneE164(params.phone)
+  if (!phone || variants.length === 0) {
     return { ok: false, error: "Teléfono inválido. Use formato internacional (+57...)." }
   }
 
   const supabase = getMcpServiceClient()
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("id, email, name, role, organization_id, phone, status")
-    .eq("phone", phone)
-    .maybeSingle()
+  let profile: {
+    id: string
+    email: string
+    name: string
+    role: string
+    organization_id: string | null
+    phone: string | null
+    status: string | null
+  } | null = null
 
-  if (error || !profile) {
-    return { ok: false, error: "Teléfono no registrado en EVA. Contacte al administrador." }
+  for (const candidate of variants) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, email, name, role, organization_id, phone, status")
+      .eq("phone", candidate)
+      .maybeSingle()
+    if (!error && data) {
+      profile = data
+      break
+    }
   }
+
+  if (!profile) {
+    console.warn("[mcp/link-user] Phone not found. Tried variants:", variants, "raw:", params.phone)
+    return {
+      ok: false,
+      error: `Teléfono no registrado en EVA (buscado: ${variants.join(", ")}). Contacte al administrador.`,
+    }
+  }
+
+  const canonicalPhone = normalizePhoneE164(profile.phone || phone) || phone
 
   if (profile.status && profile.status !== "approved") {
     return { ok: false, error: "Cuenta pendiente de aprobación." }
@@ -42,7 +65,7 @@ export async function linkChannelUser(params: {
       channel: params.channel,
       external_id: params.externalId,
       profile_id: profile.id,
-      phone,
+      phone: canonicalPhone,
       active: true,
       linked_at: new Date().toISOString(),
     },
@@ -61,7 +84,7 @@ export async function linkChannelUser(params: {
       name: profile.name,
       role: profile.role,
       organizationId: profile.organization_id,
-      phone,
+      phone: canonicalPhone,
     },
   }
 }

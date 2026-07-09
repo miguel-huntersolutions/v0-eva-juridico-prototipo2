@@ -1,4 +1,5 @@
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
+import type { GoogleAuthMode } from "@/lib/google/drive"
 import { buildReplacementsForTemplates } from "./build-replacements"
 import { generateSingleDocument, type GenerateSingleDocumentResult } from "./generate-single"
 import type { McpTemplate } from "@/lib/mcp/templates"
@@ -14,6 +15,7 @@ export type GenerateBatchInput = {
   entityName: string
   entityId: string
   secretaryName: string
+  googleAuthMode?: GoogleAuthMode
 }
 
 export type GeneratedDocumentInfo = {
@@ -56,6 +58,7 @@ export async function generateAllTemplates(input: GenerateBatchInput): Promise<G
         entityName: input.entityName,
         entityId: input.entityId,
         secretaryName: input.secretaryName,
+        googleAuthMode: input.googleAuthMode,
       })
 
       documents.push({
