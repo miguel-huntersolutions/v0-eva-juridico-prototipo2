@@ -26,7 +26,10 @@ Tras copiar el skill y configurar las variables, reinicia el agente para que car
 
 1. Escribe al bot por Telegram con tu número ya registrado en EVA (`profiles.phone` en formato `+57...`).
 2. El bot debe pedir vinculación o usar `link-user` automáticamente.
-3. Pide generar un contrato o listar procesos.
+3. Prueba:
+   - Pregunta jurídica → `POST /api/mcp/ask`
+   - Generar un contrato → `POST /api/mcp/generate-smart`
+   - Listar procesos → `GET /api/mcp/processes`
 
 ## Referencia técnica
 

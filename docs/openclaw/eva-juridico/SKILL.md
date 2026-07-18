@@ -1,10 +1,11 @@
 ---
 name: eva-juridico
 description: >-
-  Integración con EVA Jurídico para generar documentos legales, listar procesos
-  y compartir enlaces de Google Drive vía Telegram/WhatsApp. Usar cuando el usuario
-  pida generar contratos, procesos de contratación, documentos EVA, ver enlaces
-  Drive, listar procesos o vincular su teléfono con EVA.
+  Integración con EVA Jurídico para generar documentos legales, consultar al
+  asistente jurídico, listar procesos y compartir enlaces de Google Drive vía
+  Telegram/WhatsApp. Usar cuando el usuario pida generar contratos, procesos de
+  contratación, documentos EVA, preguntas jurídicas, ver enlaces Drive, listar
+  procesos o vincular su teléfono con EVA.
 ---
 
 # EVA Jurídico (canal externo)
@@ -37,7 +38,22 @@ El teléfono debe estar **previamente registrado** en EVA por un administrador (
 
 ---
 
-## Flujo obligatorio
+## Cuándo usar cada herramienta
+
+| Intención del usuario | Endpoint |
+|-----------------------|----------|
+| Pregunta jurídica / normativa / “¿qué es…?” / asesoría | `POST /api/mcp/ask` |
+| Generar contrato o documentos | `POST /api/mcp/generate-smart` |
+| Ver mis procesos / buscar código | `GET /api/mcp/processes` |
+| Ver documentos / enlaces Drive | `GET /api/mcp/processes/{processId}` |
+| Elegir entidad / secretaría / tipo | `GET /api/mcp/entities` |
+| Primera vez / vincular teléfono | `POST /api/mcp/link-user` |
+
+**Importante:** no uses `generate-smart` para preguntas. No uses `ask` para generar documentos.
+
+---
+
+## Flujo de generación
 
 ```
 1. link-user (si no vinculado)
@@ -45,6 +61,15 @@ El teléfono debe estar **previamente registrado** en EVA por un administrador (
 3. generate-smart (generar documentos)
 4. Mostrar SIEMPRE documentUrls al usuario
 5. Si faltan links → GET /processes/{processId}
+```
+
+## Flujo de pregunta al asistente
+
+```
+1. link-user (si no vinculado)
+2. POST /ask con message (+ history de turnos recientes)
+3. Responder al usuario con el campo message
+4. Guardar el turno en history para la siguiente pregunta
 ```
 
 ---
@@ -92,7 +117,59 @@ Presenta opciones al usuario y guarda los UUID elegidos: `entityId`, `secretaryI
 
 ---
 
-## 3. Generar documentos (one-shot)
+## 3. Preguntar al asistente jurídico
+
+**POST** `${EVA_BASE_URL}/api/mcp/ask`
+
+Usa esto para consultas legales, normativa de contratación pública, aclaraciones sobre un proceso, o cualquier pregunta que no sea “generar documento”.
+
+```json
+{
+  "channel": "telegram",
+  "externalUserId": "123456789",
+  "message": "¿Qué es la modalidad de selección abreviada?",
+  "history": [
+    { "role": "user", "content": "Hola" },
+    { "role": "assistant", "content": "Hola, ¿en qué te ayudo?" }
+  ],
+  "processId": "uuid-opcional-si-habla-de-un-proceso",
+  "entityId": "uuid-opcional"
+}
+```
+
+| Campo | Obligatorio | Uso |
+|-------|-------------|-----|
+| `message` | Sí | Pregunta actual |
+| `history` | No | Últimos turnos (máx. 20). **Tú** los mantienes entre mensajes |
+| `processId` | No | Si la pregunta es sobre un proceso concreto |
+| `entityId` | No | Contexto de entidad (debe ser accesible al usuario) |
+
+**Respuesta:**
+
+```json
+{
+  "linked": true,
+  "message": "La modalidad de selección abreviada...",
+  "answerSource": "documents"
+}
+```
+
+| `answerSource` | Significado |
+|----------------|-------------|
+| `documents` | Respuesta basada en documentos indexados en EVA |
+| `general` | Respuesta del asesor normativo (sin anclaje suficiente en RAG) |
+
+### Reglas para `ask`
+
+1. Devuelve al usuario el texto de `message` (puedes acortar en Telegram si es muy largo, pero no inventes contenido).
+2. Mantén `history` con los últimos ~10 turnos (user + assistant).
+3. Si el usuario pregunta por un proceso reciente, incluye `processId`.
+4. Si `answerSource` es `documents`, puedes mencionar brevemente que la respuesta se apoya en documentos del sistema.
+5. No digas que “no tienes acceso al asistente EVA”: sí lo tienes vía este endpoint.
+
+---
+
+## 4. Generar documentos (one-shot)
 
 **POST** `${EVA_BASE_URL}/api/mcp/generate-smart`
 
@@ -146,7 +223,7 @@ También acepta `(MIA)` como alias de `...`.
 
 ### Reglas al responder al usuario
 
-1. **Siempre** muestra los enlaces de `documentUrls` o, si está vacío, llama al endpoint de detalle (sección 5).
+1. **Siempre** muestra los enlaces de `documentUrls` o, si está vacío, llama al endpoint de detalle (sección 6).
 2. Guarda `processId` y `processCode` de cada generación.
 3. Si `status` es `partial`, indica qué `gaps` quedaron vacíos pero **igual muestra los links** si existen.
 4. Si `errors` tiene entradas, explícalas en lenguaje claro.
@@ -154,7 +231,7 @@ También acepta `(MIA)` como alias de `...`.
 
 ---
 
-## 4. Listar procesos del usuario
+## 5. Listar procesos del usuario
 
 **GET** `${EVA_BASE_URL}/api/mcp/processes?channel=telegram&externalUserId=123456789&limit=20`
 
@@ -189,7 +266,7 @@ Respuesta:
 
 ---
 
-## 5. Ver documentos de un proceso
+## 6. Ver documentos de un proceso
 
 **GET** `${EVA_BASE_URL}/api/mcp/processes/{processId}?channel=telegram&externalUserId=123456789`
 
@@ -222,20 +299,28 @@ Presenta cada documento como enlace clicable con su nombre.
 
 ## Ejemplos de conversación
 
+### Pregunta jurídica
+
+> Usuario: ¿Cuál es la diferencia entre contratación directa y mínima cuantía?
+
+1. `POST /ask` con ese `message`
+2. Responder con el texto de `message` de la API
+3. Guardar turnos en `history`.
+
 ### Generar
 
 > Usuario: Genera un contrato directo para compra de equipos, 2.5 millones, Alcaldía de Bogotá, Secretaría de Hacienda.
 
-1. `entities` → elegir IDs  
-2. `generate-smart` con `userContext` descriptivo (usa `...` en el OBJETO si es breve)  
+1. `entities` → elegir IDs
+2. `generate-smart` con `userContext` descriptivo (usa `...` en el OBJETO si es breve)
 3. Responder con `processCode`, links de `documentUrls` y gaps si hay campos pendientes.
 
 ### Ver documentos
 
 > Usuario: ¿Dónde están los documentos?
 
-1. Si tienes `processId` reciente → `GET /processes/{processId}`  
-2. Si no → `GET /processes?limit=5` y toma el más reciente  
+1. Si tienes `processId` reciente → `GET /processes/{processId}`
+2. Si no → `GET /processes?limit=5` y toma el más reciente
 3. Lista `documents[].webViewLink` y `driveFolderUrl`.
 
 ### Listar
@@ -255,6 +340,7 @@ Presenta cada documento como enlace clicable con su nombre.
 | No tiene acceso a esta entidad | Listar solo entidades de `entities` |
 | Usuario de integración sin Google | Error del servidor EVA; informar que el admin debe vincular Google en la cuenta de integración |
 | 422 blocked | Hay gaps críticos (imágenes); explicar qué falta |
+| OpenAI API key not configured | Error de servidor; informar al admin |
 
 ---
 
@@ -264,6 +350,7 @@ Presenta cada documento como enlace clicable con su nombre.
 - No decir "solo está en el portal" si puedes obtener links vía API.
 - No omitir `documentUrls` cuando la API los devuelve.
 - No usar la web de EVA en lugar de la API para automatizar.
+- No confundir `ask` (preguntas) con `generate-smart` (generar documentos).
 
 ---
 
@@ -276,5 +363,6 @@ Presenta cada documento como enlace clicable con su nombre.
 | GET | `/api/mcp/processes` |
 | GET | `/api/mcp/processes/{processId}` |
 | POST | `/api/mcp/generate-smart` |
+| POST | `/api/mcp/ask` |
 
 Base: `${EVA_BASE_URL}` · Auth: `Bearer ${EVA_MCP_API_KEY}`

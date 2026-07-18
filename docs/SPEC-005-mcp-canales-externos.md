@@ -32,6 +32,7 @@ EVA_MCP_INTEGRATION_USER_ID=uuid-usuario-con-google-vinculado
 | GET | `/api/mcp/processes` | Lista procesos del usuario (por entidad asignada) |
 | GET | `/api/mcp/processes/[processId]` | Detalle del proceso + documentos y enlaces Drive |
 | POST | `/api/mcp/generate-smart` | Contexto → fill → generar todo → URLs |
+| POST | `/api/mcp/ask` | Asistente jurídico (RAG + asesor normativo) |
 
 Auth: `Authorization: Bearer <EVA_MCP_API_KEY>`
 
@@ -91,6 +92,26 @@ GET /api/mcp/processes/{processId}?channel=telegram&externalUserId=123
 ```
 
 Respuesta: `process` con `documents[]` (`name`, `webViewLink`), `documentUrls[]`, `driveFolderUrl`, `spreadsheetUrl`, `portalProcessUrl`.
+
+---
+
+## 5d. Asistente jurídico (`ask`)
+
+```json
+POST /api/mcp/ask
+{
+  "channel": "telegram",
+  "externalUserId": "123",
+  "message": "¿Qué es la modalidad de selección abreviada?",
+  "history": [{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }],
+  "processId": "uuid-opcional",
+  "entityId": "uuid-opcional"
+}
+```
+
+Respuesta: `{ "message": "...", "answerSource": "documents" | "general" }`.
+
+Mismo motor que el chat web (`runRagFirstThenGeneralChat`). El bot debe mantener `history` (máx. 20 turnos).
 
 ---
 

@@ -42,3 +42,26 @@ export const McpGenerateSmartSchema = z.object({
 })
 
 export type McpGenerateSmartRequest = z.infer<typeof McpGenerateSmartSchema>
+
+/** Pregunta al asistente jurídico (RAG + asesor), para canales externos. */
+export const McpAskSchema = z.object({
+  channel: McpChannelSchema,
+  externalUserId: z.string().min(1),
+  phone: z.string().optional(),
+  message: z.string().min(1).max(8000),
+  /** Últimos turnos de la conversación (el bot los mantiene). */
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().min(1).max(8000),
+      }),
+    )
+    .max(20)
+    .optional(),
+  /** Contexto opcional (proceso/entidad) para enriquecer la pregunta. */
+  processId: z.string().uuid().optional(),
+  entityId: z.string().uuid().optional(),
+})
+
+export type McpAskRequest = z.infer<typeof McpAskSchema>
