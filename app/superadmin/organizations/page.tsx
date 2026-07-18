@@ -25,9 +25,9 @@ export default function SuperadminOrganizationsPage() {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
       <AppSidebar profile={profile} />
-      <main className={`min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-14" : ""}`}>
+      <main className={`min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-8 ${isImpersonating ? "md:pt-14" : ""}`}>
         <OrganizationsPage />
       </main>
     </div>

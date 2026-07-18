@@ -104,6 +104,112 @@ interface MappedDocument {
   driveFolderUrl?: string | null
 }
 
+function getDocumentLink(document: MappedDocument) {
+  const isValidDriveUrl = Boolean(document.fileUrl && document.fileUrl.startsWith("http"))
+  return {
+    isValidDriveUrl,
+    linkUrl: isValidDriveUrl ? document.fileUrl : document.driveFolderUrl || null,
+  }
+}
+
+function DocumentActionsMenu({
+  document,
+  isUpdatingStatus,
+  onAudit,
+  onSendToReview,
+  onReopenAsDraft,
+}: {
+  document: MappedDocument
+  isUpdatingStatus: boolean
+  onAudit: () => void
+  onSendToReview: () => void
+  onReopenAsDraft: () => void
+}) {
+  const { isValidDriveUrl, linkUrl } = getDocumentLink(document)
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">Acciones</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onAudit()
+          }}
+        >
+          <History className="mr-2 h-4 w-4" />
+          Ver auditoría
+        </DropdownMenuItem>
+        {isValidDriveUrl ? (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(document.fileUrl, "_blank")
+            }}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Ver en Drive
+          </DropdownMenuItem>
+        ) : linkUrl ? (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(linkUrl, "_blank")
+            }}
+          >
+            <FolderOpen className="mr-2 h-4 w-4" />
+            Ver Carpeta en Drive
+          </DropdownMenuItem>
+        ) : null}
+        {document.status === "rejected" && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                onReopenAsDraft()
+              }}
+              disabled={isUpdatingStatus}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Volver a borrador (para corregir)
+            </DropdownMenuItem>
+          </>
+        )}
+        {(document.status === "draft" || document.status === "rejected") && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                onSendToReview()
+              }}
+              disabled={isUpdatingStatus}
+            >
+              <Send className="mr-2 h-4 w-4" />
+              Enviar a Revisión
+            </DropdownMenuItem>
+          </>
+        )}
+        {document.status === "in_review" && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled className="text-muted-foreground">
+              <Eye className="mr-2 h-4 w-4" />
+              En revisión (bloqueado)
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function DocumentsPage() {
   const searchParams = useSearchParams()
   const [selectedDocument, setSelectedDocument] = React.useState<MappedDocument | null>(null)
@@ -357,8 +463,29 @@ export function DocumentsPage() {
     ? allDocuments.find((d) => d.processId === processFilter)?.processCode || null
     : null
 
+  const tabOptions = [
+    { value: "all", label: "Todos", count: allDocuments.length },
+    { value: "approved", label: "Aprobados", count: stats.approved },
+    { value: "pending", label: "Pendientes", count: stats.pending },
+    { value: "in_review", label: "En revisión", count: stats.in_review },
+    { value: "draft", label: "Borradores", count: stats.draft },
+    { value: "rejected", label: "Rechazados", count: stats.rejected },
+  ] as const
+
+  const emptyState = (
+    <div className="flex flex-col items-center gap-2 py-12 text-center text-muted-foreground">
+      <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
+      <p>No se encontraron documentos</p>
+      {hasActiveFilters && (
+        <Button variant="link" size="sm" onClick={clearFilters}>
+          Limpiar filtros
+        </Button>
+      )}
+    </div>
+  )
+
   return (
-    <div className="flex flex-col gap-6 p-8">
+    <div className="flex flex-col gap-4 md:gap-6">
       {/* Header */}
       <PageHeader
         title="Gestión de Documentos"
@@ -367,11 +494,11 @@ export function DocumentsPage() {
 
       {filteredByProcessCode && (
         <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="flex flex-row items-center justify-between py-3">
+          <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
               Mostrando documentos del proceso <span className="font-mono font-medium">{filteredByProcessCode}</span>
             </p>
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
+            <Button variant="ghost" size="sm" onClick={clearFilters} className="self-start sm:self-auto">
               <X className="mr-1 h-4 w-4" />
               Ver todos los documentos
             </Button>
@@ -381,8 +508,8 @@ export function DocumentsPage() {
 
       {stats.in_review > 0 && (
         <Card className="border-blue-500/30 bg-blue-500/5">
-          <CardContent className="flex flex-row items-center gap-3 py-3">
-            <Clock className="h-5 w-5 text-blue-500" />
+          <CardContent className="flex flex-row items-start gap-3 py-3 sm:items-center">
+            <Clock className="mt-0.5 h-5 w-5 shrink-0 text-blue-500 sm:mt-0" />
             <p className="text-sm">
               Tiene {stats.in_review} documento{stats.in_review !== 1 ? "s" : ""} en revisión. El administrador los está
               revisando; no podrá editarlos ni enviarlos de nuevo hasta que se aprueben o rechacen.
@@ -392,7 +519,7 @@ export function DocumentsPage() {
       )}
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatsCard title="Total Documentos" value={stats.total} description="En todos los procesos" icon={Files} />
         <StatsCard title="Aprobados" value={stats.approved} description="Listos para uso" icon={CheckCircle2} />
         <StatsCard title="Pendientes" value={stats.pending} description="En espera de revisión" icon={Clock} />
@@ -412,62 +539,54 @@ export function DocumentsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <TabsList>
-                <TabsTrigger value="all" className="gap-2">
-                  Todos
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {allDocuments.length}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="approved" className="gap-2">
-                  Aprobados
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.approved}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="pending" className="gap-2">
-                  Pendientes
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.pending}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="in_review" className="gap-2">
-                  En revisión
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.in_review}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="draft" className="gap-2">
-                  Borradores
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.draft}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="rejected" className="gap-2">
-                  Rechazados
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.rejected}
-                  </Badge>
-                </TabsTrigger>
-              </TabsList>
+            <div className="flex flex-col gap-4">
+              {/* Mobile: status as select to avoid horizontal overflow */}
+              <div className="md:hidden">
+                <Select value={activeTab} onValueChange={setActiveTab}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tabOptions.map((tab) => (
+                      <SelectItem key={tab.value} value={tab.value}>
+                        {tab.label} ({tab.count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Desktop / tablet: scrollable tabs if needed */}
+              <div className="hidden md:block">
+                <div className="-mx-1 overflow-x-auto px-1 pb-1">
+                  <TabsList className="inline-flex h-auto min-w-max w-max">
+                    {tabOptions.map((tab) => (
+                      <TabsTrigger key={tab.value} value={tab.value} className="gap-2">
+                        {tab.label}
+                        <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                          {tab.count}
+                        </Badge>
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </div>
+              </div>
 
               {/* Search and Filters */}
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="relative w-full sm:w-64 sm:shrink-0">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder="Buscar documentos..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-64 pl-9"
+                    className="w-full pl-9"
                   />
                 </div>
 
                 <Select value={entityFilter} onValueChange={setEntityFilter}>
-                  <SelectTrigger className="w-44">
+                  <SelectTrigger className="w-full sm:w-44">
                     <Building className="mr-2 h-4 w-4" />
                     <SelectValue placeholder="Entidad" />
                   </SelectTrigger>
@@ -482,7 +601,7 @@ export function DocumentsPage() {
                 </Select>
 
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger className="w-44">
+                  <SelectTrigger className="w-full sm:w-44">
                     <Filter className="mr-2 h-4 w-4" />
                     <SelectValue placeholder="Tipo" />
                   </SelectTrigger>
@@ -497,7 +616,7 @@ export function DocumentsPage() {
                 </Select>
 
                 {hasActiveFilters && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  <Button variant="ghost" size="sm" onClick={clearFilters} className="self-start">
                     <X className="mr-1 h-4 w-4" />
                     Limpiar
                   </Button>
@@ -505,211 +624,186 @@ export function DocumentsPage() {
               </div>
             </div>
 
-            {/* Table Content */}
             <TabsContent value={activeTab} className="mt-4">
               {isLoadingDocs ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
+              ) : filteredDocuments.length === 0 ? (
+                emptyState
               ) : (
-                <div className="rounded-lg border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="font-semibold">Documento</TableHead>
-                        <TableHead className="font-semibold">Proceso</TableHead>
-                        <TableHead className="font-semibold">Entidad</TableHead>
-                        <TableHead className="font-semibold">Versión</TableHead>
-                        <TableHead className="font-semibold">Estado</TableHead>
-                        <TableHead className="font-semibold">Tamaño</TableHead>
-                        <TableHead className="font-semibold">Actualizado</TableHead>
-                        <TableHead className="w-10"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredDocuments.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
-                            <div className="flex flex-col items-center gap-2">
-                              <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
-                              <p>No se encontraron documentos</p>
-                              {hasActiveFilters && (
-                                <Button variant="link" size="sm" onClick={clearFilters}>
-                                  Limpiar filtros
-                                </Button>
-                              )}
+                <>
+                  {/* Mobile cards */}
+                  <div className="space-y-3 md:hidden">
+                    {filteredDocuments.map((document) => {
+                      const { linkUrl } = getDocumentLink(document)
+                      return (
+                        <div
+                          key={document.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => handleViewDocument(document)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault()
+                              handleViewDocument(document)
+                            }
+                          }}
+                          className="w-full cursor-pointer rounded-lg border bg-card p-3 text-left transition-colors hover:bg-muted/40"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                              <FileText className="h-4 w-4 text-primary" />
                             </div>
-                          </TableCell>
+                            <div className="min-w-0 flex-1 space-y-1">
+                              {linkUrl ? (
+                                <a
+                                  href={linkUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="block truncate font-medium text-primary hover:underline"
+                                  title={document.name}
+                                >
+                                  {document.name}
+                                </a>
+                              ) : (
+                                <p className="truncate font-medium" title={document.name}>
+                                  {document.name}
+                                </p>
+                              )}
+                              <p className="truncate text-xs text-muted-foreground">
+                                {getDocumentTypeName(document.type)} · {document.processCode}
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">{document.entityName}</p>
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <Badge className={statusConfig[document.status]?.className || ""}>
+                                  {statusConfig[document.status]?.label || document.status}
+                                </Badge>
+                                <Badge variant="outline" className="font-mono">
+                                  V{document.version}
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {document.updatedAt
+                                    ? new Date(document.updatedAt).toLocaleDateString("es-CO")
+                                    : "-"}
+                                </span>
+                              </div>
+                            </div>
+                            <DocumentActionsMenu
+                              document={document}
+                              isUpdatingStatus={isUpdatingStatus}
+                              onAudit={() => setAuditDocumentId(document.id)}
+                              onSendToReview={() => handleSendToReview(document)}
+                              onReopenAsDraft={() => handleReopenAsDraft(document)}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Desktop table */}
+                  <div className="hidden overflow-x-auto rounded-lg border md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="font-semibold">Documento</TableHead>
+                          <TableHead className="font-semibold">Proceso</TableHead>
+                          <TableHead className="font-semibold">Entidad</TableHead>
+                          <TableHead className="font-semibold">Versión</TableHead>
+                          <TableHead className="font-semibold">Estado</TableHead>
+                          <TableHead className="font-semibold">Tamaño</TableHead>
+                          <TableHead className="font-semibold">Actualizado</TableHead>
+                          <TableHead className="w-10"></TableHead>
                         </TableRow>
-                      ) : (
-                        filteredDocuments.map((document) => (
-                          <TableRow
-                            key={document.id}
-                            className="cursor-pointer"
-                            onClick={() => handleViewDocument(document)}
-                          >
-                            <TableCell className="w-[420px] max-w-[420px] min-w-0" title={document.name}>
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                                  <FileText className="h-4 w-4 text-primary" />
-                                </div>
-                                <div className="min-w-0 flex-1 overflow-hidden">
-                                  {(() => {
-                                    // Check if fileUrl is a valid Google Drive URL (starts with http)
-                                    const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
-                                    const linkUrl = isValidDriveUrl 
-                                      ? document.fileUrl 
-                                      : (document.driveFolderUrl || null)
-                                    const nameClass = "font-medium block truncate"
-                                    return linkUrl ? (
+                      </TableHeader>
+                      <TableBody>
+                        {filteredDocuments.map((document) => {
+                          const { linkUrl } = getDocumentLink(document)
+                          return (
+                            <TableRow
+                              key={document.id}
+                              className="cursor-pointer"
+                              onClick={() => handleViewDocument(document)}
+                            >
+                              <TableCell className="min-w-0 max-w-[280px] lg:max-w-[420px]" title={document.name}>
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                                    <FileText className="h-4 w-4 text-primary" />
+                                  </div>
+                                  <div className="min-w-0 flex-1 overflow-hidden">
+                                    {linkUrl ? (
                                       <a
                                         href={linkUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={(e) => e.stopPropagation()}
-                                        className={`text-primary hover:underline ${nameClass}`}
+                                        className="block truncate font-medium text-primary hover:underline"
                                         title={document.name}
                                       >
                                         {document.name}
                                       </a>
                                     ) : (
-                                      <p className={nameClass} title={document.name}>{document.name}</p>
-                                    )
-                                  })()}
-                                  <p className="text-xs text-muted-foreground truncate">{getDocumentTypeName(document.type)}</p>
+                                      <p className="block truncate font-medium" title={document.name}>
+                                        {document.name}
+                                      </p>
+                                    )}
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {getDocumentTypeName(document.type)}
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="max-w-xs">
-                                <p className="font-mono text-sm font-medium">{document.processCode}</p>
-                                <p className="text-xs text-muted-foreground truncate">{document.processObject}</p>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm">{document.entityName}</span>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="font-mono">
-                                V{document.version}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <Badge className={statusConfig[document.status]?.className || ""}>
-                                {statusConfig[document.status]?.label || document.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm text-muted-foreground">{formatFileSize(document.fileSize)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm text-muted-foreground">
-                                {document.updatedAt ? new Date(document.updatedAt).toLocaleDateString("es-CO") : "-"}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setAuditDocumentId(document.id)
-                                    }}
-                                  >
-                                    <History className="mr-2 h-4 w-4" />
-                                    Ver auditoría
-                                  </DropdownMenuItem>
-                                  {(() => {
-                                    // Check if fileUrl is a valid Google Drive URL (starts with http)
-                                    const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
-                                    const linkUrl = isValidDriveUrl 
-                                      ? document.fileUrl 
-                                      : (document.driveFolderUrl || null)
-                                    
-                                    if (isValidDriveUrl) {
-                                      return (
-                                        <DropdownMenuItem
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            window.open(document.fileUrl, "_blank")
-                                          }}
-                                        >
-                                          <ExternalLink className="mr-2 h-4 w-4" />
-                                          Ver en Drive
-                                        </DropdownMenuItem>
-                                      )
-                                    } else if (document.driveFolderUrl) {
-                                      return (
-                                        <DropdownMenuItem
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            window.open(document.driveFolderUrl!, "_blank")
-                                          }}
-                                        >
-                                          <FolderOpen className="mr-2 h-4 w-4" />
-                                          Ver Carpeta en Drive
-                                        </DropdownMenuItem>
-                                      )
-                                    }
-                                    return null
-                                  })()}
-                                  {document.status === "rejected" && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleReopenAsDraft(document)
-                                        }}
-                                        disabled={isUpdatingStatus}
-                                      >
-                                        <Pencil className="mr-2 h-4 w-4" />
-                                        Volver a borrador (para corregir)
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                  {(document.status === "draft" || document.status === "rejected") && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleSendToReview(document)
-                                        }}
-                                        disabled={isUpdatingStatus}
-                                      >
-                                        <Send className="mr-2 h-4 w-4" />
-                                        Enviar a Revisión
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                  {document.status === "in_review" && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem disabled className="text-muted-foreground">
-                                        <Eye className="mr-2 h-4 w-4" />
-                                        En revisión (bloqueado)
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                  <DropdownMenuSeparator />
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="max-w-xs">
+                                  <p className="font-mono text-sm font-medium">{document.processCode}</p>
+                                  <p className="truncate text-xs text-muted-foreground">{document.processObject}</p>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm">{document.entityName}</span>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className="font-mono">
+                                  V{document.version}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge className={statusConfig[document.status]?.className || ""}>
+                                  {statusConfig[document.status]?.label || document.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm text-muted-foreground">
+                                  {formatFileSize(document.fileSize)}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm text-muted-foreground">
+                                  {document.updatedAt
+                                    ? new Date(document.updatedAt).toLocaleDateString("es-CO")
+                                    : "-"}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <DocumentActionsMenu
+                                  document={document}
+                                  isUpdatingStatus={isUpdatingStatus}
+                                  onAudit={() => setAuditDocumentId(document.id)}
+                                  onSendToReview={() => handleSendToReview(document)}
+                                  onReopenAsDraft={() => handleReopenAsDraft(document)}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
               )}
 
-              {/* Pagination info */}
               {filteredDocuments.length > 0 && (
                 <div className="flex items-center justify-between pt-4">
                   <p className="text-sm text-muted-foreground">

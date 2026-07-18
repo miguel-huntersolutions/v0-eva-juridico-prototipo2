@@ -20,6 +20,7 @@ import {
   Play,
   BookMarked,
   Layers,
+  Menu,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -29,7 +30,9 @@ import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { getDocsForRole, type DocContent, type DocSection, type Tutorial, type FAQ } from "@/lib/docs-content"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 interface DocsPageProps {
   userRole?: string
@@ -38,10 +41,17 @@ interface DocsPageProps {
 type ViewType = "overview" | "sections" | "tutorials" | "faq" | "all-roles"
 
 export function DocsPage({ userRole = "member" }: DocsPageProps) {
+  const isMobile = useIsMobile()
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [currentRole, setCurrentRole] = useState(userRole)
   const [activeView, setActiveView] = useState<ViewType>("overview")
   const [searchQuery, setSearchQuery] = useState("")
   const [docs, setDocs] = useState<DocContent>(getDocsForRole(userRole))
+
+  const selectView = (view: ViewType) => {
+    setActiveView(view)
+    setMobileNavOpen(false)
+  }
 
   useEffect(() => {
     // Cargar rol desde localStorage
@@ -95,178 +105,214 @@ export function DocsPage({ userRole = "member" }: DocsPageProps) {
     document.body.removeChild(link)
   }
 
-  return (
-    <div className="flex h-full">
-      {/* Sidebar de navegación */}
-      <aside className="w-72 border-r border-border bg-muted/30 flex flex-col">
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center gap-2 mb-4">
-            <Book className="h-5 w-5 text-primary" />
-            <h2 className="font-semibold">Documentación</h2>
+  const renderDocsNav = () => (
+    <div className="flex h-full min-h-0 flex-col bg-muted/30">
+      <div className="border-b border-border p-4">
+        <div className="mb-4 flex items-center gap-2">
+          <Book className="h-5 w-5 text-primary" />
+          <h2 className="font-semibold">Documentación</h2>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar..."
+            className="h-9 pl-9"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="border-b border-border p-3">
+        <h3 className="mb-2 px-2 text-xs font-medium text-muted-foreground">VER DOCUMENTACIÓN DE</h3>
+        <div className="space-y-1">
+          {Object.entries(roleConfig).map(([role, config]) => {
+            const Icon = config.icon
+            return (
+              <button
+                key={role}
+                type="button"
+                onClick={() => handleRoleChange(role)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors",
+                  currentRole === role
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <div className={cn("flex h-6 w-6 items-center justify-center rounded", config.bg)}>
+                  <Icon className={cn("h-3.5 w-3.5", config.color)} />
+                </div>
+                {config.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <ScrollArea className="min-h-0 flex-1 p-3">
+        <div className="space-y-4">
+          <div>
+            <h3 className="mb-2 px-2 text-xs font-medium text-muted-foreground">NAVEGACIÓN</h3>
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => selectView("overview")}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                  activeView === "overview"
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <BookOpen className="h-4 w-4" />
+                Resumen General
+              </button>
+              <button
+                type="button"
+                onClick={() => selectView("sections")}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                  activeView === "sections"
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Layers className="h-4 w-4" />
+                Funcionalidades
+                <Badge variant="secondary" className="ml-auto text-xs">
+                  {docs.sections.length}
+                </Badge>
+              </button>
+              <button
+                type="button"
+                onClick={() => selectView("tutorials")}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                  activeView === "tutorials"
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Play className="h-4 w-4" />
+                Tutoriales
+                <Badge variant="secondary" className="ml-auto text-xs">
+                  {docs.tutorials.length}
+                </Badge>
+              </button>
+              <button
+                type="button"
+                onClick={() => selectView("faq")}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
+                  activeView === "faq"
+                    ? "bg-primary/10 font-medium text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <HelpCircle className="h-4 w-4" />
+                Preguntas Frecuentes
+                <Badge variant="secondary" className="ml-auto text-xs">
+                  {docs.faqs.length}
+                </Badge>
+              </button>
+            </div>
           </div>
-          <div className="relative">
+
+          <div>
+            <h3 className="mb-2 px-2 text-xs font-medium text-muted-foreground">SECCIONES</h3>
+            <div className="space-y-1">
+              {docs.sections.map((section) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => selectView("sections")}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                  <span className="truncate text-left">{section.title}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
+
+      <div className="border-t border-border p-3">
+        <Button variant="outline" size="sm" className="w-full gap-2 bg-transparent" onClick={handleDownloadManual}>
+          <Download className="h-4 w-4" />
+          Descargar Manual PDF
+        </Button>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="flex h-full min-h-0 flex-col md:flex-row">
+      {/* Mobile toolbar */}
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 md:hidden">
+        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setMobileNavOpen(true)}>
+          <Menu className="h-4 w-4" />
+          Índice
+        </Button>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">Documentación</p>
+          <p className="truncate text-xs text-muted-foreground">{currentRoleConfig.label}</p>
+        </div>
+        <Button type="button" variant="ghost" size="icon" className="shrink-0" onClick={handleDownloadManual} title="Descargar Manual PDF">
+          <Download className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <aside className="hidden w-72 shrink-0 flex-col border-r border-border md:flex">{renderDocsNav()}</aside>
+
+      {isMobile && (
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <SheetContent side="left" className="w-[min(20rem,90vw)] gap-0 p-0">
+            <SheetTitle className="sr-only">Navegación de documentación</SheetTitle>
+            {renderDocsNav()}
+          </SheetContent>
+        </Sheet>
+      )}
+
+      {/* Contenido Principal */}
+      <main className="min-h-0 flex-1 overflow-auto">
+        <div className="mx-auto max-w-4xl p-4 md:p-8">
+          <div className="mb-6 flex items-start gap-3 border-b border-border pb-4 md:mb-8 md:items-center md:gap-4 md:pb-6">
+            <div className={cn("flex h-11 w-11 shrink-0 items-center justify-center rounded-xl md:h-14 md:w-14", currentRoleConfig.bg)}>
+              <RoleIcon className={cn("h-5 w-5 md:h-7 md:w-7", currentRoleConfig.color)} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-bold md:text-2xl">{docs.title}</h1>
+                <Badge variant="outline" className={currentRoleConfig.color}>
+                  {currentRoleConfig.label}
+                </Badge>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground md:text-base">{docs.description}</p>
+            </div>
+          </div>
+
+          {/* Mobile search (sidebar search is in drawer) */}
+          <div className="relative mb-4 md:hidden">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar..."
-              className="pl-9 h-9"
+              placeholder="Buscar en la documentación..."
+              className="h-9 pl-9"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
+
+          {activeView === "overview" && (
+            <OverviewView docs={docs} roleConfig={currentRoleConfig} onNavigate={selectView} />
+          )}
+          {activeView === "sections" && <SectionsView sections={searchQuery ? filteredSections : docs.sections} />}
+          {activeView === "tutorials" && (
+            <TutorialsView tutorials={searchQuery ? filteredTutorials : docs.tutorials} />
+          )}
+          {activeView === "faq" && <FAQView faqs={searchQuery ? filteredFaqs : docs.faqs} />}
         </div>
-
-        {/* Selector de Perfil */}
-        <div className="p-3 border-b border-border">
-          <h3 className="text-xs font-medium text-muted-foreground mb-2 px-2">VER DOCUMENTACIÓN DE</h3>
-          <div className="space-y-1">
-            {Object.entries(roleConfig).map(([role, config]) => {
-              const Icon = config.icon
-              return (
-                <button
-                  key={role}
-                  onClick={() => handleRoleChange(role)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-2 text-sm rounded-md transition-colors",
-                    currentRole === role
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <div className={cn("h-6 w-6 rounded flex items-center justify-center", config.bg)}>
-                    <Icon className={cn("h-3.5 w-3.5", config.color)} />
-                  </div>
-                  {config.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <ScrollArea className="flex-1 p-3">
-          <div className="space-y-4">
-            {/* Navegación Principal */}
-            <div>
-              <h3 className="text-xs font-medium text-muted-foreground mb-2 px-2">NAVEGACIÓN</h3>
-              <div className="space-y-1">
-                <button
-                  onClick={() => setActiveView("overview")}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
-                    activeView === "overview"
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <BookOpen className="h-4 w-4" />
-                  Resumen General
-                </button>
-                <button
-                  onClick={() => setActiveView("sections")}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
-                    activeView === "sections"
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <Layers className="h-4 w-4" />
-                  Funcionalidades
-                  <Badge variant="secondary" className="ml-auto text-xs">
-                    {docs.sections.length}
-                  </Badge>
-                </button>
-                <button
-                  onClick={() => setActiveView("tutorials")}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
-                    activeView === "tutorials"
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <Play className="h-4 w-4" />
-                  Tutoriales
-                  <Badge variant="secondary" className="ml-auto text-xs">
-                    {docs.tutorials.length}
-                  </Badge>
-                </button>
-                <button
-                  onClick={() => setActiveView("faq")}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors",
-                    activeView === "faq"
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <HelpCircle className="h-4 w-4" />
-                  Preguntas Frecuentes
-                  <Badge variant="secondary" className="ml-auto text-xs">
-                    {docs.faqs.length}
-                  </Badge>
-                </button>
-              </div>
-            </div>
-
-            {/* Secciones del Rol Actual */}
-            <div>
-              <h3 className="text-xs font-medium text-muted-foreground mb-2 px-2">SECCIONES</h3>
-              <div className="space-y-1">
-                {docs.sections.map((section) => (
-                  <button
-                    key={section.id}
-                    onClick={() => setActiveView("sections")}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors text-muted-foreground hover:bg-muted hover:text-foreground"
-                  >
-                    <ChevronRight className="h-3 w-3" />
-                    {section.title}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </ScrollArea>
-
-        {/* Footer con descarga */}
-        <div className="p-3 border-t border-border">
-          <Button variant="outline" size="sm" className="w-full gap-2 bg-transparent" onClick={handleDownloadManual}>
-            <Download className="h-4 w-4" />
-            Descargar Manual PDF
-          </Button>
-        </div>
-      </aside>
-
-      {/* Contenido Principal */}
-      <main className="flex-1 overflow-auto">
-        <ScrollArea className="h-full">
-          <div className="max-w-4xl mx-auto p-8">
-            {/* Header del Rol */}
-            <div className="flex items-center gap-4 mb-8 pb-6 border-b border-border">
-              <div className={cn("h-14 w-14 rounded-xl flex items-center justify-center", currentRoleConfig.bg)}>
-                <RoleIcon className={cn("h-7 w-7", currentRoleConfig.color)} />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl font-bold">{docs.title}</h1>
-                  <Badge variant="outline" className={currentRoleConfig.color}>
-                    {currentRoleConfig.label}
-                  </Badge>
-                </div>
-                <p className="text-muted-foreground">{docs.description}</p>
-              </div>
-            </div>
-
-            {/* Contenido según vista activa */}
-            {activeView === "overview" && (
-              <OverviewView docs={docs} roleConfig={currentRoleConfig} onNavigate={setActiveView} />
-            )}
-            {activeView === "sections" && <SectionsView sections={searchQuery ? filteredSections : docs.sections} />}
-            {activeView === "tutorials" && (
-              <TutorialsView tutorials={searchQuery ? filteredTutorials : docs.tutorials} />
-            )}
-            {activeView === "faq" && <FAQView faqs={searchQuery ? filteredFaqs : docs.faqs} />}
-          </div>
-        </ScrollArea>
       </main>
     </div>
   )
@@ -510,17 +556,19 @@ function TutorialsView({ tutorials }: { tutorials: Tutorial[] }) {
         </Card>
       ) : (
         <Tabs value={activeTutorial || undefined} onValueChange={setActiveTutorial}>
-          <TabsList className="w-full justify-start h-auto flex-wrap gap-2 bg-transparent p-0 mb-6">
-            {tutorials.map((tutorial) => (
-              <TabsTrigger
-                key={tutorial.id}
-                value={tutorial.id}
-                className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-              >
-                {tutorial.title}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          <div className="-mx-1 mb-6 overflow-x-auto px-1 pb-1">
+            <TabsList className="inline-flex h-auto min-w-max w-max flex-nowrap justify-start gap-2 bg-transparent p-0">
+              {tutorials.map((tutorial) => (
+                <TabsTrigger
+                  key={tutorial.id}
+                  value={tutorial.id}
+                  className="shrink-0 whitespace-nowrap data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  {tutorial.title}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
 
           {tutorials.map((tutorial) => (
             <TabsContent key={tutorial.id} value={tutorial.id} className="mt-0">
@@ -607,17 +655,17 @@ function FAQView({ faqs }: { faqs: FAQ[] }) {
       )}
 
       {/* Contacto adicional */}
-      <Card className="bg-muted/30 mt-8">
+      <Card className="mt-8 bg-muted/30">
         <CardContent className="py-6">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10">
               <Lightbulb className="h-6 w-6 text-primary" />
             </div>
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <h3 className="font-medium">¿No encuentras lo que buscas?</h3>
               <p className="text-sm text-muted-foreground">Contacta al equipo de soporte para resolver tus dudas.</p>
             </div>
-            <Button className="gap-2" asChild>
+            <Button className="w-full gap-2 sm:w-auto" asChild>
               <a href="mailto:miguel@huntersolutions.tech">
                 <MessageSquareText className="h-4 w-4" />
                 Contactar

@@ -233,13 +233,14 @@ export function SuperadminDashboard() {
       key: "actions",
       title: "",
       className: "w-10",
-      render: (org: OrganizationWithCounts) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
+          render: (org: OrganizationWithCounts) => (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">Acciones</span>
+                </Button>
+              </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => startImpersonation(org)}>
               <Eye className="mr-2 h-4 w-4" />
@@ -269,13 +270,13 @@ export function SuperadminDashboard() {
   }
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    <div className="flex flex-col gap-4 md:gap-8">
       <PageHeader title="Panel de Superadministrador" description="Gestiona la plataforma EVA Jurídico de forma global">
         
       </PageHeader>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatsCard
           title="Organizaciones"
           value={stats.totalOrgs}

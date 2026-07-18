@@ -58,8 +58,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useIsMobile } from "@/hooks/use-mobile"
 import {
   mockChatConversations,
   mockPromptTemplates,
@@ -100,10 +102,12 @@ const quickTopics = [
 ]
 
 export function AssistantPage() {
+  const isMobile = useIsMobile()
   const [input, setInput] = React.useState("")
   const [copiedId, setCopiedId] = React.useState<string | null>(null)
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false)
 
   const [activeConversationId, setActiveConversationId] = React.useState<string | null>(null)
   
@@ -276,10 +280,17 @@ export function AssistantPage() {
     setInput("")
     lastSavedAssistantIdRef.current = null
     isSavingRef.current = false
+    setMobileSidebarOpen(false)
+  }
+
+  const openMobileSidebar = (tab: "history" | "prompts") => {
+    setSidebarTab(tab)
+    setMobileSidebarOpen(true)
   }
 
   const handleLoadConversation = async (conversation: ChatConversation) => {
     try {
+      setMobileSidebarOpen(false)
       // Load full conversation with messages from Supabase
       const fullConversation = await loadConversationAPI(conversation.id)
       if (fullConversation) {
@@ -328,6 +339,7 @@ export function AssistantPage() {
   }
 
   const handleUsePrompt = (prompt: PromptTemplate) => {
+    setMobileSidebarOpen(false)
     setInput(prompt.prompt)
     setPrompts((prev) => prev.map((p) => (p.id === prompt.id ? { ...p, usageCount: p.usageCount + 1 } : p)))
     setShowPromptDialog(false)
@@ -392,16 +404,8 @@ export function AssistantPage() {
     [filteredConversations]
   )
 
-  return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] p-8">
-      {/* Header */}
-      <PageHeader
-        title="Asistente Jurídico IA"
-        description="Consulta sobre contratación pública, jurisprudencia y normativa colombiana"
-      />
-
-      <div className="flex-1 grid gap-6 lg:grid-cols-[320px_1fr] mt-6 min-h-0">
-        <div className="flex flex-col gap-4 min-h-0">
+  const renderSidebarPanel = () => (
+        <div className="flex h-full min-h-0 flex-col gap-4">
           {/* New Chat Button */}
           <Button onClick={handleNewChat} className="w-full gap-2">
             <Plus className="h-4 w-4" />
@@ -412,7 +416,7 @@ export function AssistantPage() {
           <Tabs
             value={sidebarTab}
             onValueChange={(v) => setSidebarTab(v as "history" | "prompts")}
-            className="flex-1 flex flex-col min-h-0"
+            className="flex min-h-0 flex-1 flex-col"
           >
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="history" className="gap-2">
@@ -644,33 +648,75 @@ export function AssistantPage() {
             </TabsContent>
           </Tabs>
         </div>
+  )
+
+  return (
+    <div className="-mx-4 -mb-4 flex h-[calc(100dvh-3.5rem)] flex-col md:mx-0 md:mb-0 md:h-[calc(100dvh-5rem)] lg:h-[calc(100dvh-4rem)]">
+      <PageHeader
+        className="hidden shrink-0 lg:block"
+        title="Asistente Jurídico IA"
+        description="Consulta sobre contratación pública, jurisprudencia y normativa colombiana"
+      />
+
+      {/* Mobile toolbar */}
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 lg:hidden">
+        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => openMobileSidebar("history")}>
+          <History className="h-4 w-4" />
+          Historial
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => openMobileSidebar("prompts")}>
+          <Library className="h-4 w-4" />
+          Prompts
+        </Button>
+        <Button type="button" size="sm" className="ml-auto gap-1.5" onClick={handleNewChat}>
+          <Plus className="h-4 w-4" />
+          Nueva
+        </Button>
+      </div>
+
+      <div className="grid min-h-0 flex-1 gap-0 lg:mt-4 lg:grid-cols-[300px_1fr] lg:gap-4">
+        <aside className="hidden min-h-0 flex-col lg:flex">{renderSidebarPanel()}</aside>
+
+        {isMobile && (
+          <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+            <SheetContent side="left" className="flex w-[min(20rem,90vw)] flex-col gap-0 p-4">
+              <SheetTitle className="sr-only">Historial y prompts</SheetTitle>
+              {renderSidebarPanel()}
+            </SheetContent>
+          </Sheet>
+        )}
 
         {/* Main Chat Area */}
-        <Card className="flex flex-col min-h-0">
-          <CardHeader className="flex-shrink-0 border-b pb-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+        <Card className="flex min-h-0 flex-col rounded-none border-0 shadow-none lg:rounded-xl lg:border lg:shadow-sm">
+          <CardHeader className="shrink-0 border-b px-3 py-3 pb-3 sm:px-6 sm:pb-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 sm:h-10 sm:w-10">
                   <Bot className="h-5 w-5 text-primary" />
                 </div>
-                <div>
-                  <CardTitle className="text-lg">EVA Asistente</CardTitle>
-                  <CardDescription className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <CardTitle className="truncate text-base sm:text-lg">EVA Asistente</CardTitle>
+                  <CardDescription className="flex items-center gap-2 truncate">
                     <span
                       className={cn(
-                        "flex h-2 w-2 rounded-full",
+                        "flex h-2 w-2 shrink-0 rounded-full",
                         isLoading ? "bg-amber-500 animate-pulse" : "bg-emerald-500",
                       )}
                     />
-                    {isLoading ? "Procesando..." : "En línea"} - Especializado en contratación pública
+                    <span className="truncate">
+                      {isLoading ? "Procesando..." : "En línea"}
+                      <span className="hidden sm:inline"> - Especializado en contratación pública</span>
+                    </span>
                   </CardDescription>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1 sm:gap-2">
                 {activeConversationId && (
-                  <Badge variant="outline" className="gap-1">
-                    <Clock className="h-3 w-3" />
-                    {conversations.find((c) => c.id === activeConversationId)?.title.slice(0, 20)}...
+                  <Badge variant="outline" className="hidden max-w-[140px] gap-1 truncate sm:inline-flex">
+                    <Clock className="h-3 w-3 shrink-0" />
+                    <span className="truncate">
+                      {conversations.find((c) => c.id === activeConversationId)?.title.slice(0, 20)}
+                    </span>
                   </Badge>
                 )}
                 {isLoading && (
@@ -704,20 +750,20 @@ export function AssistantPage() {
           {/* Messages Area */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <ScrollArea className="h-full" ref={scrollRef}>
-              <div className="p-4 space-y-6">
+              <div className="space-y-4 p-3 sm:space-y-6 sm:p-4">
                 {error && (
                   <Alert variant="destructive" className="mb-4">
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>
                       <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                           <span className="font-medium">
                             {error.message?.includes("quota") || error.message?.includes("insufficient")
                               ? "Cuota de OpenAI agotada"
                               : "Error al procesar tu consulta"}
                           </span>
-                          <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
-                            <RotateCcw className="h-3 w-3 mr-1" />
+                          <Button variant="outline" size="sm" onClick={() => window.location.reload()} className="self-start">
+                            <RotateCcw className="mr-1 h-3 w-3" />
                             Reintentar
                           </Button>
                         </div>
@@ -733,32 +779,33 @@ export function AssistantPage() {
 
                 {messages.length === 0 ? (
                   // Welcome State
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
-                      <Sparkles className="h-8 w-8 text-primary" />
+                  <div className="flex flex-col items-center justify-center py-6 text-center sm:py-12">
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 sm:h-16 sm:w-16">
+                      <Sparkles className="h-7 w-7 text-primary sm:h-8 sm:w-8" />
                     </div>
-                    <h3 className="text-xl font-semibold mb-2">¿En qué puedo ayudarte hoy?</h3>
-                    <p className="text-muted-foreground max-w-md mb-8">
+                    <h3 className="mb-2 text-lg font-semibold sm:text-xl">¿En qué puedo ayudarte hoy?</h3>
+                    <p className="mb-6 max-w-md text-sm text-muted-foreground sm:mb-8">
                       Soy tu asistente especializado en contratación pública colombiana. Puedo ayudarte con consultas
                       sobre la Ley 80, el Decreto 1082, jurisprudencia del Consejo de Estado y más.
                     </p>
 
                     {/* Suggested Questions */}
-                    <div className="grid gap-3 sm:grid-cols-2 w-full max-w-2xl">
+                    <div className="grid w-full max-w-2xl gap-3 sm:grid-cols-2">
                       {suggestedQuestions.map((item) => (
                         <button
                           key={item.title}
+                          type="button"
                           onClick={() => handleSuggestedQuestion(item.question)}
-                          className="flex items-start gap-3 p-4 rounded-xl border bg-card text-left transition-all hover:border-primary/50 hover:bg-primary/5"
+                          className="flex items-start gap-3 rounded-xl border bg-card p-3 text-left transition-all hover:border-primary/50 hover:bg-primary/5 sm:p-4"
                         >
                           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                             <item.icon className="h-4 w-4 text-primary" />
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-sm">{item.title}</p>
-                            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{item.question}</p>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium">{item.title}</p>
+                            <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.question}</p>
                           </div>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                          <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                         </button>
                       ))}
                     </div>
@@ -772,10 +819,10 @@ export function AssistantPage() {
                       return (
                         <div
                           key={message.id}
-                          className={cn("flex gap-3", message.role === "user" ? "justify-end" : "justify-start")}
+                          className={cn("flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")}
                         >
                           {message.role === "assistant" && (
-                            <Avatar className="h-8 w-8 shrink-0">
+                            <Avatar className="hidden h-8 w-8 shrink-0 sm:flex">
                               <AvatarFallback className="bg-primary/10">
                                 <Bot className="h-4 w-4 text-primary" />
                               </AvatarFallback>
@@ -783,17 +830,17 @@ export function AssistantPage() {
                           )}
                           <div
                             className={cn(
-                              "max-w-[80%] rounded-2xl px-4 py-3",
+                              "min-w-0 max-w-[92%] rounded-2xl px-3 py-2.5 sm:max-w-[80%] sm:px-4 sm:py-3",
                               message.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted",
                             )}
                           >
                             {message.role === "assistant" ? (
-                              <div className="space-y-3 font-normal">
+                              <div className="space-y-3 overflow-x-auto font-normal">
                                 <div
-                                  className="prose prose-sm dark:prose-invert max-w-none font-normal [&>*]:font-normal [&_strong]:font-semibold"
+                                  className="prose prose-sm dark:prose-invert max-w-none break-words font-normal [&>*]:font-normal [&_strong]:font-semibold [&_pre]:overflow-x-auto [&_table]:block [&_table]:overflow-x-auto"
                                   dangerouslySetInnerHTML={{ __html: renderContent(messageText) }}
                                 />
-                                <div className="flex items-center gap-2 pt-2 border-t border-border/50">
+                                <div className="flex items-center gap-2 border-t border-border/50 pt-2">
                                   <TooltipProvider>
                                     <Tooltip>
                                       <TooltipTrigger asChild>
@@ -816,11 +863,11 @@ export function AssistantPage() {
                                 </div>
                               </div>
                             ) : (
-                              <p className="text-sm whitespace-pre-wrap">{messageText}</p>
+                              <p className="whitespace-pre-wrap break-words text-sm">{messageText}</p>
                             )}
                           </div>
                           {message.role === "user" && (
-                            <Avatar className="h-8 w-8 shrink-0">
+                            <Avatar className="hidden h-8 w-8 shrink-0 sm:flex">
                               <AvatarFallback className="bg-primary">
                                 <User className="h-4 w-4 text-primary-foreground" />
                               </AvatarFallback>
@@ -853,19 +900,19 @@ export function AssistantPage() {
           </div>
 
           {/* Input Area */}
-          <div className="flex-shrink-0 p-4 border-t">
-            <form onSubmit={handleSubmit} className="flex gap-3">
-              <div className="flex-1 relative">
+          <div className="shrink-0 border-t p-3 sm:p-4">
+            <form onSubmit={handleSubmit} className="flex gap-2 sm:gap-3">
+              <div className="relative min-w-0 flex-1">
                 <Textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Escribe tu consulta jurídica..."
-                  className="min-h-[56px] max-h-[200px] resize-none pr-12"
+                  className="max-h-[160px] min-h-[48px] resize-none pr-12 sm:min-h-[56px] sm:max-h-[200px]"
                   disabled={isLoading}
                 />
-                <div className="absolute right-2 bottom-2">
+                <div className="absolute bottom-2 right-2">
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -879,12 +926,12 @@ export function AssistantPage() {
                 </div>
               </div>
             </form>
-            <div className="flex items-center gap-2 mt-2">
+            <div className="mt-2 flex items-center gap-2 overflow-x-auto pb-1">
               {quickTopics.map((topic) => (
                 <Badge
                   key={topic.label}
                   variant="outline"
-                  className={cn("cursor-pointer text-xs", topic.color)}
+                  className={cn("shrink-0 cursor-pointer text-xs", topic.color)}
                   onClick={() => {
                     setInput(`Explícame sobre ${topic.label}`)
                     textareaRef.current?.focus()

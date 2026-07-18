@@ -69,6 +69,132 @@ import { CreateProcessDialog } from "./create-process-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
+function getStatusOptions(currentStatus: string) {
+  const allStatuses = [
+    { value: "draft", label: "Borrador", icon: Pencil },
+    { value: "in_progress", label: "En Progreso", icon: Play },
+    { value: "review", label: "En Revisión", icon: Clock },
+    { value: "completed", label: "Completado", icon: CheckCircle },
+    { value: "archived", label: "Archivado", icon: Archive },
+  ]
+  return allStatuses.filter((s) => s.value !== currentStatus)
+}
+
+function ProcessActionsMenu({
+  process,
+  isUpdatingStatus,
+  onView,
+  onDelete,
+  onUpdateStatus,
+}: {
+  process: ProcessMapped
+  isUpdatingStatus: boolean
+  onView: () => void
+  onDelete: () => void
+  onUpdateStatus: (status: string) => void
+}) {
+  const router = useRouter()
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">Acciones</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onView()
+          }}
+        >
+          <Eye className="mr-2 h-4 w-4" />
+          Ver detalles
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            router.push(`/member/documents?processId=${process.id}`)
+          }}
+        >
+          <Files className="mr-2 h-4 w-4" />
+          Ver documentos del proceso
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            router.push(`/member/processes/${process.id}/generate`)
+          }}
+        >
+          <Play className="mr-2 h-4 w-4" />
+          Generar documentos
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            router.push(`/member/processes/${process.id}/generate-smart`)
+          }}
+        >
+          <Sparkles className="mr-2 h-4 w-4" />
+          Generar con IA (contexto)
+        </DropdownMenuItem>
+        {process.spreadsheetUrl && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(process.spreadsheetUrl!, "_blank")
+            }}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Ver en Google Sheets
+          </DropdownMenuItem>
+        )}
+        {process.driveFolderUrl && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(process.driveFolderUrl!, "_blank")
+            }}
+          >
+            <FolderKanban className="mr-2 h-4 w-4" />
+            Ver Carpeta en Drive
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        {getStatusOptions(process.status).map((statusOption) => {
+          const Icon = statusOption.icon
+          return (
+            <DropdownMenuItem
+              key={statusOption.value}
+              onClick={(e) => {
+                e.stopPropagation()
+                onUpdateStatus(statusOption.value)
+              }}
+              disabled={isUpdatingStatus}
+            >
+              <Icon className="mr-2 h-4 w-4" />
+              Cambiar a {statusOption.label}
+            </DropdownMenuItem>
+          )
+        })}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="text-destructive"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Eliminar
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function ProcessesPage() {
   const router = useRouter()
   const { profile } = useProfile()
@@ -207,17 +333,6 @@ export function ProcessesPage() {
     }
   }
 
-  const getStatusOptions = (currentStatus: string) => {
-    const allStatuses = [
-      { value: "draft", label: "Borrador", icon: Pencil },
-      { value: "in_progress", label: "En Progreso", icon: Play },
-      { value: "review", label: "En Revisión", icon: Clock },
-      { value: "completed", label: "Completado", icon: CheckCircle },
-      { value: "archived", label: "Archivado", icon: Archive },
-    ]
-    return allStatuses.filter((s) => s.value !== currentStatus)
-  }
-
   // Filter processes
   const filteredProcesses = processes.filter((process) => {
     const matchesSearch =
@@ -252,20 +367,32 @@ export function ProcessesPage() {
   const hasActiveFilters =
     searchQuery || statusFilter !== "all" || entityFilter !== "all" || processTypeFilter !== "all"
 
+  const emptyState = (
+    <div className="flex flex-col items-center gap-2 py-12 text-center">
+      <FolderKanban className="h-8 w-8 text-muted-foreground" />
+      <p className="text-muted-foreground">No se encontraron procesos</p>
+      {hasActiveFilters && (
+        <Button variant="link" size="sm" onClick={clearFilters}>
+          Limpiar filtros
+        </Button>
+      )}
+    </div>
+  )
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 md:gap-6">
       <PageHeader
         title="Mis Procesos"
         description={`Gestiona y monitorea todos tus procesos de contratación (${processes.length} procesos)`}
       >
-        <Button className="gap-2" onClick={() => setIsCreateDialogOpen(true)}>
+        <Button className="w-full gap-2 sm:w-auto" onClick={() => setIsCreateDialogOpen(true)}>
           <Plus className="h-4 w-4" />
           Nuevo Proceso
         </Button>
       </PageHeader>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <StatsCard title="Total Procesos" value={stats.total} description="Procesos registrados" icon={FolderKanban} />
         <StatsCard title="Borradores" value={stats.draft} description="Pendientes de iniciar" icon={FileText} />
         <StatsCard title="En Progreso" value={stats.inProgress} description="Procesos activos" icon={Clock} />
@@ -276,7 +403,7 @@ export function ProcessesPage() {
       {/* Filters */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <CardTitle className="text-base">Filtros</CardTitle>
@@ -290,18 +417,18 @@ export function ProcessesPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-4">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+            <div className="relative w-full sm:min-w-[200px] sm:flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por código, entidad o secretaría..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
+                className="w-full pl-9"
               />
             </div>
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ProcessStatus)}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
               <SelectContent>
@@ -314,7 +441,7 @@ export function ProcessesPage() {
               </SelectContent>
             </Select>
             <Select value={entityFilter} onValueChange={setEntityFilter}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <Building className="mr-2 h-4 w-4" />
                 <SelectValue placeholder="Entidad" />
               </SelectTrigger>
@@ -334,7 +461,7 @@ export function ProcessesPage() {
               </SelectContent>
             </Select>
             <Select value={processTypeFilter} onValueChange={setProcessTypeFilter}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue placeholder="Tipo de proceso" />
               </SelectTrigger>
               <SelectContent>
@@ -356,7 +483,7 @@ export function ProcessesPage() {
         </CardContent>
       </Card>
 
-      {/* Processes Table */}
+      {/* Processes list */}
       <Card>
         <CardHeader>
           <CardTitle>Listado de Procesos</CardTitle>
@@ -370,149 +497,122 @@ export function ProcessesPage() {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
+          ) : filteredProcesses.length === 0 ? (
+            emptyState
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[120px]">Código</TableHead>
-                  <TableHead>Entidad</TableHead>
-                  <TableHead>Secretaría</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-center">Docs</TableHead>
-                  <TableHead>Actualizado</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProcesses.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <FolderKanban className="h-8 w-8 text-muted-foreground" />
-                        <p className="text-muted-foreground">No se encontraron procesos</p>
-                        {hasActiveFilters && (
-                          <Button variant="link" size="sm" onClick={clearFilters}>
-                            Limpiar filtros
-                          </Button>
-                        )}
+            <>
+              {/* Mobile cards */}
+              <div className="space-y-3 md:hidden">
+                {filteredProcesses.map((process) => (
+                  <div
+                    key={process.id}
+                    className="rounded-lg border bg-card p-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                        <FolderKanban className="h-4 w-4 text-primary" />
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredProcesses.map((process) => (
-                    <TableRow key={process.id} className="group">
-                      <TableCell className="font-mono text-sm font-medium">
+                      <div className="min-w-0 flex-1 space-y-1">
                         <Link
                           href={`/member/documents?processId=${process.id}`}
-                          className="text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+                          className="block truncate font-mono text-sm font-medium text-primary hover:underline"
                         >
                           {process.code}
                         </Link>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="font-normal">
-                          {process.entityName}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{process.secretaryName}</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{process.processTypeName}</span>
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={process.status} />
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="secondary">{process.documentsCount}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedProcess(process)
-                                setIsViewDialogOpen(true)
-                              }}
-                            >
-                              <Eye className="mr-2 h-4 w-4" />
-                              Ver detalles
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/member/documents?processId=${process.id}`)}
-                            >
-                              <Files className="mr-2 h-4 w-4" />
-                              Ver documentos del proceso
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/member/processes/${process.id}/generate`)}
-                            >
-                              <Play className="mr-2 h-4 w-4" />
-                              Generar documentos
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/member/processes/${process.id}/generate-smart`)}
-                            >
-                              <Sparkles className="mr-2 h-4 w-4" />
-                              Generar con IA (contexto)
-                            </DropdownMenuItem>
-                            {process.spreadsheetUrl && (
-                              <DropdownMenuItem
-                                onClick={() => window.open(process.spreadsheetUrl!, "_blank")}
-                              >
-                                <ExternalLink className="mr-2 h-4 w-4" />
-                                Ver en Google Sheets
-                              </DropdownMenuItem>
-                            )}
-                            {process.driveFolderUrl && (
-                              <DropdownMenuItem
-                                onClick={() => window.open(process.driveFolderUrl!, "_blank")}
-                              >
-                                <FolderKanban className="mr-2 h-4 w-4" />
-                                Ver Carpeta en Drive
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            {/* Status Change Options */}
-                            {getStatusOptions(process.status).map((statusOption) => {
-                              const Icon = statusOption.icon
-                              return (
-                                <DropdownMenuItem
-                                  key={statusOption.value}
-                                  onClick={() => handleUpdateStatus(process, statusOption.value)}
-                                  disabled={isUpdatingStatus}
-                                >
-                                  <Icon className="mr-2 h-4 w-4" />
-                                  Cambiar a {statusOption.label}
-                                </DropdownMenuItem>
-                              )
-                            })}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => {
-                                setSelectedProcess(process)
-                                setIsDeleteDialogOpen(true)
-                              }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Eliminar
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+                        <p className="truncate text-sm">{process.entityName}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {process.secretaryName}
+                          {process.processTypeName ? ` · ${process.processTypeName}` : ""}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <StatusBadge status={process.status} />
+                          <Badge variant="secondary">{process.documentsCount} docs</Badge>
+                          <span className="text-xs text-muted-foreground">{process.updatedAt}</span>
+                        </div>
+                      </div>
+                      <ProcessActionsMenu
+                        process={process}
+                        isUpdatingStatus={isUpdatingStatus}
+                        onView={() => {
+                          setSelectedProcess(process)
+                          setIsViewDialogOpen(true)
+                        }}
+                        onDelete={() => {
+                          setSelectedProcess(process)
+                          setIsDeleteDialogOpen(true)
+                        }}
+                        onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden overflow-x-auto rounded-lg border md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[120px]">Código</TableHead>
+                      <TableHead>Entidad</TableHead>
+                      <TableHead>Secretaría</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-center">Docs</TableHead>
+                      <TableHead>Actualizado</TableHead>
+                      <TableHead className="w-[50px]"></TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProcesses.map((process) => (
+                      <TableRow key={process.id} className="group">
+                        <TableCell className="font-mono text-sm font-medium">
+                          <Link
+                            href={`/member/documents?processId=${process.id}`}
+                            className="rounded text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                          >
+                            {process.code}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="font-normal">
+                            {process.entityName}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{process.secretaryName}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{process.processTypeName}</span>
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={process.status} />
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="secondary">{process.documentsCount}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
+                        <TableCell>
+                          <ProcessActionsMenu
+                            process={process}
+                            isUpdatingStatus={isUpdatingStatus}
+                            onView={() => {
+                              setSelectedProcess(process)
+                              setIsViewDialogOpen(true)
+                            }}
+                            onDelete={() => {
+                              setSelectedProcess(process)
+                              setIsDeleteDialogOpen(true)
+                            }}
+                            onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

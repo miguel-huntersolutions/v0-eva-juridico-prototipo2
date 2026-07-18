@@ -22,6 +22,7 @@ import {
   UserCog,
   ArrowLeftRight,
   RefreshCw,
+  Menu,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -40,6 +41,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { createClient } from "@/lib/supabase/client"
 import type { Profile, UserRole } from "@/lib/types/database"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
@@ -100,169 +102,133 @@ interface AppSidebarProps {
   selectedOrganizationId?: string
 }
 
-export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebarProps) {
-  const pathname = usePathname()
+type SidebarPanelProps = {
+  filteredItems: NavItem[]
+  pathname: string
+  userName: string
+  userAvatar: string | null | undefined
+  effectiveRole: UserRole
+  isImpersonating: boolean
+  isSimulating: boolean
+  impersonatedOrg: { name: string } | null
+  selectedOrganization: { name: string } | null
+  canChangeOrganization: boolean
+  canSwitchRole: boolean
+  getRoleLabel: (role: UserRole) => string
+  getRoleBadgeColor: (role: UserRole) => string
+  stopImpersonation: () => void
+  handleRoleSwitch: (role: UserRole | null) => void
+  handleChangeOrganization: () => void
+  handleLogout: () => void
+  onNavigate?: () => void
+  showBrandHeader?: boolean
+}
+
+function SidebarPanel({
+  filteredItems,
+  pathname,
+  userName,
+  userAvatar,
+  effectiveRole,
+  isImpersonating,
+  isSimulating,
+  impersonatedOrg,
+  selectedOrganization,
+  canChangeOrganization,
+  canSwitchRole,
+  getRoleLabel,
+  getRoleBadgeColor,
+  stopImpersonation,
+  handleRoleSwitch,
+  handleChangeOrganization,
+  handleLogout,
+  onNavigate,
+  showBrandHeader = true,
+}: SidebarPanelProps) {
   const router = useRouter()
 
-  const userData = profile ||
-    user || {
-      id: "",
-      name: "Usuario",
-      email: "",
-      role: "member" as UserRole,
-      avatar_url: null,
-    }
-
-  const actualRole = userData.role || "member"
-  const userName = userData.name || ("full_name" in userData ? (userData as any).full_name : "Usuario")
-  const userAvatar =
-    ("avatar_url" in userData ? userData.avatar_url : null) || ("avatar" in userData ? (userData as any).avatar : null)
-
-  const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(actualRole)
-  const { isImpersonating, impersonatedOrg, stopImpersonation } = useImpersonation()
-
-  const { selectedOrganization, canChangeOrganization, clearSelection } = useOrganizationSelector({
-    userOrganizationId: profile?.organization_id,
-    isSuperadmin: actualRole === "superadmin",
-    isSimulatingAdmin: isSimulating && effectiveRole === "admin",
-  })
-
-  const filteredItems = React.useMemo(() => {
-    const filtered = navItems.filter((item) => item.roles.includes(effectiveRole))
-    // Debug: log filtered items in development
-    if (process.env.NODE_ENV === "development") {
-      console.log("[Sidebar] Effective role:", effectiveRole, "Filtered items:", filtered.map((i) => i.href))
-    }
-    return filtered
-  }, [effectiveRole])
-
-  const getRoleLabel = (role: UserRole) => {
-    switch (role) {
-      case "superadmin":
-        return "Superadministrador"
-      case "admin":
-        return "Administrador"
-      case "member":
-        return "Asesor Jurídico"
-    }
-  }
-
-  const getRoleBadgeColor = (role: UserRole) => {
-    switch (role) {
-      case "superadmin":
-        return "bg-primary/20 text-primary border-primary/30"
-      case "admin":
-        return "bg-chart-2/20 text-chart-2 border-chart-2/30"
-      case "member":
-        return "bg-chart-3/20 text-chart-3 border-chart-3/30"
-    }
-  }
-
-  const handleLogout = async () => {
-    resetRole()
-    clearSelection()
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push("/auth/login")
-    router.refresh()
-  }
-
-  const handleRoleSwitch = (role: UserRole | null) => {
-    switchToRole(role)
-    if (role !== "admin") {
-      clearSelection()
-    }
-    if (role === null || role === "superadmin") {
-      router.push("/dashboard")
-    } else if (role === "admin") {
-      router.push("/dashboard")
-    } else if (role === "member") {
-      router.push("/member/dashboard")
-    }
-  }
-
-  const handleChangeOrganization = () => {
-    clearSelection()
-    window.location.reload()
-  }
-
   return (
-    <aside className="flex h-dvh w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border overflow-hidden">
-      {/* Logo */}
-      <div className="flex-shrink-0 flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-          <FileText className="h-5 w-5 text-primary-foreground" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold tracking-tight">EVA Jurídico</span>
-          <span className="text-xs text-sidebar-foreground/60">Gestión Legal</span>
-        </div>
-      </div>
-
-      {/* Status Banners */}
-      {(isImpersonating || isSimulating || (effectiveRole === "admin" && selectedOrganization)) && (
-        <div className="flex-shrink-0 space-y-2 px-3 pt-3">
-        {isImpersonating && impersonatedOrg && (
-          <div className="rounded-lg bg-primary/10 border border-primary/30 p-2">
-            <div className="flex items-center gap-2 text-xs text-primary">
-              <RefreshCw className="h-3.5 w-3.5" />
-              <span className="font-medium">Suplantando: {impersonatedOrg.name}</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-1.5 h-6 w-full text-xs text-primary hover:text-primary hover:bg-primary/20"
-              onClick={stopImpersonation}
-            >
-              <RefreshCw className="mr-1.5 h-3 w-3" />
-              Salir de Suplantación
-            </Button>
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
+      {showBrandHeader && (
+        <div className="flex h-16 flex-shrink-0 items-center gap-3 border-b border-sidebar-border px-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+            <FileText className="h-5 w-5 text-primary-foreground" />
           </div>
-        )}
-
-        {isSimulating && (
-          <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-2">
-            <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
-              <ArrowLeftRight className="h-3.5 w-3.5" />
-              <span className="font-medium">Modo vista: {getRoleLabel(effectiveRole)}</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-1.5 h-6 w-full text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/20"
-              onClick={() => handleRoleSwitch(null)}
-            >
-              <ShieldCheck className="mr-1.5 h-3 w-3" />
-              Volver a Superadmin
-            </Button>
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold tracking-tight">EVA Jurídico</span>
+            <span className="text-xs text-sidebar-foreground/60">Gestión Legal</span>
           </div>
-        )}
-
-        {effectiveRole === "admin" && selectedOrganization && (
-          <div className="rounded-lg bg-muted/50 border p-2">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Building2 className="h-3.5 w-3.5" />
-              <span className="font-medium truncate">{selectedOrganization.name}</span>
-            </div>
-            {canChangeOrganization && (
-              <Button variant="ghost" size="sm" className="mt-1.5 h-6 w-full text-xs" onClick={handleChangeOrganization}>
-                <RefreshCw className="mr-1.5 h-3 w-3" />
-                Cambiar Organización
-              </Button>
-            )}
-          </div>
-        )}
         </div>
       )}
 
-      {/* Navigation */}
-      <nav className="flex-1 min-h-0 space-y-1 overflow-y-auto px-3 py-4">
+      {(isImpersonating || isSimulating || (effectiveRole === "admin" && selectedOrganization)) && (
+        <div className="flex-shrink-0 space-y-2 px-3 pt-3">
+          {isImpersonating && impersonatedOrg && (
+            <div className="rounded-lg border border-primary/30 bg-primary/10 p-2">
+              <div className="flex items-center gap-2 text-xs text-primary">
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span className="font-medium">Suplantando: {impersonatedOrg.name}</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-1.5 h-6 w-full text-xs text-primary hover:bg-primary/20 hover:text-primary"
+                onClick={stopImpersonation}
+              >
+                <RefreshCw className="mr-1.5 h-3 w-3" />
+                Salir de Suplantación
+              </Button>
+            </div>
+          )}
+
+          {isSimulating && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
+              <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+                <span className="font-medium">Modo vista: {getRoleLabel(effectiveRole)}</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-1.5 h-6 w-full text-xs text-amber-600 hover:bg-amber-500/20 hover:text-amber-700"
+                onClick={() => handleRoleSwitch(null)}
+              >
+                <ShieldCheck className="mr-1.5 h-3 w-3" />
+                Volver a Superadmin
+              </Button>
+            </div>
+          )}
+
+          {effectiveRole === "admin" && selectedOrganization && (
+            <div className="rounded-lg border bg-muted/50 p-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Building2 className="h-3.5 w-3.5" />
+                <span className="truncate font-medium">{selectedOrganization.name}</span>
+              </div>
+              {canChangeOrganization && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1.5 h-6 w-full text-xs"
+                  onClick={handleChangeOrganization}
+                >
+                  <RefreshCw className="mr-1.5 h-3 w-3" />
+                  Cambiar Organización
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4">
         {filteredItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
           return (
             <Link
               key={`${item.href}-${item.title}`}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200",
                 isActive
@@ -275,7 +241,7 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
               {item.badge && (
                 <Badge
                   variant="secondary"
-                  className="ml-auto h-5 px-1.5 text-[10px] bg-primary/20 text-primary border-0"
+                  className="ml-auto h-5 border-0 bg-primary/20 px-1.5 text-[10px] text-primary"
                 >
                   {item.badge}
                 </Badge>
@@ -285,7 +251,6 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
         })}
       </nav>
 
-      {/* Theme Toggle */}
       <div className="flex-shrink-0 border-t border-sidebar-border px-3 py-3">
         <div className="flex items-center justify-between">
           <span className="text-xs text-sidebar-foreground/60">Apariencia</span>
@@ -293,14 +258,13 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
         </div>
       </div>
 
-      {/* User Profile */}
       <div className="flex-shrink-0 border-t border-sidebar-border p-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="w-full justify-start gap-3 px-2 py-6 hover:bg-sidebar-accent">
               <Avatar className="h-9 w-9">
                 <AvatarImage src={userAvatar || undefined} alt={userName} />
-                <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                <AvatarFallback className="bg-primary/20 text-xs text-primary">
                   {userName
                     .split(" ")
                     .map((n: string) => n[0])
@@ -310,28 +274,25 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
               <div className="flex flex-col items-start text-left">
                 <span className="text-sm font-medium text-sidebar-foreground">{userName}</span>
                 <div className="flex items-center gap-1.5">
-                  <Badge variant="outline" className={cn("text-[10px] h-4", getRoleBadgeColor(effectiveRole))}>
+                  <Badge variant="outline" className={cn("h-4 text-[10px]", getRoleBadgeColor(effectiveRole))}>
                     {getRoleLabel(effectiveRole)}
                   </Badge>
                   {isImpersonating && (
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] h-4 bg-primary/20 text-primary border-primary/30"
-                    >
+                    <Badge variant="outline" className="h-4 border-primary/30 bg-primary/20 text-[10px] text-primary">
                       Suplantando
                     </Badge>
                   )}
                   {isSimulating && (
                     <Badge
                       variant="outline"
-                      className="text-[10px] h-4 bg-amber-500/20 text-amber-600 border-amber-500/30"
+                      className="h-4 border-amber-500/30 bg-amber-500/20 text-[10px] text-amber-600"
                     >
                       Vista
                     </Badge>
                   )}
                 </div>
                 {isImpersonating && impersonatedOrg && (
-                  <span className="text-xs text-sidebar-foreground/60 mt-0.5 truncate w-full">
+                  <span className="mt-0.5 w-full truncate text-xs text-sidebar-foreground/60">
                     {impersonatedOrg.name}
                   </span>
                 )}
@@ -342,11 +303,21 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
           <DropdownMenuContent align="start" className="w-56">
             <DropdownMenuLabel>Mi Cuenta</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/account/profile")}>
+            <DropdownMenuItem
+              onClick={() => {
+                onNavigate?.()
+                router.push("/account/profile")
+              }}
+            >
               <UserCircle className="mr-2 h-4 w-4" />
               Perfil
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/account/settings")}>
+            <DropdownMenuItem
+              onClick={() => {
+                onNavigate?.()
+                router.push("/account/settings")
+              }}
+            >
               <Settings className="mr-2 h-4 w-4" />
               Configuración
             </DropdownMenuItem>
@@ -421,6 +392,158 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </aside>
+    </div>
+  )
+}
+
+export function AppSidebar({ profile, user }: AppSidebarProps) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const [mobileOpen, setMobileOpen] = React.useState(false)
+
+  const userData = profile ||
+    user || {
+      id: "",
+      name: "Usuario",
+      email: "",
+      role: "member" as UserRole,
+      avatar_url: null,
+    }
+
+  const actualRole = userData.role || "member"
+  const userName = userData.name || ("full_name" in userData ? (userData as any).full_name : "Usuario")
+  const userAvatar =
+    ("avatar_url" in userData ? userData.avatar_url : null) || ("avatar" in userData ? (userData as any).avatar : null)
+
+  const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(actualRole)
+  const { isImpersonating, impersonatedOrg, stopImpersonation } = useImpersonation()
+
+  const { selectedOrganization, canChangeOrganization, clearSelection } = useOrganizationSelector({
+    userOrganizationId: profile?.organization_id,
+    isSuperadmin: actualRole === "superadmin",
+    isSimulatingAdmin: isSimulating && effectiveRole === "admin",
+  })
+
+  const filteredItems = React.useMemo(
+    () => navItems.filter((item) => item.roles.includes(effectiveRole)),
+    [effectiveRole],
+  )
+
+  React.useEffect(() => {
+    setMobileOpen(false)
+  }, [pathname])
+
+  const getRoleLabel = (role: UserRole) => {
+    switch (role) {
+      case "superadmin":
+        return "Superadministrador"
+      case "admin":
+        return "Administrador"
+      case "member":
+        return "Asesor Jurídico"
+    }
+  }
+
+  const getRoleBadgeColor = (role: UserRole) => {
+    switch (role) {
+      case "superadmin":
+        return "bg-primary/20 text-primary border-primary/30"
+      case "admin":
+        return "bg-chart-2/20 text-chart-2 border-chart-2/30"
+      case "member":
+        return "bg-chart-3/20 text-chart-3 border-chart-3/30"
+    }
+  }
+
+  const handleLogout = async () => {
+    resetRole()
+    clearSelection()
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push("/auth/login")
+    router.refresh()
+  }
+
+  const handleRoleSwitch = (role: UserRole | null) => {
+    switchToRole(role)
+    if (role !== "admin") {
+      clearSelection()
+    }
+    if (role === null || role === "superadmin") {
+      router.push("/dashboard")
+    } else if (role === "admin") {
+      router.push("/dashboard")
+    } else if (role === "member") {
+      router.push("/member/dashboard")
+    }
+  }
+
+  const handleChangeOrganization = () => {
+    clearSelection()
+    window.location.reload()
+  }
+
+  const panelProps: SidebarPanelProps = {
+    filteredItems,
+    pathname,
+    userName,
+    userAvatar,
+    effectiveRole,
+    isImpersonating,
+    isSimulating,
+    impersonatedOrg,
+    selectedOrganization,
+    canChangeOrganization,
+    canSwitchRole,
+    getRoleLabel,
+    getRoleBadgeColor,
+    stopImpersonation,
+    handleRoleSwitch,
+    handleChangeOrganization,
+    handleLogout,
+  }
+
+  return (
+    <>
+      {/* Mobile top bar + drawer */}
+      <div
+        className={cn(
+          "sticky z-40 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background/95 px-3 backdrop-blur md:hidden",
+          isImpersonating ? "top-[48px] mt-[48px]" : "top-0",
+        )}
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="shrink-0"
+          aria-label="Abrir menú"
+          onClick={() => setMobileOpen(true)}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary">
+            <FileText className="h-4 w-4 text-primary-foreground" />
+          </div>
+          <span className="truncate text-sm font-semibold tracking-tight">EVA Jurídico</span>
+        </div>
+      </div>
+
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetContent
+          side="left"
+          className="w-[min(20rem,85vw)] gap-0 border-sidebar-border bg-sidebar p-0 text-sidebar-foreground [&>button]:text-sidebar-foreground"
+        >
+          <SheetTitle className="sr-only">Menú de navegación</SheetTitle>
+          <SidebarPanel {...panelProps} onNavigate={() => setMobileOpen(false)} />
+        </SheetContent>
+      </Sheet>
+
+      {/* Desktop sidebar */}
+      <aside className="hidden h-dvh w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
+        <SidebarPanel {...panelProps} />
+      </aside>
+    </>
   )
 }

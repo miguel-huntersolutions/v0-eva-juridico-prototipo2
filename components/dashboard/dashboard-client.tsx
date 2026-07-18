@@ -28,9 +28,9 @@ export function DashboardClient({ profile }: DashboardClientProps) {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
       <AppSidebar profile={profile} />
-      <main className={`min-h-0 flex-1 overflow-y-auto ${isImpersonating ? "pt-[48px]" : ""}`}>{renderContent()}</main>
+      <main className={`min-h-0 flex-1 overflow-y-auto ${isImpersonating ? "md:pt-[48px]" : ""}`}>{renderContent()}</main>
     </div>
   )
 }

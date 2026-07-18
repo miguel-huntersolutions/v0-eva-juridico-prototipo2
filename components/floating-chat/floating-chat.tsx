@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePathname } from "next/navigation"
 import { Bot, X, Send, Minimize2, Maximize2, Loader2, AlertCircle, MessageSquarePlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -36,6 +37,9 @@ function renderMessageContent(content: string) {
 }
 
 export function FloatingChat() {
+  const pathname = usePathname()
+  const isOnAssistantPage = pathname?.startsWith("/member/assistant") ?? false
+
   const [isOpen, setIsOpen] = React.useState(false)
   const [isMinimized, setIsMinimized] = React.useState(false)
   const [inputText, setInputText] = React.useState("")
@@ -129,6 +133,13 @@ export function FloatingChat() {
     }
   }, [isOpen, isMinimized])
 
+  React.useEffect(() => {
+    if (isOnAssistantPage && isOpen) {
+      setIsOpen(false)
+      setIsMinimized(false)
+    }
+  }, [isOnAssistantPage, isOpen])
+
   const handleNewChat = () => {
     setMessages([])
     setActiveConversationId(null)
@@ -160,7 +171,12 @@ export function FloatingChat() {
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
+    <div
+      className={cn(
+        "fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3",
+        isOnAssistantPage && "hidden md:flex",
+      )}
+    >
       {isOpen && (
         <div
           className={cn(
