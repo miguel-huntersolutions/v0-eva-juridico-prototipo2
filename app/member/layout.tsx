@@ -27,7 +27,7 @@ export default function MemberLayout({
   return (
     <SidebarProvider>
       <AppSidebar profile={profile} />
-      <SidebarInset className={`overflow-y-auto px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</SidebarInset>
+      <SidebarInset className={`px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</SidebarInset>
       <FloatingChat />
     </SidebarProvider>
   )

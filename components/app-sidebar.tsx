@@ -187,7 +187,7 @@ export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebar
   }
 
   return (
-    <aside className="flex h-screen w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border overflow-hidden">
+    <aside className="flex h-dvh w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border overflow-hidden">
       {/* Logo */}
       <div className="flex-shrink-0 flex h-16 items-center gap-3 border-b border-sidebar-border px-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">

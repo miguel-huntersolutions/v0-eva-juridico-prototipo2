@@ -23,9 +23,9 @@ export default function AccountLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       <AppSidebar profile={profile} />
-      <main className={`flex-1 overflow-y-auto bg-background ${isImpersonating ? "pt-[48px]" : ""}`}>
+      <main className={`min-h-0 flex-1 overflow-y-auto bg-background ${isImpersonating ? "pt-[48px]" : ""}`}>
         {children}
       </main>
     </div>

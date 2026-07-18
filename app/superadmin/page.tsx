@@ -34,9 +34,9 @@ export default function SuperadminPage() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       <AppSidebar profile={profile} />
-      <main className={`flex-1 overflow-y-auto px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-14" : ""}`}>
+      <main className={`min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8 md:py-8 ${isImpersonating ? "pt-14" : ""}`}>
         <SuperadminDashboard />
       </main>
     </div>

@@ -25,9 +25,9 @@ export default function DocsLayout({
 
   return (
     <SidebarProvider>
-      <div className="flex h-screen w-full overflow-hidden">
+      <div className="flex h-dvh w-full overflow-hidden">
         <AppSidebar profile={profile} />
-        <main className={`flex-1 overflow-y-auto ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</main>
+        <main className={`min-h-0 flex-1 overflow-y-auto ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</main>
       </div>
     </SidebarProvider>
   )
