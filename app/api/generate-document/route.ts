@@ -250,11 +250,22 @@ export async function POST(request: NextRequest) {
     if (processId) {
       try {
         const { createDocument } = await import("@/lib/supabase/data-access")
+        // RF-015 (CAP-04): versionado. Si ya existe un documento con el mismo nombre
+        // en este proceso, la nueva generación es la versión N+1 (no pisa la anterior).
+        const { data: existing } = await supabase
+          .from("documents")
+          .select("version")
+          .eq("process_id", processId)
+          .eq("name", documentName)
+          .order("version", { ascending: false })
+          .limit(1)
+        const nextVersion = existing && existing.length > 0 ? (existing[0].version || 1) + 1 : 1
+
         await createDocument({
           process_id: processId,
           name: documentName,
           type: "generated", // or extract from template name
-          version: 1,
+          version: nextVersion,
           status: "draft",
           file_url: uploadResult.webViewLink, // Store the Google Drive URL
           file_size: generatedBuffer.length,

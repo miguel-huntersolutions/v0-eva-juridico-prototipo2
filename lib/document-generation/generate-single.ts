@@ -171,11 +171,37 @@ export async function generateSingleDocument(
 
   // RF-010 (CAP-02): el registro en DB NO es opcional; si falla, la generación falla
   // (el archivo ya está en Drive y se reporta su enlace para conciliación).
+  // RF-015 (CAP-04): versionado. Nueva generación = versión N+1 del mismo nombre.
+  let nextVersion = 1
+  try {
+    const versionQuery = useServiceRole
+      ? await supabase!
+          .from("documents")
+          .select("version")
+          .eq("process_id", processId)
+          .eq("name", documentName)
+          .order("version", { ascending: false })
+          .limit(1)
+      : await (await import("@/lib/supabase/server")).createServerClient().then((s) =>
+          s
+            .from("documents")
+            .select("version")
+            .eq("process_id", processId)
+            .eq("name", documentName)
+            .order("version", { ascending: false })
+            .limit(1),
+        )
+    const rows = (versionQuery as any).data
+    if (rows && rows.length > 0) nextVersion = (rows[0].version || 1) + 1
+  } catch {
+    // si falla la consulta de versión, se queda en 1
+  }
+
   const docPayload = {
     process_id: processId,
     name: documentName,
     type: "generated",
-    version: 1,
+    version: nextVersion,
     status: "draft" as const,
     file_url: uploadResult.webViewLink,
     file_size: generatedBuffer.length,

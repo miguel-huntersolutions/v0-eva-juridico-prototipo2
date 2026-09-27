@@ -147,15 +147,27 @@ function DocumentActionsMenu({
           Ver auditoría
         </DropdownMenuItem>
         {isValidDriveUrl ? (
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation()
-              window.open(document.fileUrl, "_blank")
-            }}
-          >
-            <ExternalLink className="mr-2 h-4 w-4" />
-            Ver en Drive
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                window.open(document.fileUrl, "_blank")
+              }}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Ver en Drive
+            </DropdownMenuItem>
+            {/* RF-038 (CAP-04): editar el documento vigente en Google Docs/Editor de Drive */}
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                window.open(document.fileUrl, "_blank")
+              }}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Editar en Google Docs
+            </DropdownMenuItem>
+          </>
         ) : linkUrl ? (
           <DropdownMenuItem
             onClick={(e) => {
