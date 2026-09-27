@@ -1,4 +1,6 @@
+import { NextResponse } from "next/server"
 import { createChatRoute } from "@/lib/ai-chat/create-chat-api-route"
+import { requireAuth } from "@/lib/supabase/require-auth"
 import { getChatMaxDuration } from "@/lib/app-config"
 import {
   getOpenAIChatModelString,
@@ -21,9 +23,16 @@ const SYSTEM_PROMPT = `${ASESOR_JURIDICO_CHAT_WEB_MODE_PREFIX}${getAsesorJuridic
 - Listas numeradas o con viñetas cuando ayuden a la lectura
 - Al cierre, cuando aplique: **Fuentes consultadas:** (normas citadas) y recordatorio breve de la advertencia ética si el caso lo requiere.`
 
-export const POST = createChatRoute({
+const chatHandler = createChatRoute({
   systemPrompt: SYSTEM_PROMPT,
   model: getOpenAIChatModelString(),
   temperature: getAsesorJuridicoTemperature(ASESOR_JURIDICO_TEMPERATURE_DEFAULT),
   maxDuration: getChatMaxDuration(),
 })
+
+// RF-005 (CAP-01): exigir sesión antes de consumir el modelo.
+export async function POST(req: Request) {
+  const { error } = await requireAuth()
+  if (error) return error
+  return chatHandler(req)
+}

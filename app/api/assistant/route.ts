@@ -6,11 +6,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { runRagFirstThenGeneralChat } from "@/lib/ai-chat/workflow-runner"
 import { fetchConversation } from "@/lib/ai-chat/services/conversations-api"
+import { requireAuth } from "@/lib/supabase/require-auth"
 
 /** Segment config must be static; runtime can use ASSISTANT_MAX_DURATION / Vercel. */
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
+  // RF-005 (CAP-01): exigir sesión antes de consumir el modelo.
+  const { error: authError } = await requireAuth()
+  if (authError) return authError
+
   try {
     if (!process.env.OPENAI_API_KEY?.trim()) {
       return NextResponse.json(

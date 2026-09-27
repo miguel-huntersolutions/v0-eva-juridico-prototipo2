@@ -5,11 +5,16 @@
  */
 
 import { askSimple } from "@/lib/ai-chat/ask-simple"
+import { requireAuth } from "@/lib/supabase/require-auth"
 import { NextRequest, NextResponse } from "next/server"
 
 export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
+  // RF-005 (CAP-01): exigir sesión antes de consumir el modelo.
+  const { error: authError } = await requireAuth()
+  if (authError) return authError
+
   try {
     const body = await req.json()
     const { question, fieldLabel, model } = body
