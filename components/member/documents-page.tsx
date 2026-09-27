@@ -50,6 +50,7 @@ import {
 } from "@/components/ui/dialog"
 import { documentTypes } from "@/lib/mock-data"
 import { DocumentAuditLog } from "@/components/document-audit-log"
+import { ProcessAttachments } from "@/components/member/process-attachments"
 import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
@@ -505,6 +506,8 @@ export function DocumentsPage() {
           </CardContent>
         </Card>
       )}
+
+      {processFilter !== "all" && <ProcessAttachments processId={processFilter} />}
 
       {stats.in_review > 0 && (
         <Card className="border-blue-500/30 bg-blue-500/5">
