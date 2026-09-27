@@ -48,7 +48,7 @@ export async function GET(
       .from("processes")
       .select(`
         *,
-        entity:entities(id, name),
+        entity:entities(id, name, organization_id),
         secretary:secretaries(id, name),
         process_type:process_types(id, name)
       `)
@@ -57,6 +57,12 @@ export async function GET(
 
     if (error || !p) {
       return NextResponse.json({ error: "Process not found" }, { status: 404 })
+    }
+
+    // RF-006 (CAP-01): un admin solo puede leer procesos de su organización.
+    const processOrgId = (p as any).entity?.organization_id
+    if (profile.role === "admin" && profile.organization_id !== processOrgId) {
+      return NextResponse.json({ error: "Forbidden: process belongs to another organization" }, { status: 403 })
     }
 
     const { count } = await service.from("documents").select("*", { count: "exact", head: true }).eq("process_id", processId)
