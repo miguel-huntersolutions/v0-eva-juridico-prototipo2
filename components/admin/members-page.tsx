@@ -483,6 +483,7 @@ export function MembersPage() {
         throw new Error(error.message || "Error al enviar la invitación")
       }
 
+      const invitedEmail = inviteData.email
       const result = await response.json()
       console.log("[MembersPage] Member created successfully:", result)
       
@@ -498,6 +499,13 @@ export function MembersPage() {
       
       // Switch to "approved" tab to show the newly invited member (invitations are approved)
       setStatusFilter("approved")
+
+      if (result.inviteLink && result.emailSent === false) {
+        setInvitationResult({
+          message: result.message || `Usuario creado para ${invitedEmail}. El correo no se envió automáticamente (SMTP).`,
+          inviteLink: result.inviteLink,
+        })
+      }
     } catch (err) {
       console.error("Error sending invitation:", err)
       alert(err instanceof Error ? err.message : "Error al enviar la invitación")

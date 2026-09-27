@@ -354,8 +354,9 @@ export function OrganizationsPage() {
       setInviteError(null)
 
       // Create the admin member (this will send the invitation email automatically)
-      await createMember({
-        email: inviteAdminForm.email,
+      const inviteEmail = inviteAdminForm.email
+      const created = await createMember({
+        email: inviteEmail,
         name: inviteAdminForm.name,
         role: "admin",
         organizationId: selectedOrg.id,
@@ -369,7 +370,16 @@ export function OrganizationsPage() {
       setIsInviteAdminOpen(false)
       setInviteAdminForm({ name: "", email: "", message: "" })
       
-      alert(`Invitación enviada exitosamente a ${inviteAdminForm.email}`)
+      if (created.inviteLink && created.emailSent === false) {
+        try {
+          await navigator.clipboard.writeText(created.inviteLink)
+          alert(`Usuario creado para ${inviteEmail}. El correo no se envió (SMTP). Enlace de invitación copiado al portapapeles.`)
+        } catch {
+          alert(`Usuario creado. Comparte este enlace:\n${created.inviteLink}`)
+        }
+      } else {
+        alert(`Invitación enviada exitosamente a ${inviteEmail}`)
+      }
     } catch (err) {
       console.error("[v0] Error sending admin invitation:", err)
       const errorMessage = err instanceof Error ? err.message : "Error al enviar la invitación"

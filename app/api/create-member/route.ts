@@ -30,11 +30,19 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { email, name, role, organizationId, avatarUrl, entityIds, isInvitation } = body
+    const { name, role, organizationId, avatarUrl, entityIds, isInvitation } = body
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
 
     if (!email || !name || !role || !organizationId) {
       return NextResponse.json(
         { error: "Missing required fields: email, name, role, organizationId" },
+        { status: 400 },
+      )
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json(
+        { error: "Invalid email", message: `El correo "${email}" no tiene un formato válido` },
         { status: 400 },
       )
     }
@@ -86,29 +94,33 @@ export async function POST(request: NextRequest) {
     const baseUrl = getAppUrl()
     const redirectTo = `${baseUrl}/auth/update-password?invite=true&org=${organizationId}`
     
+    const userMetadata = {
+      name,
+      role: finalRole,
+      organization_id: organizationId,
+    }
+
     // First, check if user already exists
     let existingUser = null
     try {
       const { data: users } = await serviceRoleClient.auth.admin.listUsers()
-      existingUser = users.users.find((u) => u.email === email)
+      existingUser = users.users.find((u) => u.email?.toLowerCase() === email)
     } catch {
       // Will proceed with invitation
     }
 
     let inviteData: any = null
     let inviteError: any = null
+    let inviteLink: string | null = null
+    let emailSent = false
 
     if (existingUser) {
       const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
         type: "invite",
-        email: email,
+        email,
         options: {
           redirectTo,
-          data: {
-            name,
-            role: finalRole,
-            organization_id: organizationId,
-          },
+          data: userMetadata,
         },
       })
       
@@ -116,33 +128,94 @@ export async function POST(request: NextRequest) {
         console.error("[create-member] Error generating invite link:", linkErr)
         inviteError = linkErr
       } else {
-        // Create a mock response structure for existing users
+        inviteLink = linkData?.properties?.action_link ?? null
         inviteData = {
           user: existingUser,
           properties: linkData?.properties,
         }
       }
     } else {
-      // User doesn't exist: always use inviteUserByEmail so Supabase sends the invite email
-      // (tanto para invitaciones como para creación de administradores desde superadmin)
+      // Prefer inviteUserByEmail so Supabase sends the invite email when SMTP is configured.
       const { data: inviteResult, error: inviteErr } = await serviceRoleClient.auth.admin.inviteUserByEmail(
         email,
         {
-          data: {
-            name,
-            role: finalRole,
-            organization_id: organizationId,
-          },
+          data: userMetadata,
           redirectTo,
         },
       )
 
       if (inviteErr) {
-        inviteError = inviteErr
+        // Without custom SMTP, Supabase rejects invites to external addresses
+        // (often as "Email address is invalid" / not_authorized). Fall back to
+        // createUser + generateLink so the member can still be created.
+        const msg = (inviteErr.message || "").toLowerCase()
+        const canFallback =
+          msg.includes("invalid") ||
+          msg.includes("not authorized") ||
+          msg.includes("not_authorized") ||
+          msg.includes("error sending") ||
+          msg.includes("smtp")
+
+        if (canFallback) {
+          console.warn(
+            "[create-member] inviteUserByEmail failed, falling back to createUser+generateLink:",
+            inviteErr.message,
+          )
+
+          const { data: created, error: createErr } = await serviceRoleClient.auth.admin.createUser({
+            email,
+            email_confirm: true,
+            user_metadata: userMetadata,
+          })
+
+          let fallbackUser = created?.user ?? null
+
+          if (createErr) {
+            const createMsg = (createErr.message || "").toLowerCase()
+            if (createMsg.includes("already") || createMsg.includes("registered") || createMsg.includes("exists")) {
+              try {
+                const { data: users } = await serviceRoleClient.auth.admin.listUsers()
+                fallbackUser = users.users.find((u) => u.email?.toLowerCase() === email) ?? null
+              } catch {
+                fallbackUser = null
+              }
+            }
+
+            if (!fallbackUser) {
+              inviteError = createErr
+            }
+          }
+
+          if (fallbackUser) {
+            const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
+              type: "invite",
+              email,
+              options: {
+                redirectTo,
+                data: userMetadata,
+              },
+            })
+
+            if (linkErr) {
+              console.error("[create-member] Fallback generateLink failed:", linkErr)
+            }
+
+            inviteLink = linkData?.properties?.action_link ?? null
+            inviteData = {
+              user: fallbackUser,
+              properties: linkData?.properties,
+            }
+            emailSent = false
+            inviteError = null
+          }
+        } else {
+          inviteError = inviteErr
+        }
       } else if (inviteResult?.user) {
         inviteData = {
           user: inviteResult.user,
         }
+        emailSent = true
       }
     }
     
@@ -258,7 +331,14 @@ export async function POST(request: NextRequest) {
       }
       
       return NextResponse.json(
-        { error: "Failed to create user", message: inviteError.message },
+        {
+          error: "Failed to create user",
+          message:
+            inviteError.message?.toLowerCase().includes("invalid") ||
+            inviteError.message?.toLowerCase().includes("not authorized")
+              ? `No se pudo invitar a "${email}". Si usas el SMTP por defecto de Supabase, configura un SMTP propio (Auth → SMTP) o revisa docs/supabase-smtp-config.md. Detalle: ${inviteError.message}`
+              : inviteError.message,
+        },
         { status: 500 },
       )
     }
@@ -435,6 +515,13 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({
       success: true,
+      emailSent,
+      inviteLink,
+      message: emailSent
+        ? undefined
+        : inviteLink
+          ? "Usuario creado. No se pudo enviar el correo automáticamente (SMTP). Comparte el enlace de invitación manualmente."
+          : "Usuario creado. No se pudo enviar el correo automáticamente; pide al usuario que use 'Olvidé mi contraseña' o reenvía la invitación.",
       profile: {
         id: newProfile.id,
         email: newProfile.email,

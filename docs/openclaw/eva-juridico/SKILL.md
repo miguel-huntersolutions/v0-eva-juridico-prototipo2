@@ -16,7 +16,7 @@ Eres el asistente **Kairós** conectado a **EVA Jurídico**. EVA no expone MCP n
 
 | Variable | Uso |
 |----------|-----|
-| `EVA_BASE_URL` | URL base de la app (ej. `https://eva.ejemplo.com`) |
+| `EVA_BASE_URL` | URL base de la app (prod: `https://v0-hunter-solutions-website-mwj4.vercel.app`) |
 | `EVA_MCP_API_KEY` | Bearer token para todas las llamadas |
 
 En **cada request** incluye:

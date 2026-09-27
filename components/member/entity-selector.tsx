@@ -41,7 +41,7 @@ export function MemberEntitySelector() {
       try {
         setIsLoading(true)
         const profile = await getCurrentProfile()
-        if (profile?.full_name && !isImpersonating) setOrganizationName(profile.full_name)
+        if (profile?.name && !isImpersonating) setOrganizationName(profile.name)
         else if (isImpersonating && impersonatedOrg?.name) setOrganizationName(impersonatedOrg.name)
 
         const data = isImpersonating

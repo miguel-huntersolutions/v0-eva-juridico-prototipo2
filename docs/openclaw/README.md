@@ -12,9 +12,11 @@ cp docs/openclaw/eva-juridico/SKILL.md ~/.openclaw/skills/eva-juridico/SKILL.md
 En tu configuración de OpenClaw (p. ej. `openclaw.json` o env del daemon):
 
 ```env
-EVA_BASE_URL=https://tu-app.vercel.app
+EVA_BASE_URL=https://v0-hunter-solutions-website-mwj4.vercel.app
 EVA_MCP_API_KEY=tu-api-key-de-vercel
 ```
+
+Producción actual: [https://v0-hunter-solutions-website-mwj4.vercel.app](https://v0-hunter-solutions-website-mwj4.vercel.app/) (sin `/` final en la variable).
 
 **No** pongas `EVA_MCP_INTEGRATION_USER_ID` en OpenClaw; eso solo va en Vercel (backend EVA).
 

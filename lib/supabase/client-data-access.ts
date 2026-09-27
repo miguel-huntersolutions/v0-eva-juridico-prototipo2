@@ -1356,7 +1356,12 @@ export async function createMember(data: {
   }
 
   const result = await response.json()
-  return result.profile as Profile
+  return {
+    ...(result.profile as Profile),
+    emailSent: result.emailSent as boolean | undefined,
+    inviteLink: result.inviteLink as string | null | undefined,
+    message: result.message as string | undefined,
+  }
 }
 
 export async function updateMember(
@@ -1437,7 +1442,7 @@ export async function searchUserByEmail(email: string) {
 export async function getUsersWithoutOrganization() {
   const supabase = createBrowserClient()
 
-  const { data, error } = await supabase.from("profiles").select("*").is("organization_id", null).order("full_name")
+  const { data, error } = await supabase.from("profiles").select("*").is("organization_id", null).order("name")
 
   if (error) throw error
   return data as Profile[]

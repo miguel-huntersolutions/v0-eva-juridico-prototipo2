@@ -220,7 +220,7 @@ export default function MemberPage() {
             <h1 className="text-3xl font-bold tracking-tight">Panel del Asesor</h1>
           </div>
           <p className="text-muted-foreground max-w-2xl">
-            Bienvenido, <span className="font-medium text-foreground">{profile?.full_name || "Asesor"}</span>. Accede a
+            Bienvenido, <span className="font-medium text-foreground">{profile?.name || "Asesor"}</span>. Accede a
             tus herramientas de gestión jurídica y selecciona una entidad para comenzar.
           </p>
         </div>

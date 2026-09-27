@@ -84,11 +84,19 @@ export function OrganizationMembersPage({ organizationId }: { organizationId: st
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newUserForm.email)) return setError("Por favor ingresa un correo electrónico válido")
     try {
       setSaving(true); setError(null)
-      await createMember({ ...newUserForm, organizationId })
+      const created = await createMember({ ...newUserForm, organizationId })
       await loadData(); setAddOpen(false); resetAddDialog()
+      if (created.inviteLink && created.emailSent === false) {
+        try {
+          await navigator.clipboard.writeText(created.inviteLink)
+          alert("Usuario creado. El correo no se pudo enviar automáticamente (SMTP). El enlace de invitación se copió al portapapeles.")
+        } catch {
+          alert(`Usuario creado. Comparte este enlace de invitación:\n${created.inviteLink}`)
+        }
+      }
       logger.action("/superadmin/organizations/[id]/members", "Create New Member", undefined, undefined, { organizationId, email: newUserForm.email })
     } catch (err) {
-      setError("Error al crear el usuario. Es posible que el correo ya esté registrado.")
+      setError(err instanceof Error ? err.message : "Error al crear el usuario. Es posible que el correo ya esté registrado.")
       logger.error("/superadmin/organizations/[id]/members", "Error creating member", err)
     } finally { setSaving(false) }
   }

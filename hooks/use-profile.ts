@@ -8,7 +8,7 @@ import { useImpersonation } from "@/lib/impersonation-context"
 export interface Profile {
   id: string
   email: string
-  full_name: string
+  name: string
   role: "superadmin" | "admin" | "member"
   organization_id: string | null
   avatar_url: string | null
@@ -60,7 +60,7 @@ export function useProfile(redirectOnUnauthenticated = true) {
           const defaultProfile: Profile = {
             id: user.id,
             email: user.email || "",
-            full_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
+            name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
             role: "member",
             organization_id: null,
             avatar_url: null,
