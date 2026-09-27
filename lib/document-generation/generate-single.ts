@@ -135,6 +135,11 @@ export async function generateSingleDocument(
   const LARGE = 5 * 1024 * 1024
   let uploadResult
 
+  // RF-009 (CAP-02): estructura Entidad/Secretaría/Proceso cuando hay entidad.
+  const folderPath = entityName
+    ? { entityName, secretaryName: secretaryName ?? null, processCode }
+    : undefined
+
   if (generatedBuffer.length >= LARGE) {
     const tmpPath = join(tmpdir(), `eva-mcp-${Date.now()}.docx`)
     try {
@@ -147,6 +152,7 @@ export async function generateSingleDocument(
         mimeType,
         processCode,
         googleAuthMode,
+        folderPath,
       )
     } finally {
       await unlink(tmpPath).catch(() => {})
@@ -159,27 +165,35 @@ export async function generateSingleDocument(
       mimeType,
       processCode,
       googleAuthMode,
+      folderPath,
     )
   }
 
+  // RF-010 (CAP-02): el registro en DB NO es opcional; si falla, la generación falla
+  // (el archivo ya está en Drive y se reporta su enlace para conciliación).
+  const docPayload = {
+    process_id: processId,
+    name: documentName,
+    type: "generated",
+    version: 1,
+    status: "draft" as const,
+    file_url: uploadResult.webViewLink,
+    file_size: generatedBuffer.length,
+    created_by: createdBy,
+  }
   try {
-    const docPayload = {
-      process_id: processId,
-      name: documentName,
-      type: "generated",
-      version: 1,
-      status: "draft",
-      file_url: uploadResult.webViewLink,
-      file_size: generatedBuffer.length,
-      created_by: createdBy,
-    }
     if (useServiceRole) {
-      await supabase!.from("documents").insert(docPayload)
+      const { error } = await supabase!.from("documents").insert(docPayload)
+      if (error) throw error
     } else {
       await createDocument(docPayload)
     }
-  } catch {
-    // non-fatal
+  } catch (dbError) {
+    throw new Error(
+      `El documento se creó en Drive pero no se pudo registrar en la plataforma. ` +
+        `Enlace: ${uploadResult.webViewLink}. ` +
+        `Causa: ${dbError instanceof Error ? dbError.message : "desconocida"}`,
+    )
   }
 
   let spreadsheetUrl: string | null = null

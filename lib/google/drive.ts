@@ -187,6 +187,44 @@ export async function getOrCreateFolder(
 }
 
 /**
+ * RF-009 (CAP-02): sanitiza un segmento de nombre de carpeta para Drive.
+ */
+function sanitizeFolderSegment(name: string): string {
+  return (name || "")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim() || "Sin nombre"
+}
+
+/**
+ * RF-009 (CAP-02): obtiene o crea la estructura jerárquica de la firma:
+ * `Entidad / Secretaría / Proceso` (o `Entidad / Proceso` si no hay secretaría).
+ * La raíz la resuelve getOrCreateFolder (Shared Drive o GOOGLE_DRIVE_FOLDER_ID).
+ * @returns El ID de la carpeta del proceso y la ruta legible.
+ */
+export async function getOrCreateProcessFolderPath(
+  userId: string,
+  segments: { entityName: string; secretaryName?: string | null; processCode: string },
+  authMode: GoogleAuthMode = "session",
+): Promise<{ processFolderId: string; folderPath: string }> {
+  const entitySegment = sanitizeFolderSegment(segments.entityName)
+  const secretarySegment = segments.secretaryName ? sanitizeFolderSegment(segments.secretaryName) : null
+  const processSegment = sanitizeFolderSegment(segments.processCode)
+
+  const entityFolderId = await getOrCreateFolder(userId, entitySegment, undefined, true, authMode)
+  const parentId = secretarySegment
+    ? await getOrCreateFolder(userId, secretarySegment, entityFolderId, true, authMode)
+    : entityFolderId
+  const processFolderId = await getOrCreateFolder(userId, processSegment, parentId, true, authMode)
+
+  const folderPath = secretarySegment
+    ? `${entitySegment}/${secretarySegment}/${processSegment}`
+    : `${entitySegment}/${processSegment}`
+
+  return { processFolderId, folderPath }
+}
+
+/**
  * Get or create the folder structure: plantillas/{processTypeName}
  * @param processTypeName - Name of the process type
  * @returns The process type folder ID
@@ -402,6 +440,8 @@ export async function uploadDocumentToDriveFromStream(
   mimeType: string,
   processCode: string,
   authMode: GoogleAuthMode = "session",
+  /** RF-009 (CAP-02): si se pasa, usa Entidad/Secretaría/Proceso en vez de plantillas/{code}. */
+  folderPath?: { entityName: string; secretaryName?: string | null; processCode: string },
 ): Promise<{
   fileId: string
   webViewLink: string
@@ -411,8 +451,17 @@ export async function uploadDocumentToDriveFromStream(
   processFolderUrl: string
 }> {
   const drive = await resolveDriveClient(userId, authMode)
-  const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
-  const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
+  let processFolderId: string
+  let folderBasePath: string
+  if (folderPath) {
+    const res = await getOrCreateProcessFolderPath(userId, folderPath, authMode)
+    processFolderId = res.processFolderId
+    folderBasePath = res.folderPath
+  } else {
+    const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
+    processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
+    folderBasePath = `plantillas/${processCode}`
+  }
   const driveId = process.env.GOOGLE_DRIVE_ID
   const supportsAllDrives = !!driveId
 
@@ -443,7 +492,7 @@ export async function uploadDocumentToDriveFromStream(
   }
 
   const directLink = `https://drive.google.com/uc?export=download&id=${response.data.id}`
-  const drivePath = `plantillas/${processCode}/${fileName}`
+  const drivePath = `${folderBasePath}/${fileName}`
   const processFolderUrl = `https://drive.google.com/drive/folders/${processFolderId}`
 
   return {
@@ -471,7 +520,9 @@ export async function uploadDocumentToDrive(
   mimeType: string,
   processCode: string,
   authMode: GoogleAuthMode = "session",
-): Promise<{ 
+  /** RF-009 (CAP-02): si se pasa, usa Entidad/Secretaría/Proceso en vez de plantillas/{code}. */
+  folderPath?: { entityName: string; secretaryName?: string | null; processCode: string },
+): Promise<{
   fileId: string
   webViewLink: string
   directLink: string
@@ -482,8 +533,17 @@ export async function uploadDocumentToDrive(
   const drive = await resolveDriveClient(userId, authMode)
 
   try {
-    const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
-    const processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
+    let processFolderId: string
+    let folderBasePath: string
+    if (folderPath) {
+      const res = await getOrCreateProcessFolderPath(userId, folderPath, authMode)
+      processFolderId = res.processFolderId
+      folderBasePath = res.folderPath
+    } else {
+      const plantillasFolderId = await getOrCreateFolder(userId, "plantillas", undefined, true, authMode)
+      processFolderId = await getOrCreateFolder(userId, processCode, plantillasFolderId, true, authMode)
+      folderBasePath = `plantillas/${processCode}`
+    }
 
     // Convert Buffer to Stream for Google Drive API
     const bufferStream = Readable.from(fileBuffer)
@@ -540,10 +600,10 @@ export async function uploadDocumentToDrive(
 
     // Get the direct download link
     const directLink = `https://drive.google.com/uc?export=download&id=${response.data.id}`
-    
+
     // Build the full path in Drive
-    const drivePath = `plantillas/${processCode}/${fileName}`
-    
+    const drivePath = `${folderBasePath}/${fileName}`
+
     // Build the folder URL
     const processFolderUrl = `https://drive.google.com/drive/folders/${processFolderId}`
 

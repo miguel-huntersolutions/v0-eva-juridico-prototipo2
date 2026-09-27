@@ -210,6 +210,11 @@ export async function POST(request: NextRequest) {
     const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024 // 5 MB: subir por stream para no duplicar pico de memoria
 
+    // RF-009 (CAP-02): estructura Entidad/Secretaría/Proceso cuando hay entidad.
+    const folderPath = entityName
+      ? { entityName, secretaryName: secretaryName ?? null, processCode }
+      : undefined
+
     let uploadResult
     if (generatedBuffer.length >= LARGE_FILE_THRESHOLD) {
       const tmpPath = join(tmpdir(), `eva-doc-${Date.now()}-${process.pid}.docx`)
@@ -222,6 +227,8 @@ export async function POST(request: NextRequest) {
           documentName,
           mimeType,
           processCode,
+          "session",
+          folderPath,
         )
       } finally {
         await unlink(tmpPath).catch(() => {})
@@ -233,10 +240,13 @@ export async function POST(request: NextRequest) {
         documentName,
         mimeType,
         processCode,
+        "session",
+        folderPath,
       )
     }
 
-    // Save document to database if processId is provided
+    // RF-010 (CAP-02): el registro en DB NO es opcional; si falla, la generación falla
+    // (el archivo ya está en Drive y se devuelve su enlace para conciliación).
     if (processId) {
       try {
         const { createDocument } = await import("@/lib/supabase/data-access")
@@ -250,8 +260,16 @@ export async function POST(request: NextRequest) {
           file_size: generatedBuffer.length,
           created_by: createdBy || user.id,
         })
-      } catch {
-        // Don't fail the request if DB save fails
+      } catch (dbError) {
+        return NextResponse.json(
+          {
+            error: "El documento se creó en Drive pero no se pudo registrar en la plataforma.",
+            fileUrl: uploadResult.webViewLink,
+            drivePath: uploadResult.drivePath,
+            message: dbError instanceof Error ? dbError.message : "Error desconocido",
+          },
+          { status: 500 },
+        )
       }
     }
 
