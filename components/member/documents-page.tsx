@@ -51,6 +51,7 @@ import {
 import { documentTypes } from "@/lib/mock-data"
 import { DocumentAuditLog } from "@/components/document-audit-log"
 import { ProcessAttachments } from "@/components/member/process-attachments"
+import { DocumentVersionsDialog } from "@/components/member/document-versions-dialog"
 import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
@@ -117,12 +118,14 @@ function DocumentActionsMenu({
   document,
   isUpdatingStatus,
   onAudit,
+  onVersions,
   onSendToReview,
   onReopenAsDraft,
 }: {
   document: MappedDocument
   isUpdatingStatus: boolean
   onAudit: () => void
+  onVersions: () => void
   onSendToReview: () => void
   onReopenAsDraft: () => void
 }) {
@@ -137,6 +140,16 @@ function DocumentActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {/* RF-016 (CAP-04): historial de versiones */}
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onVersions()
+          }}
+        >
+          <History className="mr-2 h-4 w-4" />
+          Ver versiones
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={(e) => {
             e.stopPropagation()
@@ -228,6 +241,7 @@ export function DocumentsPage() {
   const [selectedDocument, setSelectedDocument] = React.useState<MappedDocument | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
   const [auditDocumentId, setAuditDocumentId] = React.useState<string | null>(null)
+  const [versionsDocumentId, setVersionsDocumentId] = React.useState<string | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<DocumentStatus>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
@@ -709,6 +723,7 @@ export function DocumentsPage() {
                               document={document}
                               isUpdatingStatus={isUpdatingStatus}
                               onAudit={() => setAuditDocumentId(document.id)}
+                              onVersions={() => setVersionsDocumentId(document.id)}
                               onSendToReview={() => handleSendToReview(document)}
                               onReopenAsDraft={() => handleReopenAsDraft(document)}
                             />
@@ -806,6 +821,7 @@ export function DocumentsPage() {
                                   document={document}
                                   isUpdatingStatus={isUpdatingStatus}
                                   onAudit={() => setAuditDocumentId(document.id)}
+                                  onVersions={() => setVersionsDocumentId(document.id)}
                                   onSendToReview={() => handleSendToReview(document)}
                                   onReopenAsDraft={() => handleReopenAsDraft(document)}
                                 />
@@ -842,6 +858,13 @@ export function DocumentsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* RF-016 (CAP-04): historial de versiones */}
+      <DocumentVersionsDialog
+        documentId={versionsDocumentId}
+        open={!!versionsDocumentId}
+        onOpenChange={(open) => !open && setVersionsDocumentId(null)}
+      />
     </div>
   )
 }
