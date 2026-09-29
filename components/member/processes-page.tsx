@@ -27,6 +27,7 @@ import {
   RotateCcw,
   Files,
   Sparkles,
+  Copy,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -86,12 +87,14 @@ function ProcessActionsMenu({
   onView,
   onDelete,
   onUpdateStatus,
+  onReuse,
 }: {
   process: ProcessMapped
   isUpdatingStatus: boolean
   onView: () => void
   onDelete: () => void
   onUpdateStatus: (status: string) => void
+  onReuse: () => void
 }) {
   const router = useRouter()
 
@@ -139,6 +142,16 @@ function ProcessActionsMenu({
         >
           <Sparkles className="mr-2 h-4 w-4" />
           Generar con IA (contexto)
+        </DropdownMenuItem>
+        {/* RF-012 (CAP-03): reutilizar proceso */}
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onReuse()
+          }}
+        >
+          <Copy className="mr-2 h-4 w-4" />
+          Reutilizar proceso
         </DropdownMenuItem>
         {process.spreadsheetUrl && (
           <DropdownMenuItem
@@ -330,6 +343,28 @@ export function ProcessesPage() {
       alert(errorMsg)
     } finally {
       setIsUpdatingStatus(false)
+    }
+  }
+
+  // RF-012 (CAP-03): reutilizar proceso → crea borrador con campos precargados.
+  const [isReusing, setIsReusing] = React.useState(false)
+  const handleReuse = async (process: ProcessMapped) => {
+    if (isReusing) return
+    try {
+      setIsReusing(true)
+      const res = await fetch(`/api/processes/${process.id}/reuse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Error al reutilizar el proceso")
+      // Ir al formulario del nuevo proceso con los campos precargados.
+      router.push(`/member/processes/${data.process.id}/generate?reused=1`)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al reutilizar el proceso")
+    } finally {
+      setIsReusing(false)
     }
   }
 
@@ -542,6 +577,7 @@ export function ProcessesPage() {
                           setIsDeleteDialogOpen(true)
                         }}
                         onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                        onReuse={() => handleReuse(process)}
                       />
                     </div>
                   </div>
@@ -605,6 +641,7 @@ export function ProcessesPage() {
                               setIsDeleteDialogOpen(true)
                             }}
                             onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                            onReuse={() => handleReuse(process)}
                           />
                         </TableCell>
                       </TableRow>

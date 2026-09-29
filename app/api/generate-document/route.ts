@@ -50,6 +50,8 @@ export async function POST(request: NextRequest) {
       createdBy, // User ID who created the document
       templateId, // UUID de plantilla (recomendado; valida alcance por entidad)
       images, // Record<tag, { dataUrl: string; width?: number; height?: number }>
+      tableData, // CAP-03: filas de tablas dinámicas { familia: [{campo:valor}] } para persistir
+      fieldOrigin, // CAP-03: 'form' | 'reuse' | 'copy' | 'smart_fill'
     } = body
 
     if (!templatePath || !replacements || !processCode || !documentName) {
@@ -337,6 +339,49 @@ export async function POST(request: NextRequest) {
         } as any)
       } catch {
         // Don't fail if update fails
+      }
+    }
+
+    // CAP-03 (RF-012/013/014): persistir los valores del formulario para poder
+    // reutilizar el proceso y copiar campos entre minutas. No bloquea la generación.
+    if (processId) {
+      try {
+        const origin = typeof fieldOrigin === "string" ? fieldOrigin : "form"
+        const rows: Array<Record<string, unknown>> = []
+        for (const [tag, value] of Object.entries(allReplacements)) {
+          if (tag === "ENTIDAD" || tag === "SECRETARIA") continue
+          if (Array.isArray(value)) continue // tablas dinámicas van por tableData
+          rows.push({
+            process_id: processId,
+            tag,
+            value: value == null ? "" : String(value),
+            table_rows: null,
+            origin,
+            updated_by: createdBy || user.id,
+            updated_at: new Date().toISOString(),
+          })
+        }
+        if (tableData && typeof tableData === "object") {
+          for (const [family, tableRows] of Object.entries(tableData as Record<string, unknown>)) {
+            if (!Array.isArray(tableRows)) continue
+            rows.push({
+              process_id: processId,
+              tag: family,
+              value: null,
+              table_rows: tableRows,
+              origin,
+              updated_by: createdBy || user.id,
+              updated_at: new Date().toISOString(),
+            })
+          }
+        }
+        if (rows.length > 0) {
+          await supabase
+            .from("process_field_values")
+            .upsert(rows, { onConflict: "process_id,tag" })
+        }
+      } catch (persistErr) {
+        console.warn("[generate-document] No se pudieron persistir los campos del proceso:", persistErr)
       }
     }
 

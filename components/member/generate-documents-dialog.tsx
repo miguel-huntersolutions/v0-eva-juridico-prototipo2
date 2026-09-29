@@ -76,6 +76,10 @@ interface GenerateDocumentsDialogProps {
   prefilledFormData?: Record<string, string> | null
   /** Pre-filled dynamic table rows (smart fill flow). Merged over defaults when templates load. */
   prefilledTableData?: Record<string, Array<Record<string, string>>> | null
+  /** RF-013 (CAP-03): origen por tag ('reuse' = viene del proceso original). */
+  fieldOrigins?: Record<string, string> | null
+  /** RF-013 (CAP-03): true si el proceso fue reutilizado y exige confirmación antes de generar. */
+  requiresReuseConfirmation?: boolean
 }
 
 type DynamicTableDef = {
@@ -106,6 +110,8 @@ export function GenerateDocumentsDialog({
   embedded = false,
   prefilledFormData = null,
   prefilledTableData = null,
+  fieldOrigins = null,
+  requiresReuseConfirmation = false,
 }: GenerateDocumentsDialogProps) {
   const router = useRouter()
   const { profile } = useProfile()
@@ -154,6 +160,11 @@ export function GenerateDocumentsDialog({
   const [generatedDocuments, setGeneratedDocuments] = React.useState<
     Array<{ templateId: string; documentName: string; drivePath: string }>
   >([])
+  // RF-013 (CAP-03): campos editados por el usuario (para distinguir "del original" vs modificados)
+  const [editedFields, setEditedFields] = React.useState<Set<string>>(new Set())
+  // RF-013: diálogo de confirmación de campos clave antes de generar (proceso reutilizado)
+  const [reuseConfirmOpen, setReuseConfirmOpen] = React.useState(false)
+  const [pendingGenerateAction, setPendingGenerateAction] = React.useState<(() => void) | null>(null)
   const [generatingStep, setGeneratingStep] = React.useState<{
     current: number
     total: number
@@ -281,6 +292,8 @@ export function GenerateDocumentsDialog({
 
   const handleFieldChange = (tag: string, value: string) => {
     setFormData((prev) => ({ ...prev, [tag]: value }))
+    // RF-013: marcar como editado (ya no "viene del original" sin tocar)
+    setEditedFields((prev) => new Set(prev).add(tag))
     // Remove from improved fields if user edits after improvement
     if (improvedFields.has(tag)) {
       setImprovedFields((prev) => {
@@ -557,6 +570,46 @@ export function GenerateDocumentsDialog({
     }
   }
 
+  // RF-013 (CAP-03): campos clave que exigen revisión explícita en un proceso reutilizado
+  const KEY_FIELD_PATTERN = /FECHA|CUANTIA|VALOR|MONTO|PRECIO|PLAZO|ENTIDAD/i
+  const keyFields = React.useMemo(
+    () => Object.keys(formData).filter((tag) => KEY_FIELD_PATTERN.test(tag)),
+    [formData],
+  )
+  // Campos clave que vienen del original y el usuario NO ha tocado
+  const unreviewedKeyFields = React.useMemo(
+    () =>
+      requiresReuseConfirmation
+        ? keyFields.filter((tag) => fieldOrigins?.[tag] === "reuse" && !editedFields.has(tag))
+        : [],
+    [requiresReuseConfirmation, keyFields, fieldOrigins, editedFields],
+  )
+
+  /** RF-013: si el proceso es reutilizado y hay campos clave sin revisar, pide confirmación antes de generar. */
+  const withReuseConfirmation = (action: () => void) => {
+    if (requiresReuseConfirmation && unreviewedKeyFields.length > 0) {
+      setPendingGenerateAction(() => action)
+      setReuseConfirmOpen(true)
+      return
+    }
+    action()
+  }
+
+  const handleConfirmReuseFields = async () => {
+    const processIdToConfirm = currentProcessState?.id || process?.id
+    if (processIdToConfirm) {
+      try {
+        await fetch(`/api/processes/${processIdToConfirm}/fields/confirm`, { method: "POST" })
+      } catch {
+        // no bloquear la generación si falla el registro de confirmación
+      }
+    }
+    setReuseConfirmOpen(false)
+    const action = pendingGenerateAction
+    setPendingGenerateAction(null)
+    action?.()
+  }
+
   const handleGenerateDocument = async (
     template: Template,
     retryCount = 0,
@@ -662,6 +715,8 @@ export function GenerateDocumentsDialog({
           entityId: entity?.id || processData?.entityId || process?.entityId,
           secretaryName: secretaryName,
           createdBy: profile?.id,
+          tableData, // CAP-03: persistir tablas dinámicas
+          fieldOrigin: prefilledFormData ? "smart_fill" : "form", // CAP-03
         }),
       })
 
@@ -892,6 +947,41 @@ export function GenerateDocumentsDialog({
     [currentTemplateTags]
   )
 
+  // RF-014 (CAP-03): variables escalares que aparecen en más de una plantilla del proceso
+  // ("el mismo nombre en dos plantillas del mismo proceso se considera el mismo dato").
+  const sharedScalarTags = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    templates.forEach((t) =>
+      (t.variables || []).forEach((tag) => {
+        if (!parseDynamicTableTagToken(tag) && !isImageTag(tag)) {
+          counts.set(tag, (counts.get(tag) || 0) + 1)
+        }
+      }),
+    )
+    return new Set([...counts.entries()].filter(([, c]) => c > 1).map(([tag]) => tag))
+  }, [templates])
+
+  // RF-014: del paso actual, cuáles ya están diligenciados (compartidos con otra minuta)
+  // y cuáles quedan pendientes.
+  const copiedFromOtherMinutes = React.useMemo(
+    () =>
+      currentTemplateScalarTags.filter(
+        (tag) =>
+          tag !== "ENTIDAD" &&
+          tag !== "SECRETARIA" &&
+          sharedScalarTags.has(tag) &&
+          (formData[tag] || "").trim().length > 0,
+      ),
+    [currentTemplateScalarTags, sharedScalarTags, formData],
+  )
+  const pendingInCurrentMinute = React.useMemo(
+    () =>
+      currentTemplateScalarTags.filter(
+        (tag) => tag !== "ENTIDAD" && tag !== "SECRETARIA" && (formData[tag] || "").trim().length === 0,
+      ),
+    [currentTemplateScalarTags, formData],
+  )
+
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024 // 4 MB
   const ACCEPTED_IMAGE_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]
 
@@ -1061,6 +1151,27 @@ export function GenerateDocumentsDialog({
                   </Card>
 
                   <div className="space-y-4">
+                    {/* RF-014 (CAP-03): aviso de campos copiados entre minutas / pendientes */}
+                    {currentTemplateTags.length > 0 && templates.length > 1 && (
+                      <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm">
+                        {copiedFromOtherMinutes.length > 0 ? (
+                          <p>
+                            <span className="font-medium">Campos copiados desde otras minutas:</span>{" "}
+                            {copiedFromOtherMinutes.map((t) => t.replace(/_/g, " ")).join(", ")}.
+                            {pendingInCurrentMinute.length > 0 && (
+                              <span className="text-muted-foreground">
+                                {" "}
+                                Pendientes en esta minuta: {pendingInCurrentMinute.map((t) => t.replace(/_/g, " ")).join(", ")}.
+                              </span>
+                            )}
+                          </p>
+                        ) : currentTemplateScalarTags.every((t) => !sharedScalarTags.has(t) || t === "ENTIDAD" || t === "SECRETARIA") ? (
+                          <p className="text-muted-foreground">
+                            Esta minuta no comparte campos con las demás; diligénciala por completo.
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
                     {currentTemplateTags.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
                         <p>Esta plantilla no requiere campos adicionales.</p>
@@ -1139,6 +1250,15 @@ export function GenerateDocumentsDialog({
                                 >
                                   <Sparkles className="h-3 w-3" />
                                   Mejorado
+                                </Badge>
+                              )}
+                              {/* RF-013 (CAP-03): señalar campos que vienen del proceso original */}
+                              {fieldOrigins?.[tag] === "reuse" && !editedFields.has(tag) && (
+                                <Badge
+                                  variant="secondary"
+                                  className="h-5 gap-1 text-xs bg-amber-500/10 text-amber-500 border-amber-500/20"
+                                >
+                                  Del original
                                 </Badge>
                               )}
                             </div>
@@ -1332,10 +1452,10 @@ export function GenerateDocumentsDialog({
                     </Button>
                   ) : (
                     <>
-                      <Button variant="outline" onClick={() => handleGenerateDocument(currentTemplate)} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                      <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
                         {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
                       </Button>
-                      <Button onClick={handleGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
+                      <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
                         {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
                       </Button>
                     </>
@@ -1355,10 +1475,10 @@ export function GenerateDocumentsDialog({
                       </Button>
                     ) : (
                       <>
-                        <Button variant="outline" onClick={() => handleGenerateDocument(currentTemplate)} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                        <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
                           {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
                         </Button>
-                        <Button onClick={handleGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
+                        <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
                           {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
                         </Button>
                       </>
@@ -1369,6 +1489,48 @@ export function GenerateDocumentsDialog({
             )}
           </>
         )}
+
+      {/* RF-013 (CAP-03): confirmación de campos clave antes de generar (proceso reutilizado) */}
+      <Dialog open={reuseConfirmOpen} onOpenChange={(open) => !open && setReuseConfirmOpen(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmar campos del proceso reutilizado</DialogTitle>
+            <DialogDescription>
+              Este proceso fue reutilizado. Revisa y confirma los campos clave antes de generar;
+              no se generará hasta que los confirmes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {entity?.name && (
+              <div className="rounded-md border p-3">
+                <p className="text-xs font-medium text-muted-foreground">Entidad</p>
+                <p className="text-sm font-medium">{entity.name}</p>
+              </div>
+            )}
+            <ul className="space-y-2">
+              {unreviewedKeyFields
+                .filter((tag) => tag !== "ENTIDAD" && tag !== "SECRETARIA")
+                .map((tag) => (
+                  <li key={tag} className="rounded-md border p-3">
+                    <p className="text-xs font-medium text-muted-foreground">{tag.replace(/_/g, " ")}</p>
+                    <p className="text-sm whitespace-pre-wrap line-clamp-3">{formData[tag] || "—"}</p>
+                  </li>
+                ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              Si algún valor no aplica, cancela, edítalo en el formulario y vuelve a generar.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReuseConfirmOpen(false)}>
+              Cancelar y revisar
+            </Button>
+            <Button onClick={handleConfirmReuseFields}>
+              Confirmar y generar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Preguntar a la IA (sin contexto) / Consultar en documentos (RAG) */}
       <Dialog open={!!aiHelpTag && !!aiHelpMode} onOpenChange={(open) => !open && closeAiHelp()}>

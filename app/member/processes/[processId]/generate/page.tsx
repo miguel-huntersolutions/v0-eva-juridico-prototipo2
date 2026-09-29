@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft, FileText, Sparkles, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -52,9 +52,17 @@ export default function ProcessGeneratePage() {
   const { profile } = useProfile()
   const { isImpersonating, impersonatedOrg } = useImpersonation()
   const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
+  const searchParams = useSearchParams()
+  const isReused = searchParams?.get("reused") === "1"
   const [process, setProcess] = React.useState<ProcessMapped | null>(null)
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [loading, setLoading] = React.useState(true)
+  // RF-012 (CAP-03): campos precargados al reutilizar un proceso.
+  const [reusedFormData, setReusedFormData] = React.useState<Record<string, string> | null>(null)
+  const [reusedTableData, setReusedTableData] = React.useState<Record<string, Array<Record<string, string>>> | null>(null)
+  // RF-013 (CAP-03): origen por campo y si hay campos clave pendientes de confirmar.
+  const [fieldOrigins, setFieldOrigins] = React.useState<Record<string, string> | null>(null)
+  const [hasUnconfirmed, setHasUnconfirmed] = React.useState(false)
 
   React.useEffect(() => {
     if (!processId) {
@@ -72,10 +80,26 @@ export default function ProcessGeneratePage() {
         : getEntities(orgId)
       : Promise.resolve([])
     Promise.all([processPromise, entitiesPromise])
-      .then(([p, entityList]) => {
-        if (!cancelled) {
-          setProcess(p ?? null)
-          setEntities(Array.isArray(entityList) ? entityList : [])
+      .then(async ([p, entityList]) => {
+        if (cancelled) return
+        setProcess(p ?? null)
+        setEntities(Array.isArray(entityList) ? entityList : [])
+        // RF-012/RF-013: si el proceso fue reutilizado, precargar sus campos guardados.
+        if (p && isReused) {
+          try {
+            const res = await fetch(`/api/processes/${p.id}/fields`)
+            if (res.ok) {
+              const data = await res.json()
+              if (!cancelled) {
+                setReusedFormData(data.formData || null)
+                setReusedTableData(data.tableData || null)
+                setFieldOrigins(data.origins || null)
+                setHasUnconfirmed(Array.isArray(data.unconfirmed) && data.unconfirmed.length > 0)
+              }
+            }
+          } catch {
+            // sin campos precargados
+          }
         }
       })
       .catch(() => {
@@ -87,7 +111,7 @@ export default function ProcessGeneratePage() {
     return () => {
       cancelled = true
     }
-  }, [processId, orgId, isImpersonating])
+  }, [processId, orgId, isImpersonating, isReused])
 
   const entity = process ? entities.find((e) => e.id === process.entityId) ?? null : null
   const entityForDialog = entity ? { id: entity.id, name: entity.name } : null
@@ -161,6 +185,10 @@ export default function ProcessGeneratePage() {
             entity={entityForDialog as any}
             secretaryName={process.secretaryName ?? ""}
             processTypeName={process.processTypeName}
+            prefilledFormData={reusedFormData}
+            prefilledTableData={reusedTableData}
+            fieldOrigins={fieldOrigins}
+            requiresReuseConfirmation={isReused && hasUnconfirmed}
             onDocumentsGenerated={() => router.refresh()}
             embedded
           />
