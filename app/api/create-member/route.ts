@@ -115,6 +115,35 @@ export async function POST(request: NextRequest) {
     let emailSent = false
 
     if (existingUser) {
+      // El correo ya está registrado: NO se pisa el perfil ni se deja avanzar.
+      // Se devuelve 409 para que el admin corrija (editar el miembro existente
+      // o reenviar la invitación desde la lista).
+      const { data: existingProfile } = await serviceRoleClient
+        .from("profiles")
+        .select("id, organization_id, status, organizations(name)")
+        .eq("id", existingUser.id)
+        .maybeSingle()
+
+      if (existingProfile?.organization_id === organizationId) {
+        return NextResponse.json(
+          {
+            error: "email_exists",
+            message: `El correo ${email} ya está registrado en tu organización. Edita el miembro desde la lista o usa "Reenviar invitación".`,
+          },
+          { status: 409 },
+        )
+      }
+      if (existingProfile?.organization_id) {
+        const orgName = (existingProfile.organizations as any)?.name
+        return NextResponse.json(
+          {
+            error: "email_exists",
+            message: `El correo ${email} ya pertenece a otra organización${orgName ? ` (${orgName})` : ""}. No se puede invitar con este correo.`,
+          },
+          { status: 409 },
+        )
+      }
+      // Usuario auth sin perfil (huérfano): se permite generar el enlace de invitación.
       const { data: linkData, error: linkErr } = await serviceRoleClient.auth.admin.generateLink({
         type: "invite",
         email,
@@ -123,7 +152,7 @@ export async function POST(request: NextRequest) {
           data: userMetadata,
         },
       })
-      
+
       if (linkErr) {
         console.error("[create-member] Error generating invite link:", linkErr)
         inviteError = linkErr
@@ -220,116 +249,19 @@ export async function POST(request: NextRequest) {
     }
     
     if (inviteError) {
-      // If user already exists, try to get existing user
-      if (inviteError.message?.includes("already registered") || inviteError.message?.includes("already exists")) {
-        // Try to find existing user by email
-        const { data: users } = await serviceRoleClient.auth.admin.listUsers()
-        const existingUser = users.users.find((u) => u.email === email)
-        
-        if (existingUser) {
-          // User exists, create/update profile
-          const userId = existingUser.id
-          
-          // Wait for trigger to create profile
-          await new Promise((resolve) => setTimeout(resolve, 500))
-          
-          // Check if profile exists
-          const { data: existingProfile } = await serviceRoleClient
-            .from("profiles")
-            .select("*")
-            .eq("id", userId)
-            .single()
-
-          let newProfile
-
-          if (existingProfile) {
-            // Update existing profile
-            const { data: updatedProfile, error: updateError } = await serviceRoleClient
-              .from("profiles")
-              .update({
-                email,
-                name,
-                role: finalRole, // Use finalRole to ensure it's 'member'
-                status: isInvitation ? "approved" : "pending", // Invitations are approved, others need approval
-                organization_id: organizationId,
-                avatar_url: avatarUrl || null,
-              })
-              .eq("id", userId)
-              .select()
-              .single()
-
-            if (updateError) {
-              return NextResponse.json(
-                { error: "Failed to update profile", message: updateError.message },
-                { status: 500 },
-              )
-            }
-
-            newProfile = updatedProfile
-          } else {
-            // Create profile manually
-            const { data: createdProfile, error: insertError } = await serviceRoleClient
-              .from("profiles")
-              .insert({
-                id: userId,
-                email,
-                name,
-                role,
-                organization_id: organizationId,
-                avatar_url: avatarUrl || null,
-              })
-              .select()
-              .single()
-
-            if (insertError) {
-              return NextResponse.json(
-                { error: "Failed to create profile", message: insertError.message },
-                { status: 500 },
-              )
-            }
-
-            newProfile = createdProfile
-          }
-
-          // Associate entities if provided
-          if (entityIds && entityIds.length > 0) {
-            try {
-              // Delete existing associations
-              await serviceRoleClient.from("member_entities").delete().eq("member_id", newProfile.id)
-              
-              // Insert new associations
-              const associations = entityIds.map((entityId: string) => ({
-                member_id: newProfile.id,
-                entity_id: entityId,
-              }))
-              
-              const { error: assignError } = await serviceRoleClient
-                .from("member_entities")
-                .insert(associations)
-              
-              if (assignError) {
-                // Continue
-              }
-            } catch {
-              // Continue
-            }
-          }
-
-          return NextResponse.json({
-            success: true,
-            profile: {
-              id: newProfile.id,
-              email: newProfile.email,
-              name: newProfile.name,
-              role: newProfile.role,
-              organizationId: newProfile.organization_id,
-              avatarUrl: newProfile.avatar_url,
-            },
-            message: "Usuario ya existía. Se actualizó el perfil. No se pudo enviar invitación porque el usuario ya está registrado.",
-          })
-        }
+      // Red de seguridad (race condition): si el correo se registró entre la
+      // verificación inicial y la invitación, también se bloquea con 409.
+      const errMsg = (inviteError.message || "").toLowerCase()
+      if (errMsg.includes("already registered") || errMsg.includes("already exists") || errMsg.includes("email_exists")) {
+        return NextResponse.json(
+          {
+            error: "email_exists",
+            message: `El correo ${email} ya está registrado. Edita el miembro desde la lista o usa "Reenviar invitación".`,
+          },
+          { status: 409 },
+        )
       }
-      
+
       return NextResponse.json(
         {
           error: "Failed to create user",
