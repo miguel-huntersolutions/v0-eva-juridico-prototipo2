@@ -21,6 +21,9 @@ import {
   Mail,
   Phone,
   Loader2,
+  GitMerge,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -47,6 +50,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
 import type { EntityMapped } from "@/lib/supabase/client-data-access"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -97,7 +101,7 @@ export function EntitiesPage() {
   })
 
   const [searchQuery, setSearchQuery] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive">("all")
+  const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive" | "pending" | "rejected">("all")
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
   const [isEditOpen, setIsEditOpen] = React.useState(false)
   // Added isDeleteOpen state
@@ -113,6 +117,19 @@ export function EntitiesPage() {
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false) // Added state for detail dialog
+
+  // CAP-10: aprobación de propuestas y fusión de entidades repetidas
+  const [reviewEntity, setReviewEntity] = React.useState<EntityMapped | null>(null)
+  const [reviewDecision, setReviewDecision] = React.useState<"approve" | "reject" | null>(null)
+  const [rejectReason, setRejectReason] = React.useState("")
+  const [isReviewing, setIsReviewing] = React.useState(false)
+  const [reviewError, setReviewError] = React.useState<string | null>(null)
+  const [isMergeOpen, setIsMergeOpen] = React.useState(false)
+  const [mergeSourceId, setMergeSourceId] = React.useState("")
+  const [mergeTargetId, setMergeTargetId] = React.useState("")
+  const [isMerging, setIsMerging] = React.useState(false)
+  const [mergeError, setMergeError] = React.useState<string | null>(null)
+  const [mergeReport, setMergeReport] = React.useState<Record<string, number | string> | null>(null)
 
   const [organizations, setOrganizations] = React.useState<OrganizationMapped[]>([])
   const [loadingOrgs, setLoadingOrgs] = React.useState(false)
@@ -216,10 +233,87 @@ export function EntitiesPage() {
   })
 
   const stats = {
-    total: entities.length,
+    total: entities.filter((e) => e.status !== "rejected").length,
     active: entities.filter((e) => e.status === "active").length,
     inactive: entities.filter((e) => e.status === "inactive").length,
+    pending: entities.filter((e) => e.status === "pending").length,
+    rejected: entities.filter((e) => e.status === "rejected").length,
     processes: entities.reduce((acc, e) => acc + e.processesCount, 0),
+  }
+
+  const handleReview = async () => {
+    if (!reviewEntity || !reviewDecision) return
+    if (reviewDecision === "reject" && !rejectReason.trim()) {
+      setReviewError("El motivo del rechazo es obligatorio")
+      return
+    }
+    try {
+      setIsReviewing(true)
+      setReviewError(null)
+      const res = await fetch(`/api/entities/${reviewEntity.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision: reviewDecision,
+          reason: reviewDecision === "reject" ? rejectReason.trim() : undefined,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo revisar la entidad")
+      setEntities((prev) =>
+        prev.map((e) =>
+          e.id === reviewEntity.id
+            ? {
+                ...e,
+                status: reviewDecision === "approve" ? "active" : "rejected",
+                rejectionReason: reviewDecision === "reject" ? rejectReason.trim() : null,
+              }
+            : e,
+        ),
+      )
+      setReviewEntity(null)
+      setReviewDecision(null)
+      setRejectReason("")
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Error al revisar")
+    } finally {
+      setIsReviewing(false)
+    }
+  }
+
+  const handleMerge = async () => {
+    if (!mergeSourceId || !mergeTargetId) {
+      setMergeError("Elige la entidad origen y la destino")
+      return
+    }
+    try {
+      setIsMerging(true)
+      setMergeError(null)
+      const res = await fetch("/api/entities/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId: mergeSourceId, targetId: mergeTargetId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo fusionar")
+      setMergeReport(data.report || {})
+      setEntities((prev) =>
+        prev.map((e) => {
+          if (e.id === mergeSourceId) {
+            return { ...e, status: "inactive" as const, mergedInto: mergeTargetId, processesCount: 0 }
+          }
+          if (e.id === mergeTargetId) {
+            const source = prev.find((x) => x.id === mergeSourceId)
+            return { ...e, processesCount: e.processesCount + (source?.processesCount || 0) }
+          }
+          return e
+        }),
+      )
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : "Error al fusionar")
+    } finally {
+      setIsMerging(false)
+    }
   }
 
   const handleCreate = () => {
@@ -707,6 +801,16 @@ export function EntitiesPage() {
         title="Gestión de Entidades"
         description="Administra los clientes de tu organización"
       >
+        <Button variant="outline" className="w-full sm:w-auto" onClick={() => {
+          setMergeSourceId("")
+          setMergeTargetId("")
+          setMergeError(null)
+          setMergeReport(null)
+          setIsMergeOpen(true)
+        }}>
+          <GitMerge className="mr-2 h-4 w-4" />
+          Fusionar entidades
+        </Button>
         <Button className="w-full sm:w-auto" onClick={() => setIsCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva Entidad
@@ -723,12 +827,12 @@ export function EntitiesPage() {
           icon={Building}
           trend={{ value: 12, isPositive: true }}
         />
-        <StatsCard title="Inactivas" value={stats.inactive} description="Entidades pausadas" icon={Building} />
+        <StatsCard title="Inactivas" value={stats.inactive} description="Entidades pausadas o fusionadas" icon={Building} />
         <StatsCard
-          title="Procesos Totales"
-          value={stats.processes}
-          description="En todas las entidades"
-          icon={Briefcase}
+          title="Pendientes"
+          value={stats.pending}
+          description="Propuestas por asesores"
+          icon={Building}
         />
       </div>
 
@@ -757,7 +861,9 @@ export function EntitiesPage() {
               <TabsList className="inline-flex h-auto min-w-max w-max">
                 <TabsTrigger value="all">Todas ({stats.total})</TabsTrigger>
                 <TabsTrigger value="active">Activas ({stats.active})</TabsTrigger>
+                <TabsTrigger value="pending">Pendientes ({stats.pending})</TabsTrigger>
                 <TabsTrigger value="inactive">Inactivas ({stats.inactive})</TabsTrigger>
+                <TabsTrigger value="rejected">Rechazadas ({stats.rejected})</TabsTrigger>
               </TabsList>
             </div>
 
@@ -799,6 +905,33 @@ export function EntitiesPage() {
                               <FileText className="mr-2 h-4 w-4" />
                               Gestionar Secretarías
                             </DropdownMenuItem>
+                            {entity.status === "pending" && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReviewEntity(entity)
+                                    setReviewDecision("approve")
+                                    setRejectReason("")
+                                    setReviewError(null)
+                                  }}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  Aprobar
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReviewEntity(entity)
+                                    setReviewDecision("reject")
+                                    setRejectReason("")
+                                    setReviewError(null)
+                                  }}
+                                >
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Rechazar
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(entity)}>
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -820,6 +953,45 @@ export function EntitiesPage() {
                         </Badge>
                         <StatusBadge status={entity.status} />
                       </div>
+                      {entity.mergedInto && (
+                        <p className="text-xs text-muted-foreground">
+                          Fusionada en otra entidad — ya no aparece en los selectores.
+                        </p>
+                      )}
+                      {entity.status === "rejected" && entity.rejectionReason && (
+                        <p className="text-xs text-destructive">Motivo: {entity.rejectionReason}</p>
+                      )}
+                      {entity.status === "pending" && (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => {
+                              setReviewEntity(entity)
+                              setReviewDecision("approve")
+                              setRejectReason("")
+                              setReviewError(null)
+                            }}
+                          >
+                            <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                            Aprobar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            onClick={() => {
+                              setReviewEntity(entity)
+                              setReviewDecision("reject")
+                              setRejectReason("")
+                              setReviewError(null)
+                            }}
+                          >
+                            <XCircle className="mr-1 h-3.5 w-3.5" />
+                            Rechazar
+                          </Button>
+                        </div>
+                      )}
                       <Button
                         type="button"
                         variant="secondary"
@@ -1393,6 +1565,174 @@ export function EntitiesPage() {
                 </>
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-10 (RF-035): aprobar o rechazar una entidad propuesta */}
+      <Dialog
+        open={!!reviewEntity}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReviewEntity(null)
+            setReviewDecision(null)
+            setRejectReason("")
+            setReviewError(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {reviewDecision === "reject" ? "Rechazar entidad" : "Aprobar entidad"}
+            </DialogTitle>
+            <DialogDescription>
+              {reviewEntity?.name} · NIT {reviewEntity?.nit}
+              {reviewDecision === "approve"
+                ? ". Quedará disponible para crear procesos."
+                : ". El asesor que la propuso recibirá el motivo."}
+            </DialogDescription>
+          </DialogHeader>
+          {reviewDecision === "reject" && (
+            <div className="space-y-1 py-2">
+              <Label htmlFor="reject-reason">Motivo del rechazo</Label>
+              <Textarea
+                id="reject-reason"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Explica por qué no se aprueba…"
+                rows={3}
+              />
+            </div>
+          )}
+          {reviewError && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {reviewError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReviewEntity(null)
+                setReviewDecision(null)
+              }}
+              disabled={isReviewing}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant={reviewDecision === "reject" ? "destructive" : "default"}
+              onClick={handleReview}
+              disabled={isReviewing}
+            >
+              {isReviewing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando…
+                </>
+              ) : reviewDecision === "reject" ? (
+                "Rechazar"
+              ) : (
+                "Aprobar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-10 (RF-043): fusionar dos entidades repetidas */}
+      <Dialog
+        open={isMergeOpen}
+        onOpenChange={(open) => {
+          setIsMergeOpen(open)
+          if (!open) {
+            setMergeReport(null)
+            setMergeError(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Fusionar entidades</DialogTitle>
+            <DialogDescription>
+              Los procesos, secretarías, asignaciones y contactos de la origen pasan a la destino. La origen queda
+              inactiva y deja de aparecer en los selectores.
+            </DialogDescription>
+          </DialogHeader>
+          {mergeReport ? (
+            <div className="space-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <p className="font-medium">Fusión completada</p>
+              <ul className="list-inside list-disc text-muted-foreground">
+                {Object.entries(mergeReport).map(([k, v]) => (
+                  <li key={k}>
+                    {k}: {String(v)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="space-y-3 py-2">
+              <div className="space-y-1">
+                <Label>Entidad origen (se desactiva)</Label>
+                <Select value={mergeSourceId} onValueChange={setMergeSourceId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elige la duplicada…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {entities
+                      .filter((e) => e.status === "active" && e.id !== mergeTargetId)
+                      .map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.name} ({e.processesCount} procesos)
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Entidad destino (se queda)</Label>
+                <Select value={mergeTargetId} onValueChange={setMergeTargetId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elige la vigente…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {entities
+                      .filter((e) => e.status === "active" && e.id !== mergeSourceId)
+                      .map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.name} ({e.processesCount} procesos)
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {mergeError && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {mergeError}
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsMergeOpen(false)} disabled={isMerging}>
+              {mergeReport ? "Cerrar" : "Cancelar"}
+            </Button>
+            {!mergeReport && (
+              <Button onClick={handleMerge} disabled={isMerging || !mergeSourceId || !mergeTargetId}>
+                {isMerging ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Fusionando…
+                  </>
+                ) : (
+                  <>
+                    <GitMerge className="mr-2 h-4 w-4" />
+                    Fusionar
+                  </>
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

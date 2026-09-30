@@ -101,6 +101,9 @@ export async function GET(request: NextRequest) {
         status: e.status,
         processesCount: pIds.length,
         documentsCount,
+        proposedBy: e.proposed_by ?? null,
+        mergedInto: e.merged_into ?? null,
+        rejectionReason: e.rejection_reason ?? null,
       }
     })
 

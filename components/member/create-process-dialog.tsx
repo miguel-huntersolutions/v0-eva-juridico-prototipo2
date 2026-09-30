@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Loader2, Scale, FileText, ChevronRight } from "lucide-react"
+import { Loader2, Scale, FileText, ChevronRight, Plus } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -30,7 +30,7 @@ import {
   type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
-import { useImpersonation } from "@/lib/impersonation-context"
+import { ProposeEntityDialog } from "@/components/member/propose-entity-dialog"
 
 interface ProcessData {
   code: string
@@ -80,6 +80,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(false)
+  const [isProposeOpen, setIsProposeOpen] = React.useState(false)
   const [secretaries, setSecretaries] = React.useState<Secretary[]>([])
   const [isLoadingSecretaries, setIsLoadingSecretaries] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -209,6 +210,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
   const canCreate = true // No longer need object/description validation
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
         <DialogHeader>
@@ -257,6 +259,16 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
                     )}
                   </SelectContent>
                 </Select>
+                {/* CAP-10 (CA-035.1): no hay texto libre para crear entidad aquí;
+                    el asesor propone y queda pendiente de aprobación. */}
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-primary hover:underline"
+                  onClick={() => setIsProposeOpen(true)}
+                >
+                  <Plus className="h-3 w-3" />
+                  ¿No está la entidad? Proponer una nueva
+                </button>
                 <p className="text-xs text-muted-foreground">Selecciona la entidad para la cual se creará el proceso</p>
               </div>
 
@@ -360,5 +372,7 @@ export function CreateProcessDialog({ open, onOpenChange, onProcessCreated, onPr
         </DialogFooter>
       </DialogContent>
     </Dialog>
+      <ProposeEntityDialog open={isProposeOpen} onOpenChange={setIsProposeOpen} />
+    </>
   )
 }

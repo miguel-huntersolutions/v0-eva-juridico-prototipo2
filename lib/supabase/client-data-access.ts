@@ -26,6 +26,8 @@ export type {
 }
 
 // Client-side Entity type (with camelCase fields matching the mapped return values)
+export type EntityStatus = "active" | "inactive" | "pending" | "rejected"
+
 export interface EntityMapped {
   id: string
   name: string
@@ -33,10 +35,15 @@ export interface EntityMapped {
   representativeName: string
   organizationId: string
   logoUrl?: string | null
-  status: "active" | "inactive"
+  status: EntityStatus
   processesCount: number
   documentsCount?: number
   createdAt?: string
+  /** CAP-10: quien propuso la entidad (si está pendiente) */
+  proposedBy?: string | null
+  /** CAP-10: entidad destino si esta fue fusionada (queda inactiva) */
+  mergedInto?: string | null
+  rejectionReason?: string | null
 }
 
 // Client-side Template type (with camelCase fields matching the mapped return values)
@@ -364,6 +371,9 @@ export async function getEntities(organizationId?: string): Promise<EntityMapped
       status: e.status,
       processesCount: pIds.length,
       documentsCount,
+      proposedBy: e.proposed_by ?? null,
+      mergedInto: e.merged_into ?? null,
+      rejectionReason: e.rejection_reason ?? null,
     }
   })
 }
@@ -455,6 +465,9 @@ export async function createEntity(data: {
     status: newEntity.status,
     processesCount: processesCount || 0,
     documentsCount: 0,
+    proposedBy: newEntity.proposed_by ?? null,
+    mergedInto: newEntity.merged_into ?? null,
+    rejectionReason: newEntity.rejection_reason ?? null,
   }
 }
 
@@ -502,6 +515,9 @@ export async function updateEntity(
     status: updatedEntity.status,
     processesCount: processesCount || 0,
     documentsCount: 0,
+    proposedBy: updatedEntity.proposed_by ?? null,
+    mergedInto: updatedEntity.merged_into ?? null,
+    rejectionReason: updatedEntity.rejection_reason ?? null,
   }
 }
 
@@ -790,6 +806,9 @@ export async function createTemplate(data: {
       process_type_id: data.processTypeId,
       entity_id: data.entityId.trim(),
       file_url: data.fileUrl,
+      // CAP-10 (RF-033): variables detectadas al cargar (incluye minúsculas)
+      detected_variables: data.variables || [],
+      variables_validated_at: new Date().toISOString(),
       variables: data.variables || [],
     })
     .select(TEMPLATE_LIST_SELECT)

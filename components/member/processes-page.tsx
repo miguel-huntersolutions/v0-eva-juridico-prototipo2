@@ -807,7 +807,9 @@ export function ProcessesPage() {
                     Cargando...
                   </SelectItem>
                 ) : (
-                  entities.map((entity) => (
+                  entities
+                    .filter((e) => e.status === "active")
+                    .map((entity) => (
                     <SelectItem key={entity.id} value={entity.id}>
                       {entity.name}
                     </SelectItem>

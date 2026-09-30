@@ -197,3 +197,74 @@ export async function extractTagsFromDocx(file: File): Promise<string[]> {
   }
 }
 
+/**
+ * CAP-10 (RF-033, CA-033.2): detecta variables SIN CERRAR en un .docx
+ * ("{{OBJETO" sin "}}"). Devuelve cada hallazgo con el fragmento y el contexto
+ * del texto alrededor (en DOCX no hay páginas fijas; el contexto ubica el error).
+ */
+export async function findUnclosedVariablesInDocx(
+  file: File,
+): Promise<Array<{ fragment: string; context: string }>> {
+  const arrayBuffer = await file.arrayBuffer()
+  const PizZip = (await import("pizzip")).default
+  const zip = new PizZip(arrayBuffer)
+
+  let runTextContent = ""
+  Object.keys(zip.files).forEach((fileName) => {
+    if (fileName.startsWith("word/") && fileName.endsWith(".xml")) {
+      const raw = zip.files[fileName]?.asText() || ""
+      runTextContent += `\n${extractTextRunsFromWordXml(raw)}`
+    }
+  })
+
+  const text = runTextContent
+  const unclosed: Array<{ fragment: string; context: string }> = []
+  let searchFrom = 0
+  while (true) {
+    const open = text.indexOf("{{", searchFrom)
+    if (open === -1) break
+    const close = text.indexOf("}}", open + 2)
+    const nextOpen = text.indexOf("{{", open + 2)
+    if (close === -1 || (nextOpen !== -1 && nextOpen < close)) {
+      const context = text.slice(Math.max(0, open - 40), open + 60).replace(/\s+/g, " ").trim()
+      const fragment = text
+        .slice(open, Math.min(open + 40, nextOpen === -1 ? open + 40 : nextOpen))
+        .trim()
+      unclosed.push({ fragment, context })
+      searchFrom = open + 2
+    } else {
+      searchFrom = close + 2
+    }
+  }
+  return unclosed
+}
+
+/**
+ * CAP-10 (RF-033, CA-033.1): TODAS las variables del documento en cualquier
+ * caso (incluye minúsculas como {{objeto}}), normalizadas a MAYÚSCULAS.
+ * Complementa a extractTemplateTags (que solo lista escalares en mayúsculas).
+ */
+export async function findAllVariablesLooseInDocx(file: File): Promise<string[]> {
+  const arrayBuffer = await file.arrayBuffer()
+  const PizZip = (await import("pizzip")).default
+  const zip = new PizZip(arrayBuffer)
+
+  let runTextContent = ""
+  Object.keys(zip.files).forEach((fileName) => {
+    if (fileName.startsWith("word/") && fileName.endsWith(".xml")) {
+      const raw = zip.files[fileName]?.asText() || ""
+      runTextContent += `\n${extractTextRunsFromWordXml(raw)}`
+    }
+  })
+
+  const found = new Set<string>()
+  const re = /\{\{\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9_]+)\s*\}\}/g
+  for (const match of runTextContent.matchAll(re)) {
+    const v = (match[1] || "").trim()
+    if (!v) continue
+    if (v.startsWith("#") || v.startsWith("/")) continue // aperturas/cierres de loop
+    found.add(v.toUpperCase())
+  }
+  return [...found].sort()
+}
+

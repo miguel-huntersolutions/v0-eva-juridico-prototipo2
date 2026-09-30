@@ -212,7 +212,9 @@ export default function AuditPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas las entidades</SelectItem>
-                  {entities.map((e) => (
+                  {entities
+                    .filter((e) => e.status === "active")
+                    .map((e) => (
                     <SelectItem key={e.id} value={e.id}>
                       {e.name}
                     </SelectItem>

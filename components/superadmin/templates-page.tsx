@@ -68,7 +68,12 @@ import {
 } from "@/lib/supabase/client-data-access"
 
 const ENTITY_GLOBAL_VALUE = "__global__"
-import { extractTagsFromDocx, parseDynamicTableTagToken } from "@/lib/utils/template-helpers"
+import {
+  extractTagsFromDocx,
+  parseDynamicTableTagToken,
+  findUnclosedVariablesInDocx,
+  findAllVariablesLooseInDocx,
+} from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 
 interface UploadedFile {
@@ -118,6 +123,20 @@ export function TemplatesPage() {
   const [entityOptions, setEntityOptions] = React.useState<TemplateEntityOption[]>([])
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(null)
   const [extractedTags, setExtractedTags] = React.useState<string[]>([])
+
+  // CAP-10 (CA-033.3): variables ya conocidas en las plantillas existentes
+  // (se tratan como el mismo dato entre plantillas — CAP-03)
+  const knownVariables = React.useMemo(() => {
+    const set = new Set<string>()
+    for (const t of templates) {
+      for (const v of t.variables || []) {
+        // Ignorar tokens de tabla dinámica (llevan formato especial)
+        if (v.includes("{{") || v.includes("@")) continue
+        set.add(v.toUpperCase())
+      }
+    }
+    return set
+  }, [templates])
   const [isExtractingTags, setIsExtractingTags] = React.useState(false)
   const [largeFileWarning, setLargeFileWarning] = React.useState<string | null>(null)
   // Renamed isDragging to isDragActive for consistency
@@ -541,9 +560,29 @@ export function TemplatesPage() {
       )
       
       try {
+        // CAP-10 (RF-033, CA-033.2): rechazar la carga si hay variables sin cerrar
+        const unclosed = await findUnclosedVariablesInDocx(file)
+        if (unclosed.length > 0) {
+          const detalle = unclosed
+            .slice(0, 3)
+            .map((u) => `• "${u.fragment}" (cerca de: "…${u.context}…")`)
+            .join("\n")
+          alert(
+            `La plantilla tiene ${unclosed.length} variable(s) sin cerrar y no se puede cargar:\n\n${detalle}\n\nCorrige el documento en Word y vuelve a cargarlo.`,
+          )
+          setUploadedFile(null)
+          setExtractedTags([])
+          setLargeFileWarning(null)
+          return
+        }
+
         // Extract tags from the document
         const tags = await extractTagsFromDocx(file)
-        
+
+        // CAP-10 (CA-033.1): también las variables en minúsculas van a la lista
+        const looseVars = await findAllVariablesLooseInDocx(file)
+        const merged = Array.from(new Set([...tags, ...looseVars])).sort()
+
         setUploadedFile({
           name: file.name,
           size: file.size,
@@ -551,7 +590,7 @@ export function TemplatesPage() {
           lastModified: file.lastModified,
           file: file, // Store the File object for later use
         })
-        setExtractedTags(tags)
+        setExtractedTags(merged)
       } catch (error) {
         console.error("Error processing file:", error)
         alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
@@ -1336,12 +1375,32 @@ export function TemplatesPage() {
                           Se encontraron {extractedTags.length} variable{extractedTags.length !== 1 ? "s" : ""} en el documento:
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {extractedTags.map((tag) => (
-                            <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {formatVariableForDisplay(tag)}
-                            </Badge>
-                          ))}
+                          {extractedTags.map((tag) => {
+                            // CAP-10 (CA-033.3): si la variable ya existe en otras
+                            // plantillas, se tratará como el mismo dato (CAP-03)
+                            const isKnown = knownVariables.has(tag.toUpperCase())
+                            return (
+                              <Badge
+                                key={tag}
+                                variant={isKnown ? "default" : "secondary"}
+                                className="font-mono text-xs"
+                                title={
+                                  isKnown
+                                    ? "Esta variable ya existe en otras plantillas: se tratará como el mismo dato"
+                                    : "Variable nueva"
+                                }
+                              >
+                                {formatVariableForDisplay(tag)}
+                                {isKnown && " ✓"}
+                              </Badge>
+                            )
+                          })}
                         </div>
+                        {extractedTags.some((t) => knownVariables.has(t.toUpperCase())) && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Las marcadas con ✓ ya existen en otras plantillas y se tratarán como el mismo dato.
+                          </p>
+                        )}
                         <p className="mt-3 text-xs text-muted-foreground">
                           Estas variables se guardarán con la plantilla y podrás usarlas para generar documentos dinámicamente.
                         </p>

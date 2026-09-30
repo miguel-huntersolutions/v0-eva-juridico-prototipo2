@@ -92,6 +92,10 @@ export function NotificationsBell() {
     setOpen(false)
     if (n.processId) {
       router.push(`/member/documents?processId=${n.processId}`)
+    } else if (n.type === "entity_proposed") {
+      router.push("/admin/entities")
+    } else if (n.type === "entity_approved" || n.type === "entity_rejected") {
+      router.push("/member/processes")
     }
   }
 

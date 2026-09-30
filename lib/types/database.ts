@@ -34,7 +34,7 @@ export interface Entity {
   representative_name: string
   organization_id: string
   logo_url?: string | null
-  status: "active" | "inactive"
+  status: "active" | "inactive" | "pending" | "rejected"
   created_at: string
   updated_at: string
   // Computed fields
