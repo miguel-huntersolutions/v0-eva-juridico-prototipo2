@@ -59,7 +59,6 @@ import {
   getEntitiesForImpersonation,
   getProcessesMapped,
   getProcessesForImpersonation,
-  deleteProcess as deleteProcessDB,
   type ProcessType,
   type EntityMapped,
   type ProcessMapped,
@@ -377,16 +376,27 @@ export function ProcessesPage() {
     return "Continuar"
   }
 
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
+
   const handleDeleteProcess = async () => {
     if (!selectedProcess) return
     try {
       setIsDeleting(true)
-      await deleteProcessDB(selectedProcess.id)
+      setDeleteError(null)
+      // El borrado va por API (service role): con RLS del browser, un member
+      // borraba 0 filas SIN error y el proceso reaparecía al recargar.
+      const res = await fetch(`/api/processes/${selectedProcess.id}`, { method: "DELETE" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "No se pudo eliminar el proceso")
+      }
       setProcesses((prev) => prev.filter((p) => p.id !== selectedProcess.id))
       setIsDeleteDialogOpen(false)
       setSelectedProcess(null)
     } catch (error) {
       console.error("Error deleting process:", error)
+      // Error visible: antes se tragaba y la UI mentía (quitaba el proceso solo en memoria)
+      setDeleteError(error instanceof Error ? error.message : "Error al eliminar el proceso")
     } finally {
       setIsDeleting(false)
     }
@@ -670,6 +680,7 @@ export function ProcessesPage() {
                         }}
                         onDelete={() => {
                           setSelectedProcess(process)
+                          setDeleteError(null)
                           setIsDeleteDialogOpen(true)
                         }}
                         onUpdateStatus={(status) => handleUpdateStatus(process, status)}
@@ -755,6 +766,7 @@ export function ProcessesPage() {
                               }}
                               onDelete={() => {
                                 setSelectedProcess(process)
+                                setDeleteError(null)
                                 setIsDeleteDialogOpen(true)
                               }}
                               onUpdateStatus={(status) => handleUpdateStatus(process, status)}
@@ -862,6 +874,11 @@ export function ProcessesPage() {
               se puede deshacer y eliminará todos los documentos asociados.
             </DialogDescription>
           </DialogHeader>
+          {deleteError && (
+            <p className="text-sm text-destructive rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+              {deleteError}
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} disabled={isDeleting}>
               Cancelar
