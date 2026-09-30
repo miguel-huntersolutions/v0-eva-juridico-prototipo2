@@ -34,6 +34,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { getTemplates, createProcess, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
+import { ProcessAttachments } from "@/components/member/process-attachments"
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
 import { parseDynamicTableTagToken, isImageTag } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
@@ -165,6 +166,9 @@ export function GenerateDocumentsDialog({
   // RF-013: diálogo de confirmación de campos clave antes de generar (proceso reutilizado)
   const [reuseConfirmOpen, setReuseConfirmOpen] = React.useState(false)
   const [pendingGenerateAction, setPendingGenerateAction] = React.useState<(() => void) | null>(null)
+  // RF-037 (CAP-02): paso final de adjuntos, justo después de generar todos los documentos
+  // (la generación crea la estructura Entidad/Secretaría/Proceso en Drive donde caen los adjuntos)
+  const [showAttachmentsStep, setShowAttachmentsStep] = React.useState(false)
   const [generatingStep, setGeneratingStep] = React.useState<{
     current: number
     total: number
@@ -279,7 +283,20 @@ export function GenerateDocumentsDialog({
     setImprovedFields(new Set())
     setImprovingField(null)
     setGeneratingStep(null)
+    setShowAttachmentsStep(false)
     onOpenChange(false)
+  }
+
+  /** RF-037: al terminar de generar todos los documentos, pasar al paso de adjuntos. */
+  const finishToAttachments = () => {
+    if (onDocumentsGenerated) onDocumentsGenerated()
+    setShowAttachmentsStep(true)
+  }
+
+  /** Cierra el flujo y vuelve al listado de procesos. */
+  const finishAndExit = () => {
+    handleClose()
+    router.push("/member/processes")
   }
 
   const isBusy = isGenerating || isSaving
@@ -771,7 +788,7 @@ export function GenerateDocumentsDialog({
         setGeneratingStep(null)
       }
 
-      // Cerrar y refrescar solo cuando es "Generar Este" y ya están todos
+      // Cuando es "Generar Este" y ya están todos: paso final de adjuntos (RF-037)
       if (!fromGenerateAll) {
         const allGenerated =
           templates.length > 0 &&
@@ -779,11 +796,7 @@ export function GenerateDocumentsDialog({
             updatedGeneratedDocuments.some((doc) => doc.templateId === t.id),
           )
         if (allGenerated) {
-          if (onDocumentsGenerated) onDocumentsGenerated()
-          setTimeout(() => {
-            handleClose()
-            router.push("/member/processes")
-          }, 1500)
+          setTimeout(() => finishToAttachments(), 1200)
         }
       }
 
@@ -846,14 +859,8 @@ export function GenerateDocumentsDialog({
         await handleGenerateDocument(templates[i], 0, processIdToUse, true)
       }
 
-      // Todos los documentos generados: refrescar lista, cerrar y volver al listado de procesos
-      if (onDocumentsGenerated) {
-        onDocumentsGenerated()
-      }
-      setTimeout(() => {
-        handleClose()
-        router.push("/member/processes")
-      }, 1500)
+      // Todos los documentos generados: paso final de adjuntos (RF-037)
+      setTimeout(() => finishToAttachments(), 1200)
     } catch (error) {
       console.error("Error generating documents:", error)
       setError(error instanceof Error ? error.message : "Error al generar los documentos. Por favor intente de nuevo.")
@@ -1050,8 +1057,47 @@ export function GenerateDocumentsDialog({
     </DialogHeader>
   )
 
+  const attachmentsProcessId = currentProcessState?.id || process?.id || ""
+
+  // RF-037 (CAP-02): paso final — adjuntos del proceso, justo tras generar todos los documentos.
+  const attachmentsStepContent = (
+    <>
+      <div className="space-y-1.5 pb-4">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Upload className="h-5 w-5" />
+          Paso final · Adjuntos del proceso
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Los documentos ya están generados y la carpeta del proceso quedó creada en Drive
+          {currentProcess?.code ? (
+            <>
+              {" "}(<span className="font-mono">{currentProcess.code}</span>)
+            </>
+          ) : null}
+          . Adjunta aquí los archivos de soporte (opcional); quedarán en esa misma carpeta.
+        </p>
+      </div>
+
+      {attachmentsProcessId && <ProcessAttachments processId={attachmentsProcessId} />}
+
+      <div className="border-t pt-4 flex items-center justify-end gap-2">
+        <Button variant="outline" onClick={finishAndExit}>
+          Omitir y finalizar
+        </Button>
+        <Button onClick={finishAndExit}>
+          <Check className="mr-2 h-4 w-4" />
+          Finalizar
+        </Button>
+      </div>
+    </>
+  )
+
   const content = (
     <>
+        {showAttachmentsStep ? (
+          attachmentsStepContent
+        ) : (
+          <>
         {headerBlock}
 
         {error && <div className="bg-destructive/10 text-destructive px-4 py-2 rounded-md text-sm">{error}</div>}
@@ -1487,6 +1533,9 @@ export function GenerateDocumentsDialog({
                 </div>
               </DialogFooter>
             )}
+          </>
+        )}
+
           </>
         )}
 

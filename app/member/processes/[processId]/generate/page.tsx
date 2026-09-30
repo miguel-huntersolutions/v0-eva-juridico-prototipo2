@@ -10,7 +10,6 @@ import { getProcessMapped, getProcessMappedForImpersonation, getEntities, getEnt
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { GenerateDocumentsDialog } from "@/components/member/generate-documents-dialog"
-import { ProcessAttachments } from "@/components/member/process-attachments"
 
 const LOADING_MESSAGES = [
   "Preparando el agente…",
@@ -195,9 +194,6 @@ export default function ProcessGeneratePage() {
           />
         </CardContent>
       </Card>
-
-      {/* RF-037 (CAP-02): adjuntos del proceso, accesibles también desde la generación */}
-      <ProcessAttachments processId={process.id} />
     </div>
   )
 }

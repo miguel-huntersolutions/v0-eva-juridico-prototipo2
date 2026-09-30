@@ -20,7 +20,6 @@ import { getAllUniqueTags } from "@/lib/utils/document-generator"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { GenerateDocumentsDialog } from "@/components/member/generate-documents-dialog"
-import { ProcessAttachments } from "@/components/member/process-attachments"
 import { SmartFillContextStep } from "@/components/member/smart-fill-context-step"
 import { SmartFillProgress, useSmartFillProgressCycle } from "@/components/member/smart-fill-progress"
 import type { SmartFillResult } from "@/lib/smart-fill/types"
@@ -295,9 +294,6 @@ export default function ProcessGenerateSmartPage() {
               />
             </CardContent>
           </Card>
-
-          {/* RF-037 (CAP-02): adjuntos del proceso también en el flujo con IA */}
-          <ProcessAttachments processId={process.id} />
         </>
       )}
     </div>
