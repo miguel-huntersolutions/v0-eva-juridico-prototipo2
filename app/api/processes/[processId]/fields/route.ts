@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 
 export async function GET(
   request: NextRequest,
@@ -162,6 +163,16 @@ export async function PUT(
         .upsert(rows, { onConflict: "process_id,tag" })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    // CAP-09 (RF-031): auditoría de guardado de borrador (solo metadatos)
+    await logAuditEvent({
+      organizationId: orgId,
+      processId,
+      actorId: user.id,
+      action: "draft_saved",
+      details: { savedFields: rows.length, origin },
+      ip: getRequestIp(request),
+    })
 
     return NextResponse.json({ success: true, savedFields: rows.length })
   } catch (err) {

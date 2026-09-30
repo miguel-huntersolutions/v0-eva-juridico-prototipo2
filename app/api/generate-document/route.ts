@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
     // Plantillas con entity_id solo pueden generarse para procesos de esa entidad
     const { getTemplateById, getProcess } = await import("@/lib/supabase/data-access")
     let templateEntityId: string | null | undefined
+    let templateNameForAudit: string | null = null
     if (templateId && typeof templateId === "string") {
       try {
         const tpl = await getTemplateById(templateId)
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
           )
         }
         templateEntityId = tpl.entity_id ?? null
+        templateNameForAudit = tpl.name ?? null
       } catch {
         return NextResponse.json({ error: "Plantilla no encontrada" }, { status: 404 })
       }
@@ -263,7 +265,7 @@ export async function POST(request: NextRequest) {
           .limit(1)
         const nextVersion = existing && existing.length > 0 ? (existing[0].version || 1) + 1 : 1
 
-        await createDocument({
+        const createdDoc = await createDocument({
           process_id: processId,
           name: documentName,
           type: "generated", // or extract from template name
@@ -274,6 +276,23 @@ export async function POST(request: NextRequest) {
           created_by: createdBy || user.id,
           template_id: templateId || null, // CAP-02: qué plantilla lo generó (para continuar procesos parciales)
         } as any)
+
+        // CAP-09 (RF-031): auditoría de generación/regeneración (sin contenido)
+        const { logAuditEvent, getRequestIp } = await import("@/lib/audit/log")
+        await logAuditEvent({
+          processId,
+          documentId: (createdDoc as any)?.id ?? null,
+          actorId: user.id,
+          action: nextVersion > 1 ? "document_regenerated" : "document_generated",
+          details: {
+            documentName,
+            version: nextVersion,
+            templateId: templateId || null,
+            templateName: templateNameForAudit,
+            drivePath: uploadResult.drivePath,
+          },
+          ip: getRequestIp(request),
+        })
       } catch (dbError) {
         return NextResponse.json(
           {

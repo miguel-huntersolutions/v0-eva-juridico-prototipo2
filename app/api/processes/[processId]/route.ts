@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 
 export async function DELETE(
   request: NextRequest,
@@ -88,6 +89,17 @@ export async function DELETE(
         { status: 409 },
       )
     }
+
+    // CAP-09 (RF-031): auditoría de eliminación (process_id queda en el evento
+    // aunque el proceso ya no exista: la FK tiene ON DELETE SET NULL)
+    await logAuditEvent({
+      organizationId: orgId,
+      processId,
+      actorId: user.id,
+      action: "process_deleted",
+      details: { code: proc.code },
+      ip: getRequestIp(request),
+    })
 
     return NextResponse.json({ success: true, deletedProcessId: processId })
   } catch (err) {

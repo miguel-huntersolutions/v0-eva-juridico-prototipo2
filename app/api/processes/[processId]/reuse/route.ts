@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 
 function makeCode(typeName: string): string {
   const abbrev = (typeName || "PR")
@@ -134,6 +135,22 @@ export async function POST(
       const { error: copyErr } = await service.from("process_field_values").insert(rows)
       if (!copyErr) copied = rows.length
     }
+
+    // CAP-09 (RF-031): auditoría de reutilización (en el proceso original y
+    // referencia al nuevo proceso creado)
+    await logAuditEvent({
+      organizationId: orgId,
+      processId,
+      actorId: user.id,
+      action: "process_reused",
+      details: {
+        newProcessId: newProcess.id,
+        newCode: newProcess.code,
+        copiedFields: copied,
+        entityChanged,
+      },
+      ip: getRequestIp(request),
+    })
 
     return NextResponse.json({
       success: true,

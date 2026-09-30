@@ -28,6 +28,8 @@ import {
   Files,
   Sparkles,
   Copy,
+  UserPlus,
+  ScrollText,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -44,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -59,6 +62,7 @@ import {
   getEntitiesForImpersonation,
   getProcessesMapped,
   getProcessesForImpersonation,
+  getOrganizationMembers,
   type ProcessType,
   type EntityMapped,
   type ProcessMapped,
@@ -89,6 +93,9 @@ function ProcessActionsMenu({
   onUpdateStatus,
   onReuse,
   progressLabel,
+  isAdmin,
+  onAssign,
+  onViewAudit,
 }: {
   process: ProcessMapped
   isUpdatingStatus: boolean
@@ -98,6 +105,10 @@ function ProcessActionsMenu({
   onReuse: () => void
   /** CAP-02: si la generación está incompleta, texto de progreso (ej. "3/9") */
   progressLabel?: string
+  /** CAP-08/09: solo admin puede asignar responsables y ver la auditoría */
+  isAdmin?: boolean
+  onAssign?: () => void
+  onViewAudit?: () => void
 }) {
   const router = useRouter()
 
@@ -158,6 +169,30 @@ function ProcessActionsMenu({
           <Copy className="mr-2 h-4 w-4" />
           Reutilizar proceso
         </DropdownMenuItem>
+        {/* CAP-08 (RF-028): asignar responsable — solo admin (CA-028.4) */}
+        {isAdmin && onAssign && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onAssign()
+            }}
+          >
+            <UserPlus className="mr-2 h-4 w-4" />
+            {process.assignedToId ? "Reasignar responsable" : "Asignar responsable"}
+          </DropdownMenuItem>
+        )}
+        {/* CAP-09 (RF-031): registro de auditoría — solo admin (CA-031.3) */}
+        {isAdmin && onViewAudit && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onViewAudit()
+            }}
+          >
+            <ScrollText className="mr-2 h-4 w-4" />
+            Registro de auditoría
+          </DropdownMenuItem>
+        )}
         {process.spreadsheetUrl && (
           <DropdownMenuItem
             onClick={(e) => {
@@ -236,6 +271,27 @@ export function ProcessesPage() {
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(true)
 
+  // CAP-08: asignación de responsable (solo admin) + filtro por responsable (RF-030)
+  const isAdmin = profile?.role === "admin" || profile?.role === "superadmin"
+  const [members, setMembers] = React.useState<Array<{ id: string; name: string; email: string }>>([])
+  const [assigneeFilter, setAssigneeFilter] = React.useState<string>("all")
+  const [assignProcess, setAssignProcess] = React.useState<ProcessMapped | null>(null)
+  const [assigneeSelection, setAssigneeSelection] = React.useState<string>("")
+  const [isAssigning, setIsAssigning] = React.useState(false)
+  const [assignError, setAssignError] = React.useState<string | null>(null)
+
+  // CAP-09: registro de auditoría del proceso (solo admin)
+  const [auditProcess, setAuditProcess] = React.useState<ProcessMapped | null>(null)
+  const [auditEvents, setAuditEvents] = React.useState<Array<{
+    id: string
+    actionLabel: string
+    actorName: string
+    details: Record<string, unknown> | null
+    ip: string | null
+    createdAt: string
+  }>>([])
+  const [isLoadingAudit, setIsLoadingAudit] = React.useState(false)
+
   // Load process types once on mount (no org dependency)
   React.useEffect(() => {
     let cancelled = false
@@ -286,6 +342,25 @@ export function ProcessesPage() {
       cancelled = true
     }
   }, [orgId, isImpersonating])
+
+  // CAP-08: cargar miembros de la org para el selector de responsable (solo admin)
+  React.useEffect(() => {
+    if (!orgId || !isAdmin) return
+    let cancelled = false
+    getOrganizationMembers(orgId)
+      .then((list: any[]) => {
+        if (cancelled) return
+        setMembers(
+          (list || [])
+            .filter((m) => m.role !== "superadmin")
+            .map((m) => ({ id: m.id, name: m.name || m.full_name || m.email, email: m.email })),
+        )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [orgId, isAdmin])
 
   const handleProcessCreated = (newProcess: ProcessMapped) => {
     setProcesses((prev) => [newProcess, ...prev])
@@ -402,6 +477,65 @@ export function ProcessesPage() {
     }
   }
 
+  // CAP-08 (RF-028): asignar/reasignar responsable (solo admin). La API otorga
+  // acceso a la entidad si no lo tenía y deja todo en auditoría.
+  const openAssignDialog = (process: ProcessMapped) => {
+    setAssignProcess(process)
+    setAssigneeSelection(process.assignedToId || "none")
+    setAssignError(null)
+  }
+
+  const handleAssign = async () => {
+    if (!assignProcess) return
+    try {
+      setIsAssigning(true)
+      setAssignError(null)
+      const res = await fetch(`/api/processes/${assignProcess.id}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assigneeId: assigneeSelection === "none" ? null : assigneeSelection }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo asignar el proceso")
+      // Actualizar la lista local
+      setProcesses((prev) =>
+        prev.map((p) =>
+          p.id === assignProcess.id
+            ? {
+                ...p,
+                assignedToId: data.assignedTo,
+                assignedToName: data.assigneeName,
+                assignedAt: new Date().toISOString(),
+              }
+            : p,
+        ),
+      )
+      setAssignProcess(null)
+    } catch (err) {
+      setAssignError(err instanceof Error ? err.message : "Error al asignar el proceso")
+    } finally {
+      setIsAssigning(false)
+    }
+  }
+
+  // CAP-09 (RF-031): abrir el registro de auditoría del proceso (solo admin)
+  const openAuditDialog = async (process: ProcessMapped) => {
+    setAuditProcess(process)
+    setAuditEvents([])
+    setIsLoadingAudit(true)
+    try {
+      const res = await fetch(`/api/audit?processId=${process.id}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo cargar el registro")
+      setAuditEvents(data.events || [])
+    } catch (err) {
+      console.error("Error loading audit:", err)
+      setAuditEvents([])
+    } finally {
+      setIsLoadingAudit(false)
+    }
+  }
+
   const handleUpdateStatus = async (process: ProcessMapped, newStatus: string) => {
     if (process.status === newStatus) {
       return
@@ -474,8 +608,12 @@ export function ProcessesPage() {
     const matchesStatus = statusFilter === "all" || process.status === statusFilter
     const matchesEntity = entityFilter === "all" || process.entityId === entityFilter
     const matchesProcessType = processTypeFilter === "all" || process.processTypeId === processTypeFilter
+    // CAP-08 (RF-030): filtrable por responsable
+    const matchesAssignee =
+      assigneeFilter === "all" ||
+      (assigneeFilter === "unassigned" ? !process.assignedToId : process.assignedToId === assigneeFilter)
 
-    return matchesSearch && matchesStatus && matchesEntity && matchesProcessType
+    return matchesSearch && matchesStatus && matchesEntity && matchesProcessType && matchesAssignee
   })
 
   // Calculate stats
@@ -609,6 +747,23 @@ export function ProcessesPage() {
                 )}
               </SelectContent>
             </Select>
+            {/* CAP-08 (RF-030): filtro por responsable — solo admin */}
+            {isAdmin && (
+              <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="Responsable" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los responsables</SelectItem>
+                  <SelectItem value="unassigned">Sin asignar</SelectItem>
+                  {members.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name || m.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -654,6 +809,12 @@ export function ProcessesPage() {
                           {process.secretaryName}
                           {process.processTypeName ? ` · ${process.processTypeName}` : ""}
                         </p>
+                        {/* CAP-08 (RF-030): responsable asignado */}
+                        {process.assignedToName && (
+                          <p className="truncate text-xs text-muted-foreground">
+                            Responsable: {process.assignedToName}
+                          </p>
+                        )}
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <StatusBadge status={process.status} />
                           <Badge variant="secondary">{process.documentsCount} docs</Badge>
@@ -685,6 +846,9 @@ export function ProcessesPage() {
                         }}
                         onUpdateStatus={(status) => handleUpdateStatus(process, status)}
                         onReuse={() => handleReuse(process)}
+                        isAdmin={isAdmin}
+                        onAssign={() => openAssignDialog(process)}
+                        onViewAudit={() => openAuditDialog(process)}
                         progressLabel={
                           generationProgress[process.id]?.total > 0
                             ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
@@ -706,6 +870,7 @@ export function ProcessesPage() {
                       <TableHead>Secretaría</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead>Estado</TableHead>
+                      <TableHead>Responsable</TableHead>
                       <TableHead className="text-center">Docs</TableHead>
                       <TableHead>Actualizado</TableHead>
                       <TableHead className="w-[150px]"></TableHead>
@@ -735,6 +900,14 @@ export function ProcessesPage() {
                         </TableCell>
                         <TableCell>
                           <StatusBadge status={process.status} />
+                        </TableCell>
+                        {/* CAP-08 (RF-030): responsable visible en la vista de procesos */}
+                        <TableCell>
+                          {process.assignedToName ? (
+                            <span className="text-sm">{process.assignedToName}</span>
+                          ) : (
+                            <span className="text-xs italic text-muted-foreground">Sin asignar</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge variant="secondary">{process.documentsCount}</Badge>
@@ -771,6 +944,9 @@ export function ProcessesPage() {
                               }}
                               onUpdateStatus={(status) => handleUpdateStatus(process, status)}
                               onReuse={() => handleReuse(process)}
+                              isAdmin={isAdmin}
+                              onAssign={() => openAssignDialog(process)}
+                              onViewAudit={() => openAuditDialog(process)}
                               progressLabel={
                                 generationProgress[process.id]?.total > 0
                                   ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
@@ -895,6 +1071,116 @@ export function ProcessesPage() {
                   Eliminar
                 </>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-08 (RF-028): diálogo de asignación de responsable (solo admin) */}
+      <Dialog open={!!assignProcess} onOpenChange={(open) => !open && setAssignProcess(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Asignar responsable</DialogTitle>
+            <DialogDescription>
+              Proceso <strong>{assignProcess?.code}</strong> · {assignProcess?.entityName}. El responsable recibirá
+              una notificación y obtendrá acceso a la entidad si aún no lo tiene.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="assignee-select">Responsable</Label>
+            <Select value={assigneeSelection} onValueChange={setAssigneeSelection}>
+              <SelectTrigger id="assignee-select">
+                <SelectValue placeholder="Selecciona un miembro" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Sin responsable</SelectItem>
+                {members.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name || m.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {assignError && (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {assignError}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignProcess(null)} disabled={isAssigning}>
+              Cancelar
+            </Button>
+            <Button onClick={handleAssign} disabled={isAssigning}>
+              {isAssigning ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Asignando...
+                </>
+              ) : (
+                <>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Guardar asignación
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-09 (RF-031/032): registro de auditoría del proceso (solo admin) */}
+      <Dialog open={!!auditProcess} onOpenChange={(open) => !open && setAuditProcess(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Registro de auditoría</DialogTitle>
+            <DialogDescription>
+              Eventos del proceso <strong>{auditProcess?.code}</strong>. El registro es inalterable.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[400px] overflow-y-auto">
+            {isLoadingAudit ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : auditEvents.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Aún no hay eventos registrados para este proceso.
+              </p>
+            ) : (
+              <ul className="space-y-2 py-2">
+                {auditEvents.map((ev) => (
+                  <li key={ev.id} className="rounded-md border px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{ev.actionLabel}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{ev.createdAt}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {ev.actorName}
+                      {ev.details && Object.keys(ev.details).length > 0
+                        ? ` · ${Object.entries(ev.details)
+                            .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                            .join(" · ")}`
+                        : ""}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <DialogFooter className="flex items-center justify-between sm:justify-between">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                window.open(`/api/audit?processId=${auditProcess?.id}&format=csv`, "_blank")
+              }
+              disabled={auditEvents.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Exportar CSV
+            </Button>
+            <Button variant="outline" onClick={() => setAuditProcess(null)}>
+              Cerrar
             </Button>
           </DialogFooter>
         </DialogContent>

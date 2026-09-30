@@ -23,6 +23,7 @@ import {
   ArrowLeftRight,
   RefreshCw,
   Menu,
+  ScrollText,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -47,6 +48,7 @@ import type { Profile, UserRole } from "@/lib/types/database"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useImpersonation } from "@/lib/impersonation-context"
+import { NotificationsBell } from "@/components/member/notifications-bell"
 
 interface NavItem {
   title: string
@@ -82,6 +84,8 @@ const navItems: NavItem[] = [
     roles: ["member", "admin", "superadmin"],
     badge: "IA",
   },
+  // CAP-09 (RF-031/032/041): auditoría solo para admin/superadmin (CA-031.3)
+  { title: "Auditoría", href: "/member/audit", icon: ScrollText, roles: ["admin", "superadmin"] },
 
   { title: "Documentación", href: "/docs", icon: Book, roles: ["superadmin", "admin", "member"] },
 ]
@@ -154,10 +158,12 @@ function SidebarPanel({
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
             <FileText className="h-5 w-5 text-primary-foreground" />
           </div>
-          <div className="flex flex-col">
+          <div className="flex min-w-0 flex-1 flex-col">
             <span className="text-sm font-semibold tracking-tight">EVA Jurídico</span>
             <span className="text-xs text-sidebar-foreground/60">Gestión Legal</span>
           </div>
+          {/* CAP-08 (RF-029): notificaciones in-app */}
+          <NotificationsBell />
         </div>
       )}
 

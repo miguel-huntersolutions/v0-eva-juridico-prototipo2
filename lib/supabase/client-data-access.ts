@@ -118,6 +118,10 @@ export interface ProcessMapped {
   spreadsheetUrl?: string | null
   driveFolderId?: string | null
   driveFolderUrl?: string | null
+  // CAP-08 (RF-028): abogado responsable asignado
+  assignedToId?: string | null
+  assignedToName?: string | null
+  assignedAt?: string | null
 }
 
 // Client-side Organization type with camelCase fields
@@ -952,7 +956,8 @@ export async function getProcessesMapped(filters?: {
       *,
       entity:entities(id, name),
       secretary:secretaries(id, name),
-      process_type:process_types(id, name)
+      process_type:process_types(id, name),
+      assigned:profiles!processes_assigned_to_fkey(id, full_name, email)
     `)
     .order("updated_at", { ascending: false })
 
@@ -1004,6 +1009,9 @@ export async function getProcessesMapped(filters?: {
     spreadsheetUrl: (p as any).spreadsheet_url || null,
     driveFolderId: (p as any).drive_folder_id || null,
     driveFolderUrl: (p as any).drive_folder_url || null,
+    assignedToId: (p as any).assigned_to ?? null,
+    assignedToName: (p as any).assigned?.full_name || (p as any).assigned?.email || null,
+    assignedAt: (p as any).assigned_at ?? null,
   }))
 }
 
@@ -1041,6 +1049,17 @@ export async function createProcess(data: {
     .single()
 
   if (error) throw error
+
+  // CAP-09 (RF-031): auditar creación del proceso (fire-and-forget, no bloquea)
+  fetch("/api/audit/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "process_created",
+      processId: newProcess.id,
+      details: { code: newProcess.code, entity: newProcess.entity?.name },
+    }),
+  }).catch(() => {})
 
   return {
     id: newProcess.id,

@@ -61,7 +61,8 @@ export async function GET(request: NextRequest) {
         *,
         entity:entities(id, name),
         secretary:secretaries(id, name),
-        process_type:process_types(id, name)
+        process_type:process_types(id, name),
+        assigned:profiles!processes_assigned_to_fkey(id, full_name, email)
       `)
       .in("entity_id", entityIds)
       .order("updated_at", { ascending: false })
@@ -103,6 +104,9 @@ export async function GET(request: NextRequest) {
       spreadsheetUrl: p.spreadsheet_url ?? null,
       driveFolderId: p.drive_folder_id ?? null,
       driveFolderUrl: p.drive_folder_url ?? null,
+      assignedToId: p.assigned_to ?? null,
+      assignedToName: p.assigned?.full_name || p.assigned?.email || null,
+      assignedAt: p.assigned_at ?? null,
     }))
 
     return NextResponse.json(mapped)

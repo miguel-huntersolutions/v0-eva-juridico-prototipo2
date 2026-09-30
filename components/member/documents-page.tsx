@@ -460,6 +460,17 @@ export function DocumentsPage() {
       if (document.fileUrl) window.open(document.fileUrl, "_blank", "noopener,noreferrer")
       return
     }
+    // CAP-09 (RF-031): auditar apertura del documento (fire-and-forget)
+    fetch("/api/audit/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "document_opened",
+        processId: document.processId,
+        documentId: document.id,
+        details: { name: document.name },
+      }),
+    }).catch(() => {})
     setSelectedDocument(document)
     setIsDetailOpen(true)
   }
