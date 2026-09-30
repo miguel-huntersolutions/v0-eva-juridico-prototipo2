@@ -206,6 +206,7 @@ export async function generateSingleDocument(
     file_url: uploadResult.webViewLink,
     file_size: generatedBuffer.length,
     created_by: createdBy,
+    template_id: templateId || null, // CAP-02: qué plantilla lo generó (continuar procesos parciales)
   }
   try {
     if (useServiceRole) {

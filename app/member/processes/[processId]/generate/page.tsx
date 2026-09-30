@@ -63,6 +63,8 @@ export default function ProcessGeneratePage() {
   // RF-013 (CAP-03): origen por campo y si hay campos clave pendientes de confirmar.
   const [fieldOrigins, setFieldOrigins] = React.useState<Record<string, string> | null>(null)
   const [hasUnconfirmed, setHasUnconfirmed] = React.useState(false)
+  // CAP-02: plantillas que ya tienen documento generado (continuar proceso parcial)
+  const [generatedTemplateIds, setGeneratedTemplateIds] = React.useState<string[]>([])
 
   React.useEffect(() => {
     if (!processId) {
@@ -102,6 +104,16 @@ export default function ProcessGeneratePage() {
             }
           } catch {
             // sin campos precargados
+          }
+          // CAP-02: qué plantillas ya tienen documento (para continuar donde quedó)
+          try {
+            const res = await fetch(`/api/processes/${p.id}/documents`)
+            if (res.ok) {
+              const data = await res.json()
+              if (!cancelled) setGeneratedTemplateIds(data.generatedTemplateIds || [])
+            }
+          } catch {
+            // sin info de generados
           }
         }
       })
@@ -192,6 +204,7 @@ export default function ProcessGeneratePage() {
             prefilledTableData={reusedTableData}
             fieldOrigins={fieldOrigins}
             requiresReuseConfirmation={isReused && hasUnconfirmed}
+            generatedTemplateIds={generatedTemplateIds}
             onDocumentsGenerated={() => router.refresh()}
             embedded
           />

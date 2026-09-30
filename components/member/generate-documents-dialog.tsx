@@ -83,6 +83,8 @@ interface GenerateDocumentsDialogProps {
   requiresReuseConfirmation?: boolean
   /** CAP-03: origen con que se guardan los campos al generar ('form' manual, 'smart_fill' con IA). */
   saveOrigin?: "form" | "smart_fill"
+  /** CAP-02: plantillas que ya tienen documento generado en el proceso (continuar proceso parcial). */
+  generatedTemplateIds?: string[]
 }
 
 type DynamicTableDef = {
@@ -116,6 +118,7 @@ export function GenerateDocumentsDialog({
   fieldOrigins = null,
   requiresReuseConfirmation = false,
   saveOrigin = "form",
+  generatedTemplateIds = [],
 }: GenerateDocumentsDialogProps) {
   const router = useRouter()
   const { profile } = useProfile()
@@ -144,6 +147,19 @@ export function GenerateDocumentsDialog({
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [isLoadingTemplates, setIsLoadingTemplates] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState(0) // Step index (0-based)
+  // Plantillas generadas en ESTA sesión del wizard (se suman a las que venían del servidor)
+  const [sessionGeneratedIds, setSessionGeneratedIds] = React.useState<string[]>([])
+  const isTemplateGenerated = (templateId: string) =>
+    generatedTemplateIds.includes(templateId) || sessionGeneratedIds.includes(templateId)
+  // CAP-02: si el proceso ya tiene documentos generados (continuación parcial), el wizard
+  // arranca en el primer paso PENDIENTE para continuar donde quedó (una vez cargadas las plantillas).
+  const didInitStepRef = React.useRef(false)
+  React.useEffect(() => {
+    if (didInitStepRef.current || templates.length === 0 || generatedTemplateIds.length === 0) return
+    didInitStepRef.current = true
+    const firstPending = templates.findIndex((t) => !generatedTemplateIds.includes(t.id))
+    if (firstPending > 0) setCurrentStep(firstPending)
+  }, [templates, generatedTemplateIds])
   const [formData, setFormData] = React.useState<Record<string, string>>({})
   const [tableData, setTableData] = React.useState<Record<string, Array<Record<string, string>>>>({})
   /** Mapa por tag (IMAGE / IMAGE_*) -> imagen seleccionada por el usuario en el formulario. */
@@ -819,6 +835,8 @@ export function GenerateDocumentsDialog({
         },
       ]
       setGeneratedDocuments(updatedGeneratedDocuments)
+      // CAP-02: marcar la plantilla como generada en esta sesión (stepper en caliente)
+      setSessionGeneratedIds((prev) => (prev.includes(template.id) ? prev : [...prev, template.id]))
 
       // No quitar indicador ni cerrar si estamos en "Generar todos"
       if (!fromGenerateAll) {
@@ -830,8 +848,10 @@ export function GenerateDocumentsDialog({
       if (!fromGenerateAll) {
         const allGenerated =
           templates.length > 0 &&
-          templates.every((t) =>
-            updatedGeneratedDocuments.some((doc) => doc.templateId === t.id),
+          templates.every(
+            (t) =>
+              updatedGeneratedDocuments.some((doc) => doc.templateId === t.id) ||
+              generatedTemplateIds.includes(t.id),
           )
         if (allGenerated) {
           setTimeout(() => finishToAttachments(), 1200)
@@ -880,14 +900,23 @@ export function GenerateDocumentsDialog({
       const processIdToUse = currentProcessId || process?.id || ""
       console.log("[handleGenerateAll] Using processId:", processIdToUse)
 
+      // CAP-02: solo generar las plantillas PENDIENTES (las ya generadas se pueden
+      // regenerar individualmente con "Generar Este" si se desea una nueva versión).
+      const pendingTemplates = templates.filter((t) => !isTemplateGenerated(t.id))
+      if (pendingTemplates.length === 0) {
+        // Todo ya estaba generado: ir directo al paso final de adjuntos
+        setTimeout(() => finishToAttachments(), 400)
+        return
+      }
+
       // Generar en secuencia para poder mostrar progreso "documento X de Y"
-      for (let i = 0; i < templates.length; i++) {
+      for (let i = 0; i < pendingTemplates.length; i++) {
         setGeneratingStep({
           current: i + 1,
-          total: templates.length,
-          templateName: templates[i].name,
+          total: pendingTemplates.length,
+          templateName: pendingTemplates[i].name,
         })
-        await handleGenerateDocument(templates[i], 0, processIdToUse, true)
+        await handleGenerateDocument(pendingTemplates[i], 0, processIdToUse, true)
       }
 
       // Todos los documentos generados: paso final de adjuntos (RF-037)
@@ -930,21 +959,32 @@ export function GenerateDocumentsDialog({
   const canProceedToNext = () => isStepComplete(currentStep)
 
   /** Paso máximo alcanzable: todos los pasos completos consecutivos + 1.
-      El stepper permite saltar solo hasta ahí (no se puede avanzar dejando huecos). */
+      El stepper permite saltar solo hasta ahí (no se puede avanzar dejando huecos).
+      Un paso ya GENERADO cuenta como completo para la navegación (sus campos se
+      guardaron al generarlo y se precargan). */
   const maxReachableStep = React.useMemo(() => {
     let max = 0
     for (let i = 0; i < templates.length; i++) {
-      if (isStepComplete(i)) max = i + 1
+      if (isStepComplete(i) || isTemplateGenerated(templates[i]?.id)) max = i + 1
       else break
     }
     return Math.min(max, Math.max(templates.length - 1, 0))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templates, formData, tableData, imageData])
+  }, [templates, formData, tableData, imageData, generatedTemplateIds])
 
   const canGenerateCurrent = () => {
     if (currentStep >= templates.length) return false
     return canProceedToNext()
   }
+
+  // CAP-02: cuántas plantillas faltan por generar (continuación parcial)
+  const pendingCount = templates.filter((t) => !isTemplateGenerated(t.id)).length
+  const generateAllLabel = (() => {
+    if (isNewProcess) return "Crear Proceso y Generar Documentos"
+    if (pendingCount === 0) return "Todos Generados — Ir a Adjuntos"
+    if (pendingCount < templates.length) return `Generar Pendientes (${pendingCount})`
+    return "Generar Todos y Guardar"
+  })()
 
   const currentTemplate = templates[currentStep] || null
   const currentTemplateTags = currentTemplate?.variables || []
@@ -1187,37 +1227,41 @@ export function GenerateDocumentsDialog({
             {/* Steps Indicator - px-3 so ring-offset on current step isn't clipped by container.
                 Clicables: permite saltar a cualquier plantilla sin completar las anteriores. */}
             <div className="flex items-center gap-2 py-4 px-3 overflow-x-auto">
-              {templates.map((template, index) => (
+              {templates.map((template, index) => {
+                const generated = isTemplateGenerated(template.id)
+                return (
                 <React.Fragment key={template.id}>
                   <button
                     type="button"
                     onClick={() => !isGenerating && !isSaving && index <= maxReachableStep && setCurrentStep(index)}
-                    title={template.name}
+                    title={generated ? `${template.name} (ya generado)` : template.name}
                     className={cn(
                       "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-opacity",
                       index <= maxReachableStep && !isGenerating && !isSaving
                         ? "cursor-pointer hover:opacity-80"
                         : "cursor-not-allowed opacity-50",
-                      index < currentStep
-                        ? "bg-primary text-primary-foreground"
-                        : index === currentStep
-                          ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2"
+                      generated
+                        ? "bg-green-600 text-white"
+                        : index <= currentStep
+                          ? "bg-primary text-primary-foreground"
                           : "bg-muted text-muted-foreground",
+                      index === currentStep && "ring-2 ring-primary ring-offset-2",
                     )}
                     disabled={isGenerating || isSaving || index > maxReachableStep}
                   >
-                    {index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
+                    {generated || index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
                   </button>
                   {index < templates.length - 1 && (
                     <div
                       className={cn(
                         "h-1 w-12 rounded-full shrink-0",
-                        index < currentStep ? "bg-primary" : "bg-muted",
+                        generated || index < currentStep ? "bg-primary" : "bg-muted",
                       )}
                     />
                   )}
                 </React.Fragment>
-              ))}
+                )
+              })}
             </div>
 
             {/* Current Step Content */}
@@ -1228,7 +1272,14 @@ export function GenerateDocumentsDialog({
                     <CardHeader>
                       <CardTitle className="text-lg">{currentTemplate.name}</CardTitle>
                       <CardDescription className="flex flex-col gap-1.5">
-                        <span>Completa los siguientes campos para generar este documento.</span>
+                        {isTemplateGenerated(currentTemplate.id) ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+                            <Check className="h-3.5 w-3.5 shrink-0" />
+                            Este documento ya fue generado. Puedes regenerarlo (creará una nueva versión) o continuar con el siguiente pendiente.
+                          </span>
+                        ) : (
+                          <span>Completa los siguientes campos para generar este documento.</span>
+                        )}
                         {(() => {
                           const viewUrl = getTemplateDriveViewUrl(currentTemplate.fileUrl)
                           if (!viewUrl) return null
@@ -1556,7 +1607,7 @@ export function GenerateDocumentsDialog({
                     </Button>
                   ) : (
                     <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
-                      {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
+                      {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {generateAllLabel}</>}
                     </Button>
                   )}
                 </div>
@@ -1577,7 +1628,7 @@ export function GenerateDocumentsDialog({
                       </Button>
                     ) : (
                       <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
-                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
+                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {generateAllLabel}</>}
                       </Button>
                     )}
                   </div>

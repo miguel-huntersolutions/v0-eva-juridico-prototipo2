@@ -272,7 +272,8 @@ export async function POST(request: NextRequest) {
           file_url: uploadResult.webViewLink, // Store the Google Drive URL
           file_size: generatedBuffer.length,
           created_by: createdBy || user.id,
-        })
+          template_id: templateId || null, // CAP-02: qué plantilla lo generó (para continuar procesos parciales)
+        } as any)
       } catch (dbError) {
         return NextResponse.json(
           {
