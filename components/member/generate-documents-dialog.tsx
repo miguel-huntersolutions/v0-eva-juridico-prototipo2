@@ -1139,22 +1139,27 @@ export function GenerateDocumentsDialog({
           </div>
         ) : (
           <>
-            {/* Steps Indicator - px-3 so ring-offset on current step isn't clipped by container */}
+            {/* Steps Indicator - px-3 so ring-offset on current step isn't clipped by container.
+                Clicables: permite saltar a cualquier plantilla sin completar las anteriores. */}
             <div className="flex items-center gap-2 py-4 px-3 overflow-x-auto">
               {templates.map((template, index) => (
                 <React.Fragment key={template.id}>
-                  <div
+                  <button
+                    type="button"
+                    onClick={() => !isGenerating && !isSaving && setCurrentStep(index)}
+                    title={template.name}
                     className={cn(
-                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0",
+                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0 cursor-pointer transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50",
                       index < currentStep
                         ? "bg-primary text-primary-foreground"
                         : index === currentStep
                           ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2"
                           : "bg-muted text-muted-foreground",
                     )}
+                    disabled={isGenerating || isSaving}
                   >
                     {index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
-                  </div>
+                  </button>
                   {index < templates.length - 1 && (
                     <div
                       className={cn(
@@ -1492,19 +1497,19 @@ export function GenerateDocumentsDialog({
                   Anterior
                 </Button>
                 <div className="flex gap-2">
+                  {/* "Generar Este" disponible en TODOS los pasos: permite generar cualquier
+                      plantilla sin tener que completar las demás */}
+                  <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                    {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
+                  </Button>
                   {currentStep < templates.length - 1 ? (
-                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
+                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={isGenerating || isSaving}>
                       Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                     </Button>
                   ) : (
-                    <>
-                      <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
-                        {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
-                      </Button>
-                      <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
-                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
-                      </Button>
-                    </>
+                    <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
+                      {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
+                    </Button>
                   )}
                 </div>
               </div>
@@ -1515,19 +1520,17 @@ export function GenerateDocumentsDialog({
                     <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
                   </Button>
                   <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                      {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
+                    </Button>
                     {currentStep < templates.length - 1 ? (
-                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
+                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={isGenerating || isSaving}>
                         Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                       </Button>
                     ) : (
-                      <>
-                        <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
-                          {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
-                        </Button>
-                        <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
-                          {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
-                        </Button>
-                      </>
+                      <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
+                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}</>}
+                      </Button>
                     )}
                   </div>
                 </div>
