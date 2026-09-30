@@ -36,6 +36,7 @@ const ACTION_LABELS: Record<string, string> = {
   entity_access_granted: "Acceso a entidad otorgado",
   member_invited: "Miembro invitado",
   message_posted: "Mensaje en el hilo",
+  email_failed: "Fallo al enviar correo",
   login: "Inicio de sesión",
   eva_query: "Consulta a EVA",
 }

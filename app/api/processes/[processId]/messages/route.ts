@@ -4,8 +4,8 @@
  * GET  → lista el hilo (autor, fecha/hora; inalterable por trigger de BD).
  * POST → publica un mensaje (y opcionalmente referencia un adjunto ya subido
  *        por /api/process-attachments), audita (RF-040) y notifica en la app
- *        a los demás participantes (RF-026; el correo queda pendiente de
- *        infra transaccional y su fallo nunca borra el mensaje — CA-026.3).
+ *        a los demás participantes (RF-026). Correo vía Brevo; su fallo nunca
+ *        borra el mensaje (CA-026.3).
  *
  * Acceso (CA-025.3):
  *  - superadmin: todo
@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { sendEmailToUserIds, wrapEmailHtml, processUrl } from "@/lib/email/brevo"
 
 function getServiceClient(): SupabaseClient {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -250,8 +251,9 @@ export async function POST(
 
       if (recipients.size > 0) {
         const preview = text.length > 140 ? `${text.slice(0, 140)}…` : text
+        const ids = [...recipients]
         await service.from("notifications").insert(
-          [...recipients].map((userId) => ({
+          ids.map((userId) => ({
             user_id: userId,
             organization_id: orgId,
             process_id: processId,
@@ -259,6 +261,25 @@ export async function POST(
             title: `Nuevo mensaje en ${proc.code}`,
             body: `${authorName}: ${preview || "(adjunto)"}`,
           })),
+        )
+        // RF-026 / CA-026.3: correo a todos; si falla, el mensaje ya está en el hilo
+        const link = processUrl(processId)
+        const subject = `Nuevo mensaje en ${proc.code}`
+        const mailText = `${authorName} escribió en el proceso ${proc.code}:\n\n${preview || "(adjunto)"}\n\n${link}`
+        await sendEmailToUserIds(
+          service,
+          ids,
+          {
+            subject,
+            text: mailText,
+            html: wrapEmailHtml(
+              subject,
+              [`${authorName} escribió:`, preview || "(adjunto)"],
+              "Abrir hilo",
+              link,
+            ),
+          },
+          { organizationId: orgId, processId, kind: "thread_message" },
         )
       }
     } catch (notifErr) {

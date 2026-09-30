@@ -2,6 +2,11 @@
 
 Por defecto Supabase **no envía** los correos de invitación a direcciones arbitrarias: solo a emails autorizados del equipo y con un límite bajo (~2/hora). Para que las invitaciones se envíen automáticamente a cualquier email debes configurar un **servidor SMTP propio**.
 
+EVA también envía correos transaccionales (asignación, hilo, alertas, entidades) con la **API de Brevo** (`BREVO_API_KEY` en `.env.local`). Eso es independiente de este SMTP: son dos canales.
+
+- **SMTP aquí** → invitaciones, reset de contraseña, magic links de Auth.
+- **API Brevo** (`lib/email/brevo.ts`) → notificaciones de la plataforma.
+
 ## Pasos en el Dashboard de Supabase
 
 1. Entra a tu proyecto en [Supabase Dashboard](https://supabase.com/dashboard).

@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { sendEmailToUserIds, wrapEmailHtml, entitiesAdminUrl } from "@/lib/email/brevo"
 
 export async function POST(request: NextRequest) {
   try {
@@ -97,14 +98,28 @@ export async function POST(request: NextRequest) {
         .eq("role", "admin")
         .eq("status", "approved")
       if (admins && admins.length > 0) {
+        const adminIds = admins.map((a) => a.id)
         await service.from("notifications").insert(
-          admins.map((a) => ({
-            user_id: a.id,
+          adminIds.map((id) => ({
+            user_id: id,
             organization_id: profile.organization_id,
             type: "entity_proposed",
             title: `Entidad propuesta: ${name}`,
             body: `${profile.full_name || "Un asesor"} propuso la entidad "${name}" (NIT ${nit}). Revísala en Entidades.`,
           })),
+        )
+        const link = entitiesAdminUrl()
+        const subject = `Entidad propuesta: ${name}`
+        const text = `${profile.full_name || "Un asesor"} propuso la entidad "${name}" (NIT ${nit}).`
+        await sendEmailToUserIds(
+          service,
+          adminIds,
+          {
+            subject,
+            text: `${text} Revísala en EVA: ${link}`,
+            html: wrapEmailHtml(subject, [text], "Revisar entidades", link),
+          },
+          { organizationId: profile.organization_id, kind: "entity_proposed" },
         )
       }
     } catch (notifErr) {

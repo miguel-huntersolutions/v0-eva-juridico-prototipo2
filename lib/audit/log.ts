@@ -35,6 +35,7 @@ export type AuditAction =
   | "entity_access_granted"
   | "member_invited"
   | "message_posted"
+  | "email_failed"
   | "login"
   | "eva_query"
 

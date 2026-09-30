@@ -7,13 +7,14 @@
  * la organización (CA-045.3: sin responsable, solo admins y la alerta lo dice).
  *
  * Idempotente: `stage_alerts_sent` registra cada alerta (3d/1d) por etapa.
- * El correo queda pendiente de infra transaccional; su fallo nunca impide la
- * notificación en la app (mismo criterio que CA-026.3).
+ * Correo vía Brevo; si falla, la notificación in-app queda y se audita
+ * `email_failed` (mismo criterio que CA-026.3).
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { sendEmailToUserIds, wrapEmailHtml, processUrl } from "@/lib/email/brevo"
 
 export const maxDuration = 120
 
@@ -128,6 +129,36 @@ export async function GET(request: NextRequest) {
     if (notifications.length > 0) {
       const { error: notifErr } = await service.from("notifications").insert(notifications)
       if (notifErr) console.error("[stage-alerts] Error insertando notificaciones:", notifErr.message)
+
+      // RF-045: correo al responsable y admins. Fallo no impide la alerta in-app.
+      const byProcess = new Map<string, { userIds: string[]; title: string; body: string; orgId: string }>()
+      for (const n of notifications) {
+        const pid = n.process_id as string
+        const existing = byProcess.get(pid)
+        if (existing) {
+          existing.userIds.push(n.user_id as string)
+        } else {
+          byProcess.set(pid, {
+            userIds: [n.user_id as string],
+            title: n.title as string,
+            body: n.body as string,
+            orgId: n.organization_id as string,
+          })
+        }
+      }
+      for (const [pid, group] of byProcess) {
+        const link = processUrl(pid)
+        await sendEmailToUserIds(
+          service,
+          group.userIds,
+          {
+            subject: group.title,
+            text: `${group.body}\n\n${link}`,
+            html: wrapEmailHtml(group.title, [group.body], "Abrir proceso", link),
+          },
+          { organizationId: group.orgId, processId: pid, kind: "stage_due_alert" },
+        )
+      }
     }
     if (sentRows.length > 0) {
       const { error: sentErr } = await service.from("stage_alerts_sent").insert(sentRows)

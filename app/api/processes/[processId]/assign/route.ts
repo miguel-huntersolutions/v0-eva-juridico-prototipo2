@@ -6,7 +6,8 @@
  * - Otorga acceso a la entidad del proceso si el abogado no lo tenía (CA-028.2)
  *   y ese cambio de acceso queda en auditoría.
  * - Notifica en la aplicación al nuevo responsable (y al anterior si es
- *   reasignación). El correo queda pendiente de infra transaccional (SMTP/Resend).
+ *   reasignación). Correo transaccional vía Brevo (RF-029); si falla, la
+ *   asignación queda y el error se registra en auditoría.
  *
  * Body: { assigneeId: string | null }  (null = quitar responsable)
  */
@@ -15,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { sendEmailToUserIds, wrapEmailHtml, processUrl } from "@/lib/email/brevo"
 
 export async function POST(
   request: NextRequest,
@@ -146,17 +148,22 @@ export async function POST(
       })
     }
 
-    // RF-029: notificación en la aplicación al nuevo responsable (y al anterior
-    // si es reasignación). El correo queda pendiente de infra transaccional.
+    // RF-029: notificación en la aplicación y por correo (Brevo) al nuevo
+    // responsable (y al anterior si es reasignación). El fallo de correo no
+    // bloquea la asignación; queda en auditoría (email_failed).
     const notifications: Array<Record<string, unknown>> = []
+    const entityName = (proc.entity as any)?.name ?? "entidad"
+    const actorName = profile.full_name || "El administrador"
     if (assigneeId) {
+      const title = `Se te asignó el proceso ${proc.code}`
+      const body = `${actorName} te asignó el proceso ${proc.code} (${entityName}).`
       notifications.push({
         user_id: assigneeId,
         organization_id: orgId,
         process_id: processId,
         type: previousAssignee && previousAssignee !== assigneeId ? "process_reassigned" : "process_assigned",
-        title: `Se te asignó el proceso ${proc.code}`,
-        body: `${profile.full_name || "El administrador"} te asignó el proceso ${proc.code} (${(proc.entity as any)?.name ?? "entidad"}).`,
+        title,
+        body,
       })
     }
     if (previousAssignee && previousAssignee !== assigneeId) {
@@ -166,16 +173,45 @@ export async function POST(
         process_id: processId,
         type: "process_unassigned",
         title: `El proceso ${proc.code} fue reasignado`,
-        body: `El proceso ${proc.code} fue reasignado a ${assigneeName ?? "otro abogado"} por ${profile.full_name || "el administrador"}.`,
+        body: `El proceso ${proc.code} fue reasignado a ${assigneeName ?? "otro abogado"} por ${actorName}.`,
       })
     }
     if (notifications.length > 0) {
       try {
         await service.from("notifications").insert(notifications)
       } catch (notifErr) {
-        // La notificación no bloquea la asignación (p.ej. si la tabla aún no existe)
         console.warn("[assign] No se pudo crear la notificación:", notifErr)
       }
+    }
+
+    const link = processUrl(processId)
+    if (assigneeId) {
+      const subject = `Se te asignó el proceso ${proc.code}`
+      const text = `${actorName} te asignó el proceso ${proc.code} (${entityName}).`
+      await sendEmailToUserIds(
+        service,
+        [assigneeId],
+        {
+          subject,
+          text: `${text} Ábrelo en EVA: ${link}`,
+          html: wrapEmailHtml(subject, [text], "Abrir proceso", link),
+        },
+        { organizationId: orgId, processId, kind: "process_assigned" },
+      )
+    }
+    if (previousAssignee && previousAssignee !== assigneeId) {
+      const subject = `El proceso ${proc.code} fue reasignado`
+      const text = `El proceso ${proc.code} (${entityName}) fue reasignado a ${assigneeName ?? "otro abogado"} por ${actorName}.`
+      await sendEmailToUserIds(
+        service,
+        [previousAssignee],
+        {
+          subject,
+          text,
+          html: wrapEmailHtml(subject, [text], "Abrir proceso", link),
+        },
+        { organizationId: orgId, processId, kind: "process_unassigned" },
+      )
     }
 
     return NextResponse.json({

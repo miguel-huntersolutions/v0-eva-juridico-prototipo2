@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { sendEmailToUserIds, wrapEmailHtml, processesUrl } from "@/lib/email/brevo"
 
 export async function POST(
   request: NextRequest,
@@ -90,6 +91,23 @@ export async function POST(
               ? `La entidad "${entity.name}" ya está disponible para crear procesos.`
               : `La entidad "${entity.name}" fue rechazada. Motivo: ${reason}`,
         })
+        const link = processesUrl()
+        const subject =
+          decision === "approve" ? `Entidad aprobada: ${entity.name}` : `Entidad rechazada: ${entity.name}`
+        const text =
+          decision === "approve"
+            ? `La entidad "${entity.name}" ya está disponible para crear procesos.`
+            : `La entidad "${entity.name}" fue rechazada. Motivo: ${reason}`
+        await sendEmailToUserIds(
+          service,
+          [entity.proposed_by],
+          {
+            subject,
+            text,
+            html: wrapEmailHtml(subject, [text], "Ir a procesos", link),
+          },
+          { organizationId: entity.organization_id, kind: `entity_${decision}` },
+        )
       } catch (notifErr) {
         console.warn("[review-entity] No se pudo notificar:", notifErr)
       }

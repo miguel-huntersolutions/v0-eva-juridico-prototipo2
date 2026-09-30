@@ -72,6 +72,20 @@ Todas son **opcionales**; si no se definen se usan los valores por defecto indic
 
 ---
 
+## Brevo (correo transaccional)
+
+Las **invitaciones de Auth** siguen por SMTP de Supabase (ver `docs/supabase-smtp-config.md`). Esta API cubre asignación de procesos, mensajes del hilo, alertas de etapas y propuestas de entidad.
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `BREVO_API_KEY` | Para enviar | Clave API de Brevo (SMTP & API → API keys). **No** es la SMTP key. |
+| `BREVO_SENDER_EMAIL` | Para enviar | Remitente verificado en Brevo (Transactional → Senders). |
+| `BREVO_SENDER_NAME` | Opcional | Nombre visible. Default: `EVA Jurídico`. |
+
+Si faltan, la app no falla: omite el correo, deja la notificación in-app y registra `email_failed` en auditoría.
+
+---
+
 ## Resumen de uso en código
 
 - **URL de la app**: `getAppUrl()` en invitaciones, create-member, send-invitation.
