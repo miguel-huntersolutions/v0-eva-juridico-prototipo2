@@ -31,6 +31,7 @@ import {
   UserPlus,
   ScrollText,
   MessageSquareText,
+  CalendarClock,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -73,6 +74,7 @@ import { useImpersonation } from "@/lib/impersonation-context"
 import { CreateProcessDialog } from "./create-process-dialog"
 import { type ProcessData } from "./generate-documents-dialog"
 import { ProcessThreadDialog } from "./process-thread-dialog"
+import { ProcessStagesDialog } from "./process-stages-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
@@ -99,6 +101,7 @@ function ProcessActionsMenu({
   onAssign,
   onViewAudit,
   onOpenThread,
+  onOpenStages,
 }: {
   process: ProcessMapped
   isUpdatingStatus: boolean
@@ -114,6 +117,8 @@ function ProcessActionsMenu({
   onViewAudit?: () => void
   /** CAP-07: abrir el hilo de comunicación del proceso */
   onOpenThread?: () => void
+  /** CAP-11: abrir el cronograma de etapas del proceso */
+  onOpenStages?: () => void
 }) {
   const router = useRouter()
 
@@ -184,6 +189,18 @@ function ProcessActionsMenu({
           >
             <MessageSquareText className="mr-2 h-4 w-4" />
             Hilo de comunicación
+          </DropdownMenuItem>
+        )}
+        {/* CAP-11 (RF-044): cronograma de etapas SECOP */}
+        {onOpenStages && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenStages()
+            }}
+          >
+            <CalendarClock className="mr-2 h-4 w-4" />
+            Cronograma
           </DropdownMenuItem>
         )}
         {/* CAP-08 (RF-028): asignar responsable — solo admin (CA-028.4) */}
@@ -299,6 +316,9 @@ export function ProcessesPage() {
 
   // CAP-07: hilo de comunicación del proceso
   const [threadProcess, setThreadProcess] = React.useState<ProcessMapped | null>(null)
+
+  // CAP-11: cronograma de etapas del proceso
+  const [stagesProcess, setStagesProcess] = React.useState<ProcessMapped | null>(null)
 
   // CAP-09: registro de auditoría del proceso (solo admin)
   const [auditProcess, setAuditProcess] = React.useState<ProcessMapped | null>(null)
@@ -469,6 +489,53 @@ export function ProcessesPage() {
       return `Continuar ${prog.generated}/${prog.total}`
     }
     return "Continuar"
+  }
+
+  // CAP-11 (CA-044.1/044.2): resumen del cronograma por proceso (próxima etapa
+  // y etapas vencidas sin cumplir), para los badges del listado.
+  const [stagesSummary, setStagesSummary] = React.useState<
+    Record<string, { nextStageLabel: string; nextStageDate: string; daysUntil: number; overdueCount: number }>
+  >({})
+
+  React.useEffect(() => {
+    if (processes.length === 0) {
+      setStagesSummary({})
+      return
+    }
+    let cancelled = false
+    fetch("/api/processes/stages-summary")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.summary) setStagesSummary(data.summary)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [processes])
+
+  /** Badge de cronograma: etapa vencida (rojo) o próxima con cuenta regresiva. */
+  const stageBadge = (p: ProcessMapped) => {
+    const s = stagesSummary[p.id]
+    if (!s) return null
+    if (s.overdueCount > 0) {
+      return (
+        <Badge variant="destructive" className="text-xs" title={`${s.overdueCount} etapa(s) vencida(s) sin cumplir`}>
+          <CalendarClock className="mr-1 h-3 w-3" />
+          {s.overdueCount} vencida{s.overdueCount > 1 ? "s" : ""}
+        </Badge>
+      )
+    }
+    return (
+      <Badge
+        variant="outline"
+        className="text-xs"
+        title={`Próxima etapa: ${s.nextStageLabel} (${s.nextStageDate})`}
+      >
+        <CalendarClock className="mr-1 h-3 w-3" />
+        {s.nextStageLabel}: {s.daysUntil === 0 ? "hoy" : s.daysUntil === 1 ? "mañana" : `${s.daysUntil} días`}
+      </Badge>
+    )
   }
 
   const [deleteError, setDeleteError] = React.useState<string | null>(null)
@@ -838,6 +905,7 @@ export function ProcessesPage() {
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <StatusBadge status={process.status} />
                           <Badge variant="secondary">{process.documentsCount} docs</Badge>
+                          {stageBadge(process)}
                           <span className="text-xs text-muted-foreground">{process.updatedAt}</span>
                           {/* CAP-02: "Continuar" solo en borradores */}
                           {isGenerationIncomplete(process) && (
@@ -870,6 +938,7 @@ export function ProcessesPage() {
                         onAssign={() => openAssignDialog(process)}
                         onViewAudit={() => openAuditDialog(process)}
                         onOpenThread={() => setThreadProcess(process)}
+                        onOpenStages={() => setStagesProcess(process)}
                         progressLabel={
                           generationProgress[process.id]?.total > 0
                             ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
@@ -920,7 +989,10 @@ export function ProcessesPage() {
                           <span className="text-sm">{process.processTypeName}</span>
                         </TableCell>
                         <TableCell>
-                          <StatusBadge status={process.status} />
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusBadge status={process.status} />
+                            {stageBadge(process)}
+                          </div>
                         </TableCell>
                         {/* CAP-08 (RF-030): responsable visible en la vista de procesos */}
                         <TableCell>
@@ -969,6 +1041,7 @@ export function ProcessesPage() {
                               onAssign={() => openAssignDialog(process)}
                               onViewAudit={() => openAuditDialog(process)}
                               onOpenThread={() => setThreadProcess(process)}
+                              onOpenStages={() => setStagesProcess(process)}
                               progressLabel={
                                 generationProgress[process.id]?.total > 0
                                   ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
@@ -1214,6 +1287,14 @@ export function ProcessesPage() {
         processCode={threadProcess?.code}
         open={!!threadProcess}
         onOpenChange={(open) => !open && setThreadProcess(null)}
+      />
+
+      {/* CAP-11 (RF-044): cronograma de etapas del proceso */}
+      <ProcessStagesDialog
+        processId={stagesProcess?.id ?? null}
+        processCode={stagesProcess?.code}
+        open={!!stagesProcess}
+        onOpenChange={(open) => !open && setStagesProcess(null)}
       />
     </div>
   )

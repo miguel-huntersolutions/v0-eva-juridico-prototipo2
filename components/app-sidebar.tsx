@@ -24,6 +24,7 @@ import {
   RefreshCw,
   Menu,
   ScrollText,
+  Scale,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -65,6 +66,8 @@ const navItems: NavItem[] = [
   { title: "Organizaciones", href: "/superadmin/organizations", icon: Building2, roles: ["superadmin"] },
   { title: "Tipos de Proceso", href: "/superadmin/process-types", icon: FolderKanban, roles: ["superadmin"] },
   { title: "Plantillas", href: "/superadmin/templates", icon: FileStack, roles: ["superadmin"] },
+  // CAP-11 (RF-046): periodos de ley de garantías
+  { title: "Ley de Garantías", href: "/superadmin/guarantee-law", icon: Scale, roles: ["superadmin"] },
 
   // Admin items
   { title: "Panel Principal", href: "/dashboard", icon: LayoutDashboard, roles: ["admin"] },

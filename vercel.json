@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/reconcile-drive",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/stage-alerts",
+      "schedule": "0 12 * * *"
     }
   ]
 }
