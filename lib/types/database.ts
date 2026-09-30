@@ -1,6 +1,7 @@
 // Database types for EVA Jurídico
 
-export type UserRole = "superadmin" | "admin" | "member"
+// CAP-07: "entity_contact" = funcionario de la entidad (solo hilos de su entidad)
+export type UserRole = "superadmin" | "admin" | "member" | "entity_contact"
 
 export interface Profile {
   id: string

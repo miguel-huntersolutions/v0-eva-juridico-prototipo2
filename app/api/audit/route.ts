@@ -35,6 +35,7 @@ const ACTION_LABELS: Record<string, string> = {
   attachment_uploaded: "Adjunto cargado",
   entity_access_granted: "Acceso a entidad otorgado",
   member_invited: "Miembro invitado",
+  message_posted: "Mensaje en el hilo",
   login: "Inicio de sesión",
   eva_query: "Consulta a EVA",
 }

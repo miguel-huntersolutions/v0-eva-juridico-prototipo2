@@ -77,6 +77,13 @@ const navItems: NavItem[] = [
   { title: "Dashboard", href: "/member/dashboard", icon: Home, roles: ["member"] },
   { title: "Procesos", href: "/member/processes", icon: FolderKanban, roles: ["member"] },
   { title: "Documentos", href: "/member/documents", icon: FileText, roles: ["member"] },
+  // CAP-07 (RF-025): canal de comunicación — incluye al contacto de entidad
+  {
+    title: "Mensajes",
+    href: "/member/messages",
+    icon: MessageSquareText,
+    roles: ["member", "admin", "superadmin", "entity_contact"],
+  },
   {
     title: "Asistente Jurídico",
     href: "/member/assistant",
@@ -447,6 +454,8 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
         return "Administrador"
       case "member":
         return "Asesor Jurídico"
+      case "entity_contact":
+        return "Contacto de Entidad"
     }
   }
 
@@ -458,6 +467,8 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
         return "bg-chart-2/20 text-chart-2 border-chart-2/30"
       case "member":
         return "bg-chart-3/20 text-chart-3 border-chart-3/30"
+      case "entity_contact":
+        return "bg-chart-4/20 text-chart-4 border-chart-4/30"
     }
   }
 

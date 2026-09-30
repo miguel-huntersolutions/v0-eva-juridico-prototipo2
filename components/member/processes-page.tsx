@@ -30,6 +30,7 @@ import {
   Copy,
   UserPlus,
   ScrollText,
+  MessageSquareText,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -71,6 +72,7 @@ import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { CreateProcessDialog } from "./create-process-dialog"
 import { type ProcessData } from "./generate-documents-dialog"
+import { ProcessThreadDialog } from "./process-thread-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
@@ -96,6 +98,7 @@ function ProcessActionsMenu({
   isAdmin,
   onAssign,
   onViewAudit,
+  onOpenThread,
 }: {
   process: ProcessMapped
   isUpdatingStatus: boolean
@@ -109,6 +112,8 @@ function ProcessActionsMenu({
   isAdmin?: boolean
   onAssign?: () => void
   onViewAudit?: () => void
+  /** CAP-07: abrir el hilo de comunicación del proceso */
+  onOpenThread?: () => void
 }) {
   const router = useRouter()
 
@@ -169,6 +174,18 @@ function ProcessActionsMenu({
           <Copy className="mr-2 h-4 w-4" />
           Reutilizar proceso
         </DropdownMenuItem>
+        {/* CAP-07 (RF-025): hilo de comunicación del proceso */}
+        {onOpenThread && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenThread()
+            }}
+          >
+            <MessageSquareText className="mr-2 h-4 w-4" />
+            Hilo de comunicación
+          </DropdownMenuItem>
+        )}
         {/* CAP-08 (RF-028): asignar responsable — solo admin (CA-028.4) */}
         {isAdmin && onAssign && (
           <DropdownMenuItem
@@ -279,6 +296,9 @@ export function ProcessesPage() {
   const [assigneeSelection, setAssigneeSelection] = React.useState<string>("")
   const [isAssigning, setIsAssigning] = React.useState(false)
   const [assignError, setAssignError] = React.useState<string | null>(null)
+
+  // CAP-07: hilo de comunicación del proceso
+  const [threadProcess, setThreadProcess] = React.useState<ProcessMapped | null>(null)
 
   // CAP-09: registro de auditoría del proceso (solo admin)
   const [auditProcess, setAuditProcess] = React.useState<ProcessMapped | null>(null)
@@ -849,6 +869,7 @@ export function ProcessesPage() {
                         isAdmin={isAdmin}
                         onAssign={() => openAssignDialog(process)}
                         onViewAudit={() => openAuditDialog(process)}
+                        onOpenThread={() => setThreadProcess(process)}
                         progressLabel={
                           generationProgress[process.id]?.total > 0
                             ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
@@ -947,6 +968,7 @@ export function ProcessesPage() {
                               isAdmin={isAdmin}
                               onAssign={() => openAssignDialog(process)}
                               onViewAudit={() => openAuditDialog(process)}
+                              onOpenThread={() => setThreadProcess(process)}
                               progressLabel={
                                 generationProgress[process.id]?.total > 0
                                   ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
@@ -1185,6 +1207,14 @@ export function ProcessesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* CAP-07 (RF-025): hilo de comunicación del proceso */}
+      <ProcessThreadDialog
+        processId={threadProcess?.id ?? null}
+        processCode={threadProcess?.code}
+        open={!!threadProcess}
+        onOpenChange={(open) => !open && setThreadProcess(null)}
+      />
     </div>
   )
 }

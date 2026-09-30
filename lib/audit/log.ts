@@ -34,6 +34,7 @@ export type AuditAction =
   | "attachment_uploaded"
   | "entity_access_granted"
   | "member_invited"
+  | "message_posted"
   | "login"
   | "eva_query"
 

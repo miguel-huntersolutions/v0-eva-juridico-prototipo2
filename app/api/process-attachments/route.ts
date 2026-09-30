@@ -109,6 +109,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // CA-027.2: máximo 25 MB por adjunto, con el motivo del rechazo
+    const MAX_SIZE = 25 * 1024 * 1024
+    if (file.size > MAX_SIZE) {
+      return NextResponse.json(
+        { error: `El archivo supera el máximo de 25 MB (pesa ${(file.size / 1024 / 1024).toFixed(1)} MB).` },
+        { status: 400 },
+      )
+    }
+
     const service = getServiceClient()
     const proc = await getProcessWithOrg(service, processId)
     if (!proc) return NextResponse.json({ error: "Process not found" }, { status: 404 })
