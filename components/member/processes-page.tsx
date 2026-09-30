@@ -67,7 +67,7 @@ import {
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { CreateProcessDialog } from "./create-process-dialog"
-import { GenerateDocumentsDialog, type ProcessData } from "./generate-documents-dialog"
+import { type ProcessData } from "./generate-documents-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
@@ -287,16 +287,10 @@ export function ProcessesPage() {
     setProcesses((prev) => [newProcess, ...prev])
   }
 
-  // Flujo "Crear y generar": NO se crea el proceso en BD aquí. Se abre el wizard
-  // con los datos (processData) y el proceso solo se persiste al generar el primer
-  // documento. Si el usuario cierra sin generar, no queda ningún borrador vacío.
-  const [generateDraft, setGenerateDraft] = React.useState<{
-    processData: ProcessData
-    entity: EntityMapped | null
-    secretaryName: string
-    processTypeName: string
-  } | null>(null)
-
+  // Flujo "Crear y generar": NO se crea el proceso en BD aquí. Se navega a la
+  // pantalla independiente /processes/new/generate con los datos en sessionStorage;
+  // el proceso solo se persiste al generar el primer documento o guardar borrador.
+  // Si el usuario sale sin hacer nada, no queda ningún borrador vacío.
   const handleProcessReadyToGenerate = (
     processData: ProcessData,
     entity: EntityMapped | null,
@@ -304,7 +298,20 @@ export function ProcessesPage() {
     processTypeName: string,
   ) => {
     setIsCreateDialogOpen(false)
-    setGenerateDraft({ processData, entity, secretaryName, processTypeName })
+    try {
+      sessionStorage.setItem(
+        "eva:new-process-draft",
+        JSON.stringify({
+          processData,
+          entity: entity ? { id: entity.id, name: entity.name } : null,
+          secretaryName,
+          processTypeName,
+        }),
+      )
+    } catch {
+      // sessionStorage no disponible: la página destino redirigirá a /processes
+    }
+    router.push("/member/processes/new/generate")
   }
 
   const reloadProcesses = React.useCallback(async () => {
@@ -686,22 +693,6 @@ export function ProcessesPage() {
         onProcessCreated={handleProcessCreated}
         onProcessCreatedAndReady={handleProcessReadyToGenerate}
       />
-
-      {/* Wizard de generación para proceso NUEVO: el proceso se crea en BD
-          solo cuando se genera el primer documento (no quedan borradores vacíos) */}
-      {generateDraft && (
-        <GenerateDocumentsDialog
-          open={!!generateDraft}
-          onOpenChange={(open) => !open && setGenerateDraft(null)}
-          process={null}
-          processData={generateDraft.processData}
-          entity={generateDraft.entity as any}
-          secretaryName={generateDraft.secretaryName}
-          processTypeName={generateDraft.processTypeName}
-          onProcessCreated={handleProcessCreated}
-          onDocumentsGenerated={() => reloadProcesses()}
-        />
-      )}
 
       {/* View Process Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>

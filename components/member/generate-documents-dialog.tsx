@@ -126,8 +126,10 @@ export function GenerateDocumentsDialog({
   const { profile } = useProfile()
   
   // Determine if this is a new process (not yet created) or existing
-  const isNewProcess = !!processData && !process
   const [currentProcessState, setCurrentProcessState] = React.useState<ProcessMapped | null>(process)
+  // Es "nuevo" mientras no se haya persistido: una vez creado (primer doc o
+  // guardar borrador) los textos dejan de decir "Crear Proceso y Generar..."
+  const isNewProcess = !!processData && !process && !currentProcessState?.id
   const currentProcess = currentProcessState || process || (processData ? {
     id: "", // Will be set after creation
     code: processData.code,
