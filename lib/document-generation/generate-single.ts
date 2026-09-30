@@ -223,6 +223,32 @@ export async function generateSingleDocument(
     )
   }
 
+  // CAP-02: al generar el primer documento, el proceso deja de ser "borrador"
+  // y pasa a "en progreso" automáticamente (el estado refleja actividad real).
+  try {
+    const currentStatus = useServiceRole
+      ? (
+          await supabase!
+            .from("processes")
+            .select("status")
+            .eq("id", processId)
+            .single()
+        ).data?.status
+      : (await getProcess(processId))?.status
+    if (currentStatus === "draft") {
+      if (useServiceRole) {
+        await supabase!
+          .from("processes")
+          .update({ status: "in_progress", updated_at: new Date().toISOString() })
+          .eq("id", processId)
+      } else {
+        await updateProcess(processId, { status: "in_progress" } as any)
+      }
+    }
+  } catch {
+    // no bloquear la generación si falla la transición de estado
+  }
+
   let spreadsheetUrl: string | null = null
   try {
     const headers = ["Fecha", "Documento", "Plantilla", "Ruta en Drive", "Link Drive", "Tags Utilizados"]

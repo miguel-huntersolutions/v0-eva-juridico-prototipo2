@@ -89,6 +89,7 @@ function ProcessActionsMenu({
   onDelete,
   onUpdateStatus,
   onReuse,
+  progressLabel,
 }: {
   process: ProcessMapped
   isUpdatingStatus: boolean
@@ -96,6 +97,8 @@ function ProcessActionsMenu({
   onDelete: () => void
   onUpdateStatus: (status: string) => void
   onReuse: () => void
+  /** CAP-02: si la generación está incompleta, texto de progreso (ej. "3/9") */
+  progressLabel?: string
 }) {
   const router = useRouter()
 
@@ -133,7 +136,7 @@ function ProcessActionsMenu({
           }}
         >
           <Play className="mr-2 h-4 w-4" />
-          {process.status === "draft" ? "Continuar diligenciamiento" : "Generar documentos"}
+          {progressLabel ? `Continuar diligenciamiento (${progressLabel})` : "Generar documentos"}
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={(e) => {
@@ -323,6 +326,51 @@ export function ProcessesPage() {
       // silencioso
     }
   }, [orgId, isImpersonating])
+
+  // CAP-02: progreso de generación por proceso (plantillas con doc / total del tipo).
+  // Define si se muestra "Continuar" y el texto con el avance ("Continuar 3/9").
+  const [generationProgress, setGenerationProgress] = React.useState<
+    Record<string, { generated: number; total: number }>
+  >({})
+
+  React.useEffect(() => {
+    if (processes.length === 0) {
+      setGenerationProgress({})
+      return
+    }
+    let cancelled = false
+    fetch("/api/processes/generation-progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ processIds: processes.map((p) => p.id) }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.progress) setGenerationProgress(data.progress)
+      })
+      .catch(() => {
+        // sin progreso: simplemente no se muestra el detalle
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [processes])
+
+  /** Un proceso está incompleto si su tipo tiene plantillas y aún faltan por generar. */
+  const isGenerationIncomplete = (p: ProcessMapped) => {
+    const prog = generationProgress[p.id]
+    if (!prog || prog.total === 0) return false
+    return prog.generated < prog.total
+  }
+
+  /** Texto del acceso directo de continuación con progreso, ej. "Continuar 3/9". */
+  const continueLabel = (p: ProcessMapped) => {
+    const prog = generationProgress[p.id]
+    if (prog && prog.total > 0 && prog.generated > 0) {
+      return `Continuar ${prog.generated}/${prog.total}`
+    }
+    return "Continuar"
+  }
 
   const handleDeleteProcess = async () => {
     if (!selectedProcess) return
@@ -595,15 +643,17 @@ export function ProcessesPage() {
                           <StatusBadge status={process.status} />
                           <Badge variant="secondary">{process.documentsCount} docs</Badge>
                           <span className="text-xs text-muted-foreground">{process.updatedAt}</span>
-                          {/* CAP-02: acceso directo para continuar un borrador */}
-                          {process.status === "draft" && (
+                          {/* CAP-02: "Continuar" solo si faltan documentos por generar */}
+                          {isGenerationIncomplete(process) &&
+                            process.status !== "completed" &&
+                            process.status !== "archived" && (
                             <Button
                               size="sm"
                               className="h-7 px-2 text-xs"
                               onClick={() => router.push(`/member/processes/${process.id}/generate`)}
                             >
                               <Play className="mr-1 h-3 w-3" />
-                              Continuar
+                              {continueLabel(process)}
                             </Button>
                           )}
                         </div>
@@ -621,6 +671,11 @@ export function ProcessesPage() {
                         }}
                         onUpdateStatus={(status) => handleUpdateStatus(process, status)}
                         onReuse={() => handleReuse(process)}
+                        progressLabel={
+                          isGenerationIncomplete(process)
+                            ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
+                            : undefined
+                        }
                       />
                     </div>
                   </div>
@@ -673,8 +728,11 @@ export function ProcessesPage() {
                         <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
-                            {/* CAP-02: acceso directo para continuar un borrador a medio diligenciar */}
-                            {process.status === "draft" && (
+                            {/* CAP-02: "Continuar" solo si aún faltan documentos por generar
+                                (progreso real), no por el estado manual del proceso */}
+                            {isGenerationIncomplete(process) &&
+                              process.status !== "completed" &&
+                              process.status !== "archived" && (
                               <Button
                                 size="sm"
                                 className="h-7 px-2 text-xs"
@@ -685,7 +743,7 @@ export function ProcessesPage() {
                                 }}
                               >
                                 <Play className="mr-1 h-3 w-3" />
-                                Continuar
+                                {continueLabel(process)}
                               </Button>
                             )}
                             <ProcessActionsMenu
@@ -701,6 +759,11 @@ export function ProcessesPage() {
                               }}
                               onUpdateStatus={(status) => handleUpdateStatus(process, status)}
                               onReuse={() => handleReuse(process)}
+                              progressLabel={
+                                isGenerationIncomplete(process)
+                                  ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
+                                  : undefined
+                              }
                             />
                           </div>
                         </TableCell>

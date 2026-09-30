@@ -343,6 +343,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // CAP-02: al generar el primer documento, el proceso deja de ser "borrador"
+    // y pasa a "en progreso" automáticamente (el estado refleja actividad real).
+    if (processId) {
+      try {
+        const { data: proc } = await supabase
+          .from("processes")
+          .select("status")
+          .eq("id", processId)
+          .single()
+        if (proc?.status === "draft") {
+          await supabase
+            .from("processes")
+            .update({ status: "in_progress", updated_at: new Date().toISOString() })
+            .eq("id", processId)
+        }
+      } catch {
+        // no bloquear la generación si falla la transición de estado
+      }
+    }
+
     // CAP-03 (RF-012/013/014): persistir los valores del formulario para poder
     // reutilizar el proceso y copiar campos entre minutas. No bloquea la generación.
     if (processId) {
