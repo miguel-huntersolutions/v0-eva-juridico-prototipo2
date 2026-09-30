@@ -16,6 +16,8 @@ import {
   BookOpen,
   Plus,
   Trash2,
+  Save,
+  AlertTriangle,
 } from "lucide-react"
 import {
   Dialog,
@@ -151,6 +153,34 @@ export function GenerateDocumentsDialog({
   const [sessionGeneratedIds, setSessionGeneratedIds] = React.useState<string[]>([])
   const isTemplateGenerated = (templateId: string) =>
     generatedTemplateIds.includes(templateId) || sessionGeneratedIds.includes(templateId)
+  // Plantillas generadas cuyos campos se EDITARON después de generar (doc desactualizado)
+  const [staleTemplateIds, setStaleTemplateIds] = React.useState<string[]>([])
+  // Guardar borrador (persistir campos sin generar documento)
+  const [isSavingDraft, setIsSavingDraft] = React.useState(false)
+  const [draftSavedAt, setDraftSavedAt] = React.useState<number | null>(null)
+
+  /** Marca como "modificadas" las plantillas YA generadas que usan este tag:
+      el documento en Drive ya no refleja el valor actual y habría que regenerarlo. */
+  const markStaleByTag = (tag: string) => {
+    setDraftSavedAt(null) // cualquier edición invalida el feedback de "guardado"
+    setStaleTemplateIds((prev) => {
+      const next = new Set(prev)
+      for (const t of templates) {
+        if (!isTemplateGenerated(t.id) || next.has(t.id) || !t.variables) continue
+        const usesTag = t.variables.some((v) => {
+          if (v === tag) return true
+          const def = parseDynamicTableTagToken(v)
+          if (def) {
+            const [family] = def.loopName.split("@")
+            return (family || def.loopName) === tag
+          }
+          return false
+        })
+        if (usesTag) next.add(t.id)
+      }
+      return next.size === prev.length ? prev : Array.from(next)
+    })
+  }
   // CAP-02: si el proceso ya tiene documentos generados (continuación parcial), el wizard
   // arranca en el primer paso PENDIENTE para continuar donde quedó (una vez cargadas las plantillas).
   const didInitStepRef = React.useRef(false)
@@ -328,6 +358,7 @@ export function GenerateDocumentsDialog({
 
   const handleFieldChange = (tag: string, value: string) => {
     setFormData((prev) => ({ ...prev, [tag]: value }))
+    markStaleByTag(tag)
     // RF-013: marcar como editado (ya no "viene del original" sin tocar)
     setEditedFields((prev) => new Set(prev).add(tag))
     // Remove from improved fields if user edits after improvement
@@ -341,6 +372,7 @@ export function GenerateDocumentsDialog({
   }
 
   const handleTableCellChange = (tableFamily: string, rowIndex: number, field: string, value: string) => {
+    markStaleByTag(tableFamily)
     setTableData((prev) => {
       const rows = [...(prev[tableFamily] || [])]
       const currentRow = rows[rowIndex] || {}
@@ -350,6 +382,7 @@ export function GenerateDocumentsDialog({
   }
 
   const addTableRow = (tableFamily: string, fields: string[]) => {
+    markStaleByTag(tableFamily)
     setTableData((prev) => {
       const rows = [...(prev[tableFamily] || [])]
       rows.push(Object.fromEntries(fields.map((f) => [f, ""])))
@@ -358,6 +391,7 @@ export function GenerateDocumentsDialog({
   }
 
   const removeTableRow = (tableFamily: string, rowIndex: number, fields: string[]) => {
+    markStaleByTag(tableFamily)
     setTableData((prev) => {
       const rows = [...(prev[tableFamily] || [])]
       rows.splice(rowIndex, 1)
@@ -403,6 +437,7 @@ export function GenerateDocumentsDialog({
         ...prev,
         [tag]: improvedText,
       }))
+      markStaleByTag(tag)
 
       setImprovedFields((prev) => new Set(prev).add(tag))
     } catch (error) {
@@ -837,6 +872,8 @@ export function GenerateDocumentsDialog({
       setGeneratedDocuments(updatedGeneratedDocuments)
       // CAP-02: marcar la plantilla como generada en esta sesión (stepper en caliente)
       setSessionGeneratedIds((prev) => (prev.includes(template.id) ? prev : [...prev, template.id]))
+      // La regeneración deja el documento al día: quitar la marca de "modificado"
+      setStaleTemplateIds((prev) => prev.filter((id) => id !== template.id))
 
       // No quitar indicador ni cerrar si estamos en "Generar todos"
       if (!fromGenerateAll) {
@@ -988,6 +1025,32 @@ export function GenerateDocumentsDialog({
 
   const currentTemplate = templates[currentStep] || null
   const currentGenerated = currentTemplate ? isTemplateGenerated(currentTemplate.id) : false
+  const currentStale = currentTemplate ? staleTemplateIds.includes(currentTemplate.id) : false
+
+  /** Guardar borrador: persiste los campos actuales en BD SIN generar documento.
+      Si el proceso es nuevo, lo crea primero (queda como borrador con campos). */
+  const handleSaveDraft = async () => {
+    try {
+      setIsSavingDraft(true)
+      setError(null)
+      const processIdToUse = await ensureProcessCreated()
+      if (!processIdToUse) return
+      const res = await fetch(`/api/processes/${processIdToUse}/fields`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ formData, tableData, origin: saveOrigin }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "No se pudo guardar el borrador")
+      }
+      setDraftSavedAt(Date.now())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al guardar el borrador")
+    } finally {
+      setIsSavingDraft(false)
+    }
+  }
 
   /** "Generar y Siguiente": genera el documento del paso actual y avanza al siguiente.
       Si el paso ya está generado, solo navega. Si la generación falla, NO avanza
@@ -1097,6 +1160,7 @@ export function GenerateDocumentsDialog({
   const ACCEPTED_IMAGE_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]
 
   const handleImageChange = (tag: string, file: File | null) => {
+    markStaleByTag(tag)
     if (!file) {
       setImageData((prev) => {
         const next = { ...prev }
@@ -1248,27 +1312,36 @@ export function GenerateDocumentsDialog({
             <div className="flex items-center gap-2 py-4 px-3 overflow-x-auto">
               {templates.map((template, index) => {
                 const generated = isTemplateGenerated(template.id)
+                const stale = staleTemplateIds.includes(template.id)
                 return (
                 <React.Fragment key={template.id}>
                   <button
                     type="button"
                     onClick={() => !isGenerating && !isSaving && index <= maxReachableStep && setCurrentStep(index)}
-                    title={generated ? `${template.name} (ya generado)` : template.name}
+                    title={
+                      stale
+                        ? `${template.name} (modificado — regenera para aplicar los cambios)`
+                        : generated
+                          ? `${template.name} (ya generado)`
+                          : template.name
+                    }
                     className={cn(
                       "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-opacity",
                       index <= maxReachableStep && !isGenerating && !isSaving
                         ? "cursor-pointer hover:opacity-80"
                         : "cursor-not-allowed opacity-50",
-                      generated
-                        ? "bg-green-600 text-white"
-                        : index <= currentStep
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground",
+                      stale
+                        ? "bg-amber-500 text-white"
+                        : generated
+                          ? "bg-green-600 text-white"
+                          : index <= currentStep
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground",
                       index === currentStep && "ring-2 ring-primary ring-offset-2",
                     )}
                     disabled={isGenerating || isSaving || index > maxReachableStep}
                   >
-                    {generated || index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
+                    {stale ? <AlertTriangle className="h-4 w-4" /> : generated || index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
                   </button>
                   {index < templates.length - 1 && (
                     <div
@@ -1291,11 +1364,18 @@ export function GenerateDocumentsDialog({
                     <CardHeader>
                       <CardTitle className="text-lg">{currentTemplate.name}</CardTitle>
                       <CardDescription className="flex flex-col gap-1.5">
-                        {isTemplateGenerated(currentTemplate.id) ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
-                            <Check className="h-3.5 w-3.5 shrink-0" />
-                            Este documento ya fue generado. Puedes regenerarlo (creará una nueva versión) o continuar con el siguiente pendiente.
-                          </span>
+                        {currentGenerated ? (
+                          currentStale ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                              Editaste campos después de generar este documento. El de Drive tiene los valores anteriores — pulsa "Regenerar" para crear una nueva versión con los cambios.
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+                              <Check className="h-3.5 w-3.5 shrink-0" />
+                              Este documento ya fue generado. Puedes regenerarlo (creará una nueva versión) o continuar con el siguiente pendiente.
+                            </span>
+                          )
                         ) : (
                           <span>Completa los siguientes campos para generar este documento.</span>
                         )}
@@ -1606,14 +1686,27 @@ export function GenerateDocumentsDialog({
 
             {embedded ? (
               <div className="border-t pt-4 flex items-center justify-between w-full shrink-0">
-                <Button
-                  variant="outline"
-                  onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                  disabled={currentStep === 0 || isGenerating || isSaving}
-                >
-                  <ChevronLeft className="mr-2 h-4 w-4" />
-                  Anterior
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                    disabled={currentStep === 0 || isGenerating || isSaving}
+                  >
+                    <ChevronLeft className="mr-2 h-4 w-4" />
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleSaveDraft}
+                    disabled={isGenerating || isSaving || isSavingDraft}
+                    title="Guarda los campos diligenciados sin generar documentos. Puedes salir y continuar después."
+                  >
+                    {isSavingDraft ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar borrador</>}
+                  </Button>
+                  {draftSavedAt && !isSavingDraft && (
+                    <span className="text-xs text-green-600 dark:text-green-400 self-center">Borrador guardado ✓</span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   {/* Regenerar: solo visible si el paso actual ya tiene documento (crea nueva versión) */}
                   {currentGenerated && (
@@ -1645,9 +1738,22 @@ export function GenerateDocumentsDialog({
             ) : (
               <DialogFooter className="border-t pt-4">
                 <div className="flex items-center justify-between w-full">
-                  <Button variant="outline" onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} disabled={currentStep === 0 || isGenerating || isSaving}>
-                    <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} disabled={currentStep === 0 || isGenerating || isSaving}>
+                      <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={handleSaveDraft}
+                      disabled={isGenerating || isSaving || isSavingDraft}
+                      title="Guarda los campos diligenciados sin generar documentos. Puedes salir y continuar después."
+                    >
+                      {isSavingDraft ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar borrador</>}
+                    </Button>
+                    {draftSavedAt && !isSavingDraft && (
+                      <span className="text-xs text-green-600 dark:text-green-400 self-center">Borrador guardado ✓</span>
+                    )}
+                  </div>
                   <div className="flex gap-2">
                     {currentGenerated && (
                       <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
