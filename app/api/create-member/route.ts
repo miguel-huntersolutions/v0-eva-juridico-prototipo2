@@ -420,33 +420,38 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Asignar entidades. Si falla, NO se traga el error: el usuario queda creado
+    // pero se reporta la advertencia para que el admin reintente la asignación
+    // (antes fallaba en silencio y el miembro quedaba sin entidades sin avisar).
+    let entitiesWarning: string | null = null
     if (entityIds && entityIds.length > 0) {
       try {
-        // Delete existing associations
-        await serviceRoleClient.from("member_entities").delete().eq("member_id", newProfile.id)
-        
-        // Insert new associations
-        if (entityIds.length > 0) {
-          const associations = entityIds.map((entityId: string) => ({
-            member_id: newProfile.id,
-            entity_id: entityId,
-          }))
-          
-          const { error: assignError } = await serviceRoleClient
-            .from("member_entities")
-            .insert(associations)
-          
-          if (assignError) {
-            // Don't fail the request
-          }
-        }
-      } catch {
-        // Don't fail the request
+        const { error: deleteErr } = await serviceRoleClient
+          .from("member_entities")
+          .delete()
+          .eq("member_id", newProfile.id)
+        if (deleteErr) throw deleteErr
+
+        const associations = entityIds.map((entityId: string) => ({
+          member_id: newProfile.id,
+          entity_id: entityId,
+        }))
+
+        const { error: assignError } = await serviceRoleClient
+          .from("member_entities")
+          .insert(associations)
+
+        if (assignError) throw assignError
+      } catch (e) {
+        console.error("[create-member] Error asignando entidades:", e)
+        entitiesWarning =
+          e instanceof Error ? e.message : "No se pudieron asignar las entidades"
       }
     }
-    
+
     return NextResponse.json({
       success: true,
+      entitiesWarning,
       emailSent,
       inviteLink,
       message: emailSent

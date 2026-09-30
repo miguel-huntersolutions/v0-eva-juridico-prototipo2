@@ -506,6 +506,14 @@ export function MembersPage() {
           inviteLink: result.inviteLink,
         })
       }
+
+      // Si la asignación de entidades falló, avisar (el miembro quedó creado pero sin entidades)
+      if (result.entitiesWarning) {
+        alert(
+          `El miembro fue creado, pero no se pudieron asignar las entidades: ${result.entitiesWarning}\n\n` +
+          `Asígnalas manualmente desde el botón de asignar entidades.`,
+        )
+      }
     } catch (err) {
       console.error("Error sending invitation:", err)
       alert(err instanceof Error ? err.message : "Error al enviar la invitación")
