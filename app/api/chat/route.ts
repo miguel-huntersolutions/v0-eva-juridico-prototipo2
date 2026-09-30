@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createChatRoute } from "@/lib/ai-chat/create-chat-api-route"
 import { requireAuth } from "@/lib/supabase/require-auth"
+import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 import { getChatMaxDuration } from "@/lib/app-config"
 import {
   getOpenAIChatModelString,
@@ -32,7 +33,28 @@ const chatHandler = createChatRoute({
 
 // RF-005 (CAP-01): exigir sesión antes de consumir el modelo.
 export async function POST(req: Request) {
-  const { error } = await requireAuth()
+  const { user, error } = await requireAuth()
   if (error) return error
+
+  // CAP-09 (RF-031): auditar la consulta a EVA SIN guardar su contenido
+  // (solo metadatos: cantidad de mensajes y longitud total en caracteres).
+  try {
+    const cloned = req.clone()
+    const body = await cloned.json().catch(() => null)
+    const messages = Array.isArray(body?.messages) ? body.messages : []
+    const totalChars = messages.reduce(
+      (acc: number, m: any) => acc + (typeof m?.content === "string" ? m.content.length : 0),
+      0,
+    )
+    await logAuditEvent({
+      action: "eva_query",
+      actorId: user?.id ?? null,
+      details: { messageCount: messages.length, totalChars },
+      ip: getRequestIp(req),
+    })
+  } catch {
+    // La auditoría nunca bloquea el chat
+  }
+
   return chatHandler(req)
 }

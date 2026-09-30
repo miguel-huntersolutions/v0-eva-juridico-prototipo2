@@ -112,6 +112,14 @@ function LoginContent() {
 
         const role = profile?.role || "member"
         logger.auth("LOGIN", data.user.id, role, true)
+
+        // CAP-09 (RF-031): auditar inicio de sesión (fire-and-forget)
+        fetch("/api/audit/log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "login", details: { method: "password" } }),
+        }).catch(() => {})
+
         const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
 
         window.location.href = route

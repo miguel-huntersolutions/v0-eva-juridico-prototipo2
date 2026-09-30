@@ -279,6 +279,13 @@ function AuthCallbackContent() {
           // For now, if user is authenticated, redirect based on role
           // The update-password page will handle password setup
           
+          // CAP-09 (RF-031): auditar inicio de sesión OAuth (fire-and-forget)
+          fetch("/api/audit/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "login", details: { method: "oauth" } }),
+          }).catch(() => {})
+
           // Redirect based on role
           if (role === "superadmin") {
             router.push("/superadmin")

@@ -31,6 +31,7 @@ const ACTION_LABELS: Record<string, string> = {
   document_sent_to_review: "Enviado a revisión",
   document_approved: "Documento aprobado",
   document_rejected: "Documento rechazado",
+  document_reopened: "Documento vuelto a borrador",
   attachment_uploaded: "Adjunto cargado",
   entity_access_granted: "Acceso a entidad otorgado",
   member_invited: "Miembro invitado",

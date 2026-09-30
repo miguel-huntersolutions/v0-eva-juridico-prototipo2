@@ -167,6 +167,17 @@ function DocumentActionsMenu({
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation()
+                // CAP-09 (RF-031): auditar acceso al archivo en Drive
+                fetch("/api/audit/log", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    action: "document_opened",
+                    processId: document.processId,
+                    documentId: document.id,
+                    details: { name: document.name, via: "drive" },
+                  }),
+                }).catch(() => {})
                 window.open(document.fileUrl, "_blank")
               }}
             >

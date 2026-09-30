@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { logAuditEvent, getRequestIp, type AuditAction } from "@/lib/audit/log"
 
 /**
  * PUT /api/update-document
@@ -157,6 +158,28 @@ export async function PUT(request: NextRequest) {
       changed_by_name: changedByName,
       changed_by_role: changedByRole,
       comment: typeof comment === "string" ? comment.trim() || null : null,
+    })
+
+    // CAP-09 (RF-031): evento en el registro global de auditoría
+    const auditActionByStatus: Record<string, AuditAction> = {
+      pending: "document_sent_to_review",
+      approved: "document_approved",
+      rejected: "document_rejected",
+      draft: "document_reopened",
+    }
+    await logAuditEvent({
+      action: auditActionByStatus[status] ?? "document_reopened",
+      actorId: user.id,
+      processId: document.process_id ?? null,
+      documentId,
+      organizationId: documentOrgId ?? profile.organization_id,
+      details: {
+        documentName: document.name,
+        from: previousStatus,
+        to: status,
+        ...(typeof comment === "string" && comment.trim() ? { comment: comment.trim() } : {}),
+      },
+      ip: getRequestIp(request),
     })
 
     // When approved, ingest document into RAG (vector store) so the assistant can search it

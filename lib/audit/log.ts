@@ -30,6 +30,7 @@ export type AuditAction =
   | "document_sent_to_review"
   | "document_approved"
   | "document_rejected"
+  | "document_reopened"
   | "attachment_uploaded"
   | "entity_access_granted"
   | "member_invited"
