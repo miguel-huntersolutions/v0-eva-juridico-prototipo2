@@ -19,6 +19,7 @@ import {
   Trash2,
   Copy,
   ExternalLink,
+  Paperclip,
   FolderOpen,
   Loader2,
   Send,
@@ -84,6 +85,7 @@ function formatFileSize(bytes: number): string {
 }
 
 function getDocumentTypeName(typeId: string): string {
+  if (typeId === "attachment") return "Adjunto"
   return documentTypes.find((t) => t.id === typeId)?.name || typeId
 }
 
@@ -104,6 +106,8 @@ interface MappedDocument {
   createdAt: string
   updatedAt: string
   driveFolderUrl?: string | null
+  /** RF-037: true si es un adjunto del proceso (no un documento generado; sin workflow de estados). */
+  isAttachment?: boolean
 }
 
 function getDocumentLink(document: MappedDocument) {
@@ -324,9 +328,34 @@ export function DocumentsPage() {
     if (orgId) loadEntities()
   }, [orgId, isImpersonating])
 
+  // RF-037: adjuntos del proceso filtrado (se muestran integrados en el listado)
+  const [attachmentsRaw, setAttachmentsRaw] = React.useState<
+    Array<{ id: string; name: string; file_url: string | null; mime_type: string | null; file_size: number | null; created_at: string }>
+  >([])
+
+  React.useEffect(() => {
+    if (processFilter === "all") {
+      setAttachmentsRaw([])
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/process-attachments?processId=${processFilter}`)
+        const data = await res.json()
+        if (!cancelled && res.ok) setAttachmentsRaw(data.attachments || [])
+      } catch {
+        // silencioso: la tarjeta de adjuntos muestra su propio error
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [processFilter])
+
   // Filter documents
   const filteredDocuments = React.useMemo(() => {
-    return allDocuments.filter((doc) => {
+    const docs = allDocuments.filter((doc) => {
       const matchesSearch =
         searchQuery === "" ||
         doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -348,7 +377,43 @@ export function DocumentsPage() {
 
       return matchesSearch && matchesTab && matchesStatus && matchesEntity && matchesProcess && matchesType
     })
-  }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter])
+
+    // RF-037: integrar adjuntos del proceso al listado (solo en vista por proceso,
+    // sin filtros de estado/tipo activos, ya que los adjuntos no tienen workflow).
+    if (
+      processFilter !== "all" &&
+      activeTab === "all" &&
+      statusFilter === "all" &&
+      (typeFilter === "all" || typeFilter === "attachment") &&
+      attachmentsRaw.length > 0
+    ) {
+      const sample = allDocuments.find((d) => d.processId === processFilter)
+      const attachmentDocs: MappedDocument[] = attachmentsRaw
+        .filter((a) => searchQuery === "" || a.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .map((a) => ({
+          id: `att-${a.id}`,
+          processId: processFilter,
+          processCode: sample?.processCode || "",
+          processObject: sample?.processObject || "",
+          name: a.name,
+          type: "attachment",
+          version: 0,
+          status: "approved" as const,
+          entityId: sample?.entityId || "",
+          entityName: sample?.entityName || "",
+          fileUrl: a.file_url || "",
+          fileSize: a.file_size || 0,
+          createdBy: "",
+          createdAt: a.created_at?.split("T")[0] || "",
+          updatedAt: a.created_at?.split("T")[0] || "",
+          driveFolderUrl: null,
+          isAttachment: true,
+        }))
+      return [...docs, ...attachmentDocs]
+    }
+
+    return docs
+  }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter, attachmentsRaw])
 
   // Stats
   const stats = {
@@ -361,6 +426,11 @@ export function DocumentsPage() {
   }
 
   const handleViewDocument = (document: MappedDocument) => {
+    // RF-037: los adjuntos no tienen detalle de workflow; abrir el archivo directo
+    if (document.isAttachment) {
+      if (document.fileUrl) window.open(document.fileUrl, "_blank", "noopener,noreferrer")
+      return
+    }
     setSelectedDocument(document)
     setIsDetailOpen(true)
   }
@@ -706,12 +776,18 @@ export function DocumentsPage() {
                               </p>
                               <p className="truncate text-xs text-muted-foreground">{document.entityName}</p>
                               <div className="flex flex-wrap items-center gap-2 pt-1">
-                                <Badge className={statusConfig[document.status]?.className || ""}>
-                                  {statusConfig[document.status]?.label || document.status}
-                                </Badge>
-                                <Badge variant="outline" className="font-mono">
-                                  V{document.version}
-                                </Badge>
+                                {document.isAttachment ? (
+                                  <Badge variant="secondary">Adjunto</Badge>
+                                ) : (
+                                  <>
+                                    <Badge className={statusConfig[document.status]?.className || ""}>
+                                      {statusConfig[document.status]?.label || document.status}
+                                    </Badge>
+                                    <Badge variant="outline" className="font-mono">
+                                      V{document.version}
+                                    </Badge>
+                                  </>
+                                )}
                                 <span className="text-xs text-muted-foreground">
                                   {document.updatedAt
                                     ? new Date(document.updatedAt).toLocaleDateString("es-CO")
@@ -719,14 +795,30 @@ export function DocumentsPage() {
                                 </span>
                               </div>
                             </div>
-                            <DocumentActionsMenu
-                              document={document}
-                              isUpdatingStatus={isUpdatingStatus}
-                              onAudit={() => setAuditDocumentId(document.id)}
-                              onVersions={() => setVersionsDocumentId(document.id)}
-                              onSendToReview={() => handleSendToReview(document)}
-                              onReopenAsDraft={() => handleReopenAsDraft(document)}
-                            />
+                            {document.isAttachment ? (
+                              document.fileUrl && (
+                                <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                  <a
+                                    href={document.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                    <span className="sr-only">Abrir adjunto</span>
+                                  </a>
+                                </Button>
+                              )
+                            ) : (
+                              <DocumentActionsMenu
+                                document={document}
+                                isUpdatingStatus={isUpdatingStatus}
+                                onAudit={() => setAuditDocumentId(document.id)}
+                                onVersions={() => setVersionsDocumentId(document.id)}
+                                onSendToReview={() => handleSendToReview(document)}
+                                onReopenAsDraft={() => handleReopenAsDraft(document)}
+                              />
+                            )}
                           </div>
                         </div>
                       )
@@ -760,7 +852,11 @@ export function DocumentsPage() {
                               <TableCell className="min-w-0 max-w-[280px] lg:max-w-[420px]" title={document.name}>
                                 <div className="flex min-w-0 items-center gap-3">
                                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                                    <FileText className="h-4 w-4 text-primary" />
+                                    {document.isAttachment ? (
+                                      <Paperclip className="h-4 w-4 text-primary" />
+                                    ) : (
+                                      <FileText className="h-4 w-4 text-primary" />
+                                    )}
                                   </div>
                                   <div className="min-w-0 flex-1 overflow-hidden">
                                     {linkUrl ? (
@@ -795,14 +891,22 @@ export function DocumentsPage() {
                                 <span className="text-sm">{document.entityName}</span>
                               </TableCell>
                               <TableCell>
-                                <Badge variant="outline" className="font-mono">
-                                  V{document.version}
-                                </Badge>
+                                {document.isAttachment ? (
+                                  <span className="text-sm text-muted-foreground">—</span>
+                                ) : (
+                                  <Badge variant="outline" className="font-mono">
+                                    V{document.version}
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell>
-                                <Badge className={statusConfig[document.status]?.className || ""}>
-                                  {statusConfig[document.status]?.label || document.status}
-                                </Badge>
+                                {document.isAttachment ? (
+                                  <Badge variant="secondary">Adjunto</Badge>
+                                ) : (
+                                  <Badge className={statusConfig[document.status]?.className || ""}>
+                                    {statusConfig[document.status]?.label || document.status}
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell>
                                 <span className="text-sm text-muted-foreground">
@@ -817,14 +921,30 @@ export function DocumentsPage() {
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <DocumentActionsMenu
-                                  document={document}
-                                  isUpdatingStatus={isUpdatingStatus}
-                                  onAudit={() => setAuditDocumentId(document.id)}
-                                  onVersions={() => setVersionsDocumentId(document.id)}
-                                  onSendToReview={() => handleSendToReview(document)}
-                                  onReopenAsDraft={() => handleReopenAsDraft(document)}
-                                />
+                                {document.isAttachment ? (
+                                  document.fileUrl && (
+                                    <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+                                      <a
+                                        href={document.fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <ExternalLink className="h-4 w-4" />
+                                        <span className="sr-only">Abrir adjunto</span>
+                                      </a>
+                                    </Button>
+                                  )
+                                ) : (
+                                  <DocumentActionsMenu
+                                    document={document}
+                                    isUpdatingStatus={isUpdatingStatus}
+                                    onAudit={() => setAuditDocumentId(document.id)}
+                                    onVersions={() => setVersionsDocumentId(document.id)}
+                                    onSendToReview={() => handleSendToReview(document)}
+                                    onReopenAsDraft={() => handleReopenAsDraft(document)}
+                                  />
+                                )}
                               </TableCell>
                             </TableRow>
                           )
