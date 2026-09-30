@@ -54,23 +54,37 @@ export function ProcessAttachments({ processId }: { processId: string }) {
     load()
   }, [load])
 
+  const [uploadProgress, setUploadProgress] = React.useState<{ current: number; total: number } | null>(null)
+
+  // Sube todos los archivos seleccionados (selección múltiple), en secuencia.
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
     setError(null)
     setIsUploading(true)
+    setUploadProgress({ current: 0, total: files.length })
+    const failed: string[] = []
     try {
-      const formData = new FormData()
-      formData.append("file", file)
-      formData.append("processId", processId)
-      const res = await fetch("/api/process-attachments", { method: "POST", body: formData })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Error al subir el archivo")
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress({ current: i + 1, total: files.length })
+        try {
+          const formData = new FormData()
+          formData.append("file", files[i])
+          formData.append("processId", processId)
+          const res = await fetch("/api/process-attachments", { method: "POST", body: formData })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || "Error al subir el archivo")
+        } catch (err) {
+          failed.push(`${files[i].name}: ${err instanceof Error ? err.message : "error"}`)
+        }
+      }
       await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al subir el archivo")
+      if (failed.length > 0) {
+        setError(`No se pudieron subir ${failed.length} de ${files.length} archivos:\n${failed.join("\n")}`)
+      }
     } finally {
       setIsUploading(false)
+      setUploadProgress(null)
       if (inputRef.current) inputRef.current.value = ""
     }
   }
@@ -84,15 +98,20 @@ export function ProcessAttachments({ processId }: { processId: string }) {
               <Paperclip className="h-4 w-4" />
               Adjuntos del proceso
             </CardTitle>
-            <CardDescription>Anexos, actas y evidencias (PDF, imágenes, Word, Excel)</CardDescription>
+            <CardDescription>
+              Anexos, actas y evidencias (PDF, imágenes, Word, Excel). Puedes seleccionar varios a la vez.
+            </CardDescription>
           </div>
           <Button size="sm" variant="outline" onClick={() => inputRef.current?.click()} disabled={isUploading}>
             {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
-            Cargar archivo
+            {isUploading && uploadProgress
+              ? `Subiendo ${uploadProgress.current} de ${uploadProgress.total}…`
+              : "Cargar archivos"}
           </Button>
           <input
             ref={inputRef}
             type="file"
+            multiple
             className="hidden"
             accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx"
             onChange={handleUpload}
@@ -100,7 +119,7 @@ export function ProcessAttachments({ processId }: { processId: string }) {
         </div>
       </CardHeader>
       <CardContent>
-        {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+        {error && <p className="mb-3 whitespace-pre-line text-sm text-destructive">{error}</p>}
         {isLoading ? (
           <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Cargando adjuntos…
