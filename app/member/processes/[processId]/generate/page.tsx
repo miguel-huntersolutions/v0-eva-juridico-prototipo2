@@ -84,8 +84,11 @@ export default function ProcessGeneratePage() {
         if (cancelled) return
         setProcess(p ?? null)
         setEntities(Array.isArray(entityList) ? entityList : [])
-        // RF-012/RF-013: si el proceso fue reutilizado, precargar sus campos guardados.
-        if (p && isReused) {
+        // Precargar los campos guardados del proceso (siempre que existan): permite
+        // reabrir el wizard con la info ya diligenciada y desplazarse sin bloqueos
+        // hasta el campo que se quiere ajustar. RF-012/013: si fue reutilizado,
+        // además se marcan orígenes y confirmación pendiente.
+        if (p) {
           try {
             const res = await fetch(`/api/processes/${p.id}/fields`)
             if (res.ok) {

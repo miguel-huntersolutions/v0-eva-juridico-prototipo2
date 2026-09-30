@@ -289,6 +289,7 @@ export default function ProcessGenerateSmartPage() {
                 processTypeName={process.processTypeName}
                 prefilledFormData={prefilledFormData}
                 prefilledTableData={prefilledTableData}
+                saveOrigin="smart_fill"
                 onDocumentsGenerated={() => router.refresh()}
                 embedded
               />

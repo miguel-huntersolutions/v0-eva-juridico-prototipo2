@@ -81,6 +81,8 @@ interface GenerateDocumentsDialogProps {
   fieldOrigins?: Record<string, string> | null
   /** RF-013 (CAP-03): true si el proceso fue reutilizado y exige confirmación antes de generar. */
   requiresReuseConfirmation?: boolean
+  /** CAP-03: origen con que se guardan los campos al generar ('form' manual, 'smart_fill' con IA). */
+  saveOrigin?: "form" | "smart_fill"
 }
 
 type DynamicTableDef = {
@@ -113,6 +115,7 @@ export function GenerateDocumentsDialog({
   prefilledTableData = null,
   fieldOrigins = null,
   requiresReuseConfirmation = false,
+  saveOrigin = "form",
 }: GenerateDocumentsDialogProps) {
   const router = useRouter()
   const { profile } = useProfile()
@@ -733,7 +736,7 @@ export function GenerateDocumentsDialog({
           secretaryName: secretaryName,
           createdBy: profile?.id,
           tableData, // CAP-03: persistir tablas dinámicas
-          fieldOrigin: prefilledFormData ? "smart_fill" : "form", // CAP-03
+          fieldOrigin: saveOrigin, // CAP-03
         }),
       })
 
@@ -871,13 +874,13 @@ export function GenerateDocumentsDialog({
     }
   }
 
-  const canProceedToNext = () => {
-    // Check if all required tags for current template are filled
-    if (currentStep >= templates.length) return false
-    const currentTemplate = templates[currentStep]
-    if (!currentTemplate.variables || currentTemplate.variables.length === 0) return true
-    
-    return currentTemplate.variables.every((tag) => {
+  /** Valida si una plantilla (por índice) tiene todos sus campos requeridos diligenciados. */
+  const isStepComplete = (index: number): boolean => {
+    if (index >= templates.length) return false
+    const template = templates[index]
+    if (!template.variables || template.variables.length === 0) return true
+
+    return template.variables.every((tag) => {
       const tableDef = parseDynamicTableTagToken(tag)
       if (tableDef) {
         const [family] = tableDef.loopName.split("@")
@@ -895,6 +898,20 @@ export function GenerateDocumentsDialog({
       return value.trim().length > 0
     })
   }
+
+  const canProceedToNext = () => isStepComplete(currentStep)
+
+  /** Paso máximo alcanzable: todos los pasos completos consecutivos + 1.
+      El stepper permite saltar solo hasta ahí (no se puede avanzar dejando huecos). */
+  const maxReachableStep = React.useMemo(() => {
+    let max = 0
+    for (let i = 0; i < templates.length; i++) {
+      if (isStepComplete(i)) max = i + 1
+      else break
+    }
+    return Math.min(max, Math.max(templates.length - 1, 0))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates, formData, tableData, imageData])
 
   const canGenerateCurrent = () => {
     if (currentStep >= templates.length) return false
@@ -1146,17 +1163,20 @@ export function GenerateDocumentsDialog({
                 <React.Fragment key={template.id}>
                   <button
                     type="button"
-                    onClick={() => !isGenerating && !isSaving && setCurrentStep(index)}
+                    onClick={() => !isGenerating && !isSaving && index <= maxReachableStep && setCurrentStep(index)}
                     title={template.name}
                     className={cn(
-                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0 cursor-pointer transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50",
+                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-opacity",
+                      index <= maxReachableStep && !isGenerating && !isSaving
+                        ? "cursor-pointer hover:opacity-80"
+                        : "cursor-not-allowed opacity-50",
                       index < currentStep
                         ? "bg-primary text-primary-foreground"
                         : index === currentStep
                           ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2"
                           : "bg-muted text-muted-foreground",
                     )}
-                    disabled={isGenerating || isSaving}
+                    disabled={isGenerating || isSaving || index > maxReachableStep}
                   >
                     {index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
                   </button>
@@ -1503,7 +1523,7 @@ export function GenerateDocumentsDialog({
                     {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
                   </Button>
                   {currentStep < templates.length - 1 ? (
-                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={isGenerating || isSaving}>
+                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
                       Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                     </Button>
                   ) : (
@@ -1524,7 +1544,7 @@ export function GenerateDocumentsDialog({
                       {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
                     </Button>
                     {currentStep < templates.length - 1 ? (
-                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={isGenerating || isSaving}>
+                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
                         Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                       </Button>
                     ) : (
