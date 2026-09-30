@@ -987,6 +987,25 @@ export function GenerateDocumentsDialog({
   })()
 
   const currentTemplate = templates[currentStep] || null
+  const currentGenerated = currentTemplate ? isTemplateGenerated(currentTemplate.id) : false
+
+  /** "Generar y Siguiente": genera el documento del paso actual y avanza al siguiente.
+      Si el paso ya está generado, solo navega. Si la generación falla, NO avanza
+      (el error ya se muestra en pantalla y el usuario puede reintentar). */
+  const handleGenerateAndNext = async () => {
+    if (!currentTemplate) return
+    if (isTemplateGenerated(currentTemplate.id)) {
+      setCurrentStep(Math.min(currentStep + 1, templates.length - 1))
+      return
+    }
+    try {
+      await handleGenerateDocument(currentTemplate)
+      setCurrentStep((prev) => Math.min(prev + 1, templates.length - 1))
+    } catch {
+      // no avanzar: el usuario debe poder reintentar
+    }
+  }
+
   const currentTemplateTags = currentTemplate?.variables || []
   const currentTemplateTableDefs = React.useMemo<DynamicTableDef[]>(
     () =>
@@ -1596,14 +1615,25 @@ export function GenerateDocumentsDialog({
                   Anterior
                 </Button>
                 <div className="flex gap-2">
-                  {/* "Generar Este" disponible en TODOS los pasos: permite generar cualquier
-                      plantilla sin tener que completar las demás */}
-                  <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
-                    {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
-                  </Button>
+                  {/* Regenerar: solo visible si el paso actual ya tiene documento (crea nueva versión) */}
+                  {currentGenerated && (
+                    <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                      {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Regenerar</>}
+                    </Button>
+                  )}
                   {currentStep < templates.length - 1 ? (
-                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
-                      Siguiente <ChevronRight className="ml-2 h-4 w-4" />
+                    currentGenerated ? (
+                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={isGenerating || isSaving}>
+                        Siguiente <ChevronRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button onClick={() => withReuseConfirmation(handleGenerateAndNext)} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                        {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <>Generar y Siguiente <ChevronRight className="ml-2 h-4 w-4" /></>}
+                      </Button>
+                    )
+                  ) : pendingCount === 1 && !currentGenerated ? (
+                    <Button onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving} className="gap-2">
+                      {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><Upload className="h-4 w-4" /> Generar y Finalizar</>}
                     </Button>
                   ) : (
                     <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
@@ -1619,12 +1649,24 @@ export function GenerateDocumentsDialog({
                     <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
                   </Button>
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
-                      {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Generar Este</>}
-                    </Button>
+                    {currentGenerated && (
+                      <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                        {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> Regenerar</>}
+                      </Button>
+                    )}
                     {currentStep < templates.length - 1 ? (
-                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
-                        Siguiente <ChevronRight className="ml-2 h-4 w-4" />
+                      currentGenerated ? (
+                        <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={isGenerating || isSaving}>
+                          Siguiente <ChevronRight className="ml-2 h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <Button onClick={() => withReuseConfirmation(handleGenerateAndNext)} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                          {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <>Generar y Siguiente <ChevronRight className="ml-2 h-4 w-4" /></>}
+                        </Button>
+                      )
+                    ) : pendingCount === 1 && !currentGenerated ? (
+                      <Button onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving} className="gap-2">
+                        {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><Upload className="h-4 w-4" /> Generar y Finalizar</>}
                       </Button>
                     ) : (
                       <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
