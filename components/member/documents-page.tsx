@@ -51,7 +51,6 @@ import {
 } from "@/components/ui/dialog"
 import { documentTypes } from "@/lib/mock-data"
 import { DocumentAuditLog } from "@/components/document-audit-log"
-import { ProcessAttachments } from "@/components/member/process-attachments"
 import { DocumentVersionsDialog } from "@/components/member/document-versions-dialog"
 import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
@@ -333,25 +332,55 @@ export function DocumentsPage() {
     Array<{ id: string; name: string; file_url: string | null; mime_type: string | null; file_size: number | null; created_at: string }>
   >([])
 
+  const loadAttachments = React.useCallback(async (pid: string) => {
+    try {
+      const res = await fetch(`/api/process-attachments?processId=${pid}`)
+      const data = await res.json()
+      if (res.ok) setAttachmentsRaw(data.attachments || [])
+    } catch {
+      // silencioso
+    }
+  }, [])
+
   React.useEffect(() => {
     if (processFilter === "all") {
       setAttachmentsRaw([])
       return
     }
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch(`/api/process-attachments?processId=${processFilter}`)
-        const data = await res.json()
-        if (!cancelled && res.ok) setAttachmentsRaw(data.attachments || [])
-      } catch {
-        // silencioso: la tarjeta de adjuntos muestra su propio error
+    loadAttachments(processFilter)
+  }, [processFilter, loadAttachments])
+
+  // RF-037: subir adjuntos desde la barra del proceso filtrado (selección múltiple)
+  const attachmentInputRef = React.useRef<HTMLInputElement>(null)
+  const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false)
+
+  const handleAttachmentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0 || processFilter === "all") return
+    setIsUploadingAttachments(true)
+    const failed: string[] = []
+    try {
+      for (const file of files) {
+        try {
+          const formData = new FormData()
+          formData.append("file", file)
+          formData.append("processId", processFilter)
+          const res = await fetch("/api/process-attachments", { method: "POST", body: formData })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || "Error al subir el archivo")
+        } catch (err) {
+          failed.push(`${file.name}: ${err instanceof Error ? err.message : "error"}`)
+        }
       }
-    })()
-    return () => {
-      cancelled = true
+      await loadAttachments(processFilter)
+      if (failed.length > 0) {
+        alert(`No se pudieron subir ${failed.length} de ${files.length} archivos:\n${failed.join("\n")}`)
+      }
+    } finally {
+      setIsUploadingAttachments(false)
+      if (attachmentInputRef.current) attachmentInputRef.current.value = ""
     }
-  }, [processFilter])
+  }
 
   // Filter documents
   const filteredDocuments = React.useMemo(() => {
@@ -595,15 +624,37 @@ export function DocumentsPage() {
             <p className="text-sm">
               Mostrando documentos del proceso <span className="font-mono font-medium">{filteredByProcessCode}</span>
             </p>
-            <Button variant="ghost" size="sm" onClick={clearFilters} className="self-start sm:self-auto">
-              <X className="mr-1 h-4 w-4" />
-              Ver todos los documentos
-            </Button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {/* RF-037: adjuntar archivos al proceso (aparecen integrados en el listado) */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={isUploadingAttachments}
+              >
+                {isUploadingAttachments ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="mr-1 h-4 w-4" />
+                )}
+                Adjuntar
+              </Button>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx"
+                onChange={handleAttachmentUpload}
+              />
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X className="mr-1 h-4 w-4" />
+                Ver todos los documentos
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
-
-      {processFilter !== "all" && <ProcessAttachments processId={processFilter} />}
 
       {stats.in_review > 0 && (
         <Card className="border-blue-500/30 bg-blue-500/5">
