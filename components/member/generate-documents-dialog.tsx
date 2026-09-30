@@ -1541,7 +1541,7 @@ export function GenerateDocumentsDialog({
 
       {/* RF-013 (CAP-03): confirmación de campos clave antes de generar (proceso reutilizado) */}
       <Dialog open={reuseConfirmOpen} onOpenChange={(open) => !open && setReuseConfirmOpen(false)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Confirmar campos del proceso reutilizado</DialogTitle>
             <DialogDescription>
@@ -1549,7 +1549,7 @@ export function GenerateDocumentsDialog({
               no se generará hasta que los confirmes.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="space-y-3 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
             {entity?.name && (
               <div className="rounded-md border p-3">
                 <p className="text-xs font-medium text-muted-foreground">Entidad</p>

@@ -72,7 +72,7 @@ export function DocumentVersionsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
@@ -90,7 +90,7 @@ export function DocumentVersionsDialog({
         ) : versions.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">No hay versiones registradas.</p>
         ) : (
-          <ul className="divide-y">
+          <ul className="divide-y overflow-y-auto flex-1 min-h-0">
             {versions.map((v) => (
               <li key={v.id} className="flex items-center justify-between gap-3 py-3">
                 <div className="flex min-w-0 items-center gap-3">
