@@ -136,7 +136,9 @@ function ProcessActionsMenu({
           }}
         >
           <Play className="mr-2 h-4 w-4" />
-          {progressLabel ? `Continuar diligenciamiento (${progressLabel})` : "Generar documentos"}
+          {process.status === "draft"
+            ? `Continuar diligenciamiento${progressLabel ? ` (${progressLabel})` : ""}`
+            : "Generar documentos"}
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={(e) => {
@@ -356,10 +358,13 @@ export function ProcessesPage() {
     }
   }, [processes])
 
-  /** Un proceso está incompleto si su tipo tiene plantillas y aún faltan por generar. */
+  /** "Continuar" solo aplica a procesos en BORRADOR: son los que aún están en
+      diligenciamiento/generación. Al generar todas las plantillas el proceso pasa
+      a "En progreso" automáticamente y el acceso directo desaparece. */
   const isGenerationIncomplete = (p: ProcessMapped) => {
+    if (p.status !== "draft") return false
     const prog = generationProgress[p.id]
-    if (!prog || prog.total === 0) return false
+    if (!prog || prog.total === 0) return true // borrador sin info de progreso: continuar
     return prog.generated < prog.total
   }
 
@@ -643,10 +648,8 @@ export function ProcessesPage() {
                           <StatusBadge status={process.status} />
                           <Badge variant="secondary">{process.documentsCount} docs</Badge>
                           <span className="text-xs text-muted-foreground">{process.updatedAt}</span>
-                          {/* CAP-02: "Continuar" solo si faltan documentos por generar */}
-                          {isGenerationIncomplete(process) &&
-                            process.status !== "completed" &&
-                            process.status !== "archived" && (
+                          {/* CAP-02: "Continuar" solo en borradores */}
+                          {isGenerationIncomplete(process) && (
                             <Button
                               size="sm"
                               className="h-7 px-2 text-xs"
@@ -672,7 +675,7 @@ export function ProcessesPage() {
                         onUpdateStatus={(status) => handleUpdateStatus(process, status)}
                         onReuse={() => handleReuse(process)}
                         progressLabel={
-                          isGenerationIncomplete(process)
+                          generationProgress[process.id]?.total > 0
                             ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
                             : undefined
                         }
@@ -728,11 +731,8 @@ export function ProcessesPage() {
                         <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1">
-                            {/* CAP-02: "Continuar" solo si aún faltan documentos por generar
-                                (progreso real), no por el estado manual del proceso */}
-                            {isGenerationIncomplete(process) &&
-                              process.status !== "completed" &&
-                              process.status !== "archived" && (
+                            {/* CAP-02: "Continuar" solo en borradores (aún no terminan de generar) */}
+                            {isGenerationIncomplete(process) && (
                               <Button
                                 size="sm"
                                 className="h-7 px-2 text-xs"
@@ -760,7 +760,7 @@ export function ProcessesPage() {
                               onUpdateStatus={(status) => handleUpdateStatus(process, status)}
                               onReuse={() => handleReuse(process)}
                               progressLabel={
-                                isGenerationIncomplete(process)
+                                generationProgress[process.id]?.total > 0
                                   ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
                                   : undefined
                               }

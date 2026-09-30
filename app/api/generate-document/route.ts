@@ -343,20 +343,44 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // CAP-02: al generar el primer documento, el proceso deja de ser "borrador"
-    // y pasa a "en progreso" automáticamente (el estado refleja actividad real).
+    // CAP-02: cuando TODAS las plantillas del tipo ya tienen documento generado,
+    // el proceso deja de ser "borrador" y pasa a "en progreso" automáticamente.
+    // Mientras falten plantillas, sigue en draft y la lista muestra "Continuar N/M".
     if (processId) {
       try {
         const { data: proc } = await supabase
           .from("processes")
-          .select("status")
+          .select("status, process_type_id")
           .eq("id", processId)
           .single()
-        if (proc?.status === "draft") {
-          await supabase
-            .from("processes")
-            .update({ status: "in_progress", updated_at: new Date().toISOString() })
-            .eq("id", processId)
+        if (proc?.status === "draft" && proc.process_type_id) {
+          // Total de plantillas del tipo (relación; fallback a templates.process_type_id)
+          const { data: rels } = await supabase
+            .from("template_process_types")
+            .select("template_id")
+            .eq("process_type_id", proc.process_type_id)
+          let total = new Set((rels || []).map((r) => r.template_id).filter(Boolean)).size
+          if (total === 0) {
+            const { data: direct } = await supabase
+              .from("templates")
+              .select("id")
+              .eq("process_type_id", proc.process_type_id)
+            total = direct?.length ?? 0
+          }
+          // Plantillas ya generadas en el proceso
+          const { data: docs } = await supabase
+            .from("documents")
+            .select("template_id")
+            .eq("process_id", processId)
+            .not("template_id", "is", null)
+          const generated = new Set((docs || []).map((d) => d.template_id).filter(Boolean)).size
+
+          if (total > 0 && generated >= total) {
+            await supabase
+              .from("processes")
+              .update({ status: "in_progress", updated_at: new Date().toISOString() })
+              .eq("id", processId)
+          }
         }
       } catch {
         // no bloquear la generación si falla la transición de estado
