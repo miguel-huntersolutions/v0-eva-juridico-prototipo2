@@ -67,6 +67,7 @@ import {
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { CreateProcessDialog } from "./create-process-dialog"
+import { GenerateDocumentsDialog, type ProcessData } from "./generate-documents-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
@@ -286,11 +287,35 @@ export function ProcessesPage() {
     setProcesses((prev) => [newProcess, ...prev])
   }
 
-  const handleProcessCreatedAndGoToGenerate = (newProcess: ProcessMapped) => {
-    setProcesses((prev) => [newProcess, ...prev])
+  // Flujo "Crear y generar": NO se crea el proceso en BD aquí. Se abre el wizard
+  // con los datos (processData) y el proceso solo se persiste al generar el primer
+  // documento. Si el usuario cierra sin generar, no queda ningún borrador vacío.
+  const [generateDraft, setGenerateDraft] = React.useState<{
+    processData: ProcessData
+    entity: EntityMapped | null
+    secretaryName: string
+    processTypeName: string
+  } | null>(null)
+
+  const handleProcessReadyToGenerate = (
+    processData: ProcessData,
+    entity: EntityMapped | null,
+    secretaryName: string,
+    processTypeName: string,
+  ) => {
     setIsCreateDialogOpen(false)
-    router.push(`/member/processes/${newProcess.id}/generate`)
+    setGenerateDraft({ processData, entity, secretaryName, processTypeName })
   }
+
+  const reloadProcesses = React.useCallback(async () => {
+    if (!orgId) return
+    try {
+      const data = isImpersonating ? await getProcessesForImpersonation(orgId) : await getProcessesMapped()
+      setProcesses(data)
+    } catch {
+      // silencioso
+    }
+  }, [orgId, isImpersonating])
 
   const handleDeleteProcess = async () => {
     if (!selectedProcess) return
@@ -659,8 +684,24 @@ export function ProcessesPage() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onProcessCreated={handleProcessCreated}
-        onProcessCreatedAndGoToGenerate={handleProcessCreatedAndGoToGenerate}
+        onProcessCreatedAndReady={handleProcessReadyToGenerate}
       />
+
+      {/* Wizard de generación para proceso NUEVO: el proceso se crea en BD
+          solo cuando se genera el primer documento (no quedan borradores vacíos) */}
+      {generateDraft && (
+        <GenerateDocumentsDialog
+          open={!!generateDraft}
+          onOpenChange={(open) => !open && setGenerateDraft(null)}
+          process={null}
+          processData={generateDraft.processData}
+          entity={generateDraft.entity as any}
+          secretaryName={generateDraft.secretaryName}
+          processTypeName={generateDraft.processTypeName}
+          onProcessCreated={handleProcessCreated}
+          onDocumentsGenerated={() => reloadProcesses()}
+        />
+      )}
 
       {/* View Process Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>

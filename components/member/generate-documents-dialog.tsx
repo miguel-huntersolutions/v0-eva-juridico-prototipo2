@@ -50,7 +50,7 @@ function getTemplateDriveViewUrl(fileUrl: string | null | undefined): string | n
   return null
 }
 
-interface ProcessData {
+export interface ProcessData {
   code: string
   object: string
   description: string
@@ -630,6 +630,30 @@ export function GenerateDocumentsDialog({
     action?.()
   }
 
+  /** Crea el proceso en BD si es nuevo (flujo processData) y aún no existe.
+      Devuelve el processId a usar, o null si falló (error ya mostrado). */
+  const ensureProcessCreated = async (): Promise<string | null> => {
+    if (!isNewProcess || !processData) return currentProcessState?.id || process?.id || null
+    if (currentProcessState?.id) return currentProcessState.id
+    try {
+      const created = await createProcess(processData)
+      const createdAsMapped = {
+        ...created,
+        spreadsheetId: null,
+        spreadsheetUrl: null,
+        driveFolderId: null,
+        driveFolderUrl: null,
+      } as unknown as ProcessMapped
+      setCurrentProcessState(createdAsMapped)
+      if (onProcessCreated) onProcessCreated(createdAsMapped)
+      return created.id
+    } catch (createError) {
+      console.error("Error creating process:", createError)
+      setError("Error al crear el proceso. Por favor intente de nuevo.")
+      return null
+    }
+  }
+
   const handleGenerateDocument = async (
     template: Template,
     retryCount = 0,
@@ -702,10 +726,21 @@ export function GenerateDocumentsDialog({
       // Generate document name
       const documentName = `${template.name}_${processCode}_${new Date().toISOString().split("T")[0]}.docx`
 
-      // Use overrideProcessId if provided, otherwise use currentProcessState or process
-      const processIdToUse = overrideProcessId !== undefined 
-        ? overrideProcessId 
+      // Use overrideProcessId if provided, otherwise use currentProcessState or process.
+      // Si es un proceso nuevo (processData) y aún no existe en BD, crearlo ahora:
+      // el proceso solo se persiste cuando se genera el primer documento.
+      let processIdToUse = overrideProcessId !== undefined
+        ? overrideProcessId
         : (currentProcessState?.id || process?.id || "")
+      if (!processIdToUse && isNewProcess) {
+        const createdId = await ensureProcessCreated()
+        if (!createdId) {
+          setIsGenerating(false)
+          setGeneratingStep(null)
+          return
+        }
+        processIdToUse = createdId
+      }
       
       console.log("[handleGenerateDocument] Using processId:", processIdToUse, {
         overrideProcessId,
@@ -829,23 +864,16 @@ export function GenerateDocumentsDialog({
       setIsSaving(true)
       setError(null)
 
-      // If this is a new process, create it first and use the returned process id
+      // Si es un proceso nuevo, crearlo primero (solo se persiste al generar)
       let currentProcessId = process?.id || ""
 
       if (isNewProcess && processData) {
-        try {
-          const created = await createProcess(processData)
-          currentProcessId = created.id
-          const createdAsMapped = { ...created, spreadsheetId: null, spreadsheetUrl: null, driveFolderId: null, driveFolderUrl: null } as unknown as ProcessMapped
-          setCurrentProcessState(createdAsMapped)
-          if (onProcessCreated) {
-            onProcessCreated(createdAsMapped)
-          }
-        } catch (createError) {
-          console.error("Error creating process:", createError)
-          setError("Error al crear el proceso. Por favor intente de nuevo.")
+        const createdId = await ensureProcessCreated()
+        if (!createdId) {
+          setIsSaving(false)
           return
         }
+        currentProcessId = createdId
       }
 
       // Generate all documents with the correct processId (necesario para asociar docs y actualizar drive en BD)
