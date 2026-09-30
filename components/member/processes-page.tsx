@@ -133,7 +133,7 @@ function ProcessActionsMenu({
           }}
         >
           <Play className="mr-2 h-4 w-4" />
-          Generar documentos
+          {process.status === "draft" ? "Continuar diligenciamiento" : "Generar documentos"}
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={(e) => {
@@ -595,6 +595,17 @@ export function ProcessesPage() {
                           <StatusBadge status={process.status} />
                           <Badge variant="secondary">{process.documentsCount} docs</Badge>
                           <span className="text-xs text-muted-foreground">{process.updatedAt}</span>
+                          {/* CAP-02: acceso directo para continuar un borrador */}
+                          {process.status === "draft" && (
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => router.push(`/member/processes/${process.id}/generate`)}
+                            >
+                              <Play className="mr-1 h-3 w-3" />
+                              Continuar
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <ProcessActionsMenu
@@ -628,7 +639,7 @@ export function ProcessesPage() {
                       <TableHead>Estado</TableHead>
                       <TableHead className="text-center">Docs</TableHead>
                       <TableHead>Actualizado</TableHead>
-                      <TableHead className="w-[50px]"></TableHead>
+                      <TableHead className="w-[150px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -661,20 +672,37 @@ export function ProcessesPage() {
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
                         <TableCell>
-                          <ProcessActionsMenu
-                            process={process}
-                            isUpdatingStatus={isUpdatingStatus}
-                            onView={() => {
-                              setSelectedProcess(process)
-                              setIsViewDialogOpen(true)
-                            }}
-                            onDelete={() => {
-                              setSelectedProcess(process)
-                              setIsDeleteDialogOpen(true)
-                            }}
-                            onUpdateStatus={(status) => handleUpdateStatus(process, status)}
-                            onReuse={() => handleReuse(process)}
-                          />
+                          <div className="flex items-center justify-end gap-1">
+                            {/* CAP-02: acceso directo para continuar un borrador a medio diligenciar */}
+                            {process.status === "draft" && (
+                              <Button
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                title="Continuar el diligenciamiento donde lo dejaste"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  router.push(`/member/processes/${process.id}/generate`)
+                                }}
+                              >
+                                <Play className="mr-1 h-3 w-3" />
+                                Continuar
+                              </Button>
+                            )}
+                            <ProcessActionsMenu
+                              process={process}
+                              isUpdatingStatus={isUpdatingStatus}
+                              onView={() => {
+                                setSelectedProcess(process)
+                                setIsViewDialogOpen(true)
+                              }}
+                              onDelete={() => {
+                                setSelectedProcess(process)
+                                setIsDeleteDialogOpen(true)
+                              }}
+                              onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                              onReuse={() => handleReuse(process)}
+                            />
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
