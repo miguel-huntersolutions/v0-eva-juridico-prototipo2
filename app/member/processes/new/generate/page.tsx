@@ -15,11 +15,11 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, FileText, Loader2 } from "lucide-react"
+import { ArrowLeft, FileText, Loader2, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { GenerateDocumentsDialog, type ProcessData } from "@/components/member/generate-documents-dialog"
-import type { ProcessMapped } from "@/lib/supabase/client-data-access"
+import { createProcess, type ProcessMapped } from "@/lib/supabase/client-data-access"
 
 // Misma clave que usa processes-page al guardar el borrador de proceso nuevo
 const NEW_PROCESS_DRAFT_KEY = "eva:new-process-draft"
@@ -35,6 +35,8 @@ export default function NewProcessGeneratePage() {
   const router = useRouter()
   const [draft, setDraft] = React.useState<NewProcessDraft | null>(null)
   const [checked, setChecked] = React.useState(false)
+  const [isOpeningSmart, setIsOpeningSmart] = React.useState(false)
+  const [smartError, setSmartError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     try {
@@ -70,23 +72,54 @@ export default function NewProcessGeneratePage() {
     )
   }
 
+  const handleOpenSmartFill = async () => {
+    if (!draft?.processData || isOpeningSmart) return
+    setIsOpeningSmart(true)
+    setSmartError(null)
+    try {
+      const created = await createProcess(draft.processData)
+      try {
+        sessionStorage.removeItem(NEW_PROCESS_DRAFT_KEY)
+      } catch {
+        // no crítico
+      }
+      router.push(`/member/processes/${created.id}/generate-smart`)
+    } catch (err) {
+      setSmartError(err instanceof Error ? err.message : "No se pudo abrir Generar con IA")
+      setIsOpeningSmart(false)
+    }
+  }
+
   return (
     <div className="container py-6 flex flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/member/processes">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <div>
-          <h1 className="text-xl font-semibold">Generar documentos</h1>
-          <p className="text-sm text-muted-foreground">
-            Proceso nuevo <span className="font-mono">{draft.processData.code}</span>
-            {draft.entity?.name && ` · ${draft.entity.name}`}
-            {" · se crea al generar el primer documento o guardar el borrador"}
-          </p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/member/processes">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-xl font-semibold">Generar documentos</h1>
+            <p className="text-sm text-muted-foreground">
+              Proceso nuevo <span className="font-mono">{draft.processData.code}</span>
+              {draft.entity?.name && ` · ${draft.entity.name}`}
+              {" · se crea al generar el primer documento o guardar el borrador"}
+            </p>
+          </div>
         </div>
+        <Button variant="outline" size="sm" onClick={handleOpenSmartFill} disabled={isOpeningSmart}>
+          {isOpeningSmart ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4 mr-2" />
+          )}
+          Completar con IA
+        </Button>
       </div>
+      {smartError && (
+        <p className="text-sm text-destructive">{smartError}</p>
+      )}
 
       <Card className="flex flex-col min-h-[500px]">
         <CardHeader>
