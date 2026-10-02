@@ -122,6 +122,7 @@ export function MembersPage() {
     name: "",
     message: "",
     entityIds: [] as string[],
+    kind: "member" as "member" | "entity_contact",
   })
   const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
   const [isSending, setIsSending] = React.useState(false)
@@ -180,7 +181,7 @@ export function MembersPage() {
       console.log("[MembersPage] Total profiles:", membersData.length)
       
       // Filter only members (not admins)
-      const memberProfiles = membersData.filter((m) => m.role === "member")
+      const memberProfiles = membersData.filter((m) => m.role === "member" || m.role === "entity_contact")
       console.log("[MembersPage] Filtered members (role='member'):", memberProfiles.length)
       console.log("[MembersPage] Member profiles:", memberProfiles.map(m => ({ id: m.id, name: m.name, email: m.email, role: m.role, organization_id: m.organization_id })))
 
@@ -190,7 +191,11 @@ export function MembersPage() {
           // Get assigned entities from database
           let assignedEntityIds: string[] = []
           try {
-            assignedEntityIds = await getMemberAssignedEntities(member.id)
+            if (member.role === "entity_contact") {
+              assignedEntityIds = member.entity_id ? [member.entity_id] : []
+            } else {
+              assignedEntityIds = await getMemberAssignedEntities(member.id)
+            }
             console.log(`[MembersPage] Member ${member.name} assigned entities:`, assignedEntityIds.length, assignedEntityIds)
             // If no entities assigned, use empty array (member has no access)
             // Don't default to all entities - this was causing incorrect counts
@@ -471,9 +476,10 @@ export function MembersPage() {
         body: JSON.stringify({
           email: inviteData.email,
           name: inviteData.name || inviteData.email.split("@")[0],
-          role: "member",
+          role: inviteData.kind,
           organizationId: effectiveOrganizationId,
-          entityIds: inviteData.entityIds, // Include selected entities
+          entityIds:
+            inviteData.kind === "entity_contact" ? inviteData.entityIds.slice(0, 1) : inviteData.entityIds,
           isInvitation: true, // Flag to indicate this is an invitation
         }),
       })
@@ -488,7 +494,7 @@ export function MembersPage() {
       console.log("[MembersPage] Member created successfully:", result)
       
       setIsInviteOpen(false)
-      setInviteData({ email: "", name: "", message: "", entityIds: [] })
+      setInviteData({ email: "", name: "", message: "", entityIds: [], kind: "member" })
       
       // Wait a bit for the database trigger to create the profile
       await new Promise(resolve => setTimeout(resolve, 1000))
@@ -557,6 +563,10 @@ export function MembersPage() {
   }
 
   const toggleEntity = (entityId: string) => {
+    if (selectedMember?.role === "entity_contact") {
+      setSelectedEntities([entityId])
+      return
+    }
     if (selectedEntities.includes(entityId)) {
       setSelectedEntities(selectedEntities.filter((id) => id !== entityId))
     } else {
@@ -568,8 +578,15 @@ export function MembersPage() {
     if (!selectedMember) return
 
     try {
-      // Save assignments to database
+    if (selectedMember.role === "entity_contact") {
+      if (selectedEntities.length !== 1) {
+        alert("El contacto de entidad debe quedar asociado a una sola entidad.")
+        return
+      }
+      await updateMember(selectedMember.id, { entityId: selectedEntities[0] })
+    } else {
       await assignMemberEntities(selectedMember.id, selectedEntities)
+    }
       
       // Recalculate processes and documents count for this member based on new assigned entities
       // Use stored processes and documents, but filter by organization entities first
@@ -599,6 +616,7 @@ export function MembersPage() {
             ? { 
                 ...m, 
                 assignedEntities: selectedEntities,
+                entity_id: selectedMember.role === "entity_contact" ? selectedEntities[0] : m.entity_id,
                 processesCount,
                 documentsCount,
               }
@@ -790,7 +808,7 @@ export function MembersPage() {
                     <p className="text-sm text-muted-foreground truncate">{member.email}</p>
                     <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                       <Shield className="h-3 w-3" />
-                      <span>Asesor Jurídico</span>
+                      <span>{member.role === "entity_contact" ? "Contacto de entidad" : "Asesor Jurídico"}</span>
                     </div>
                   </div>
                 </div>
@@ -959,20 +977,46 @@ export function MembersPage() {
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/20">
                 <UserPlus className="h-5 w-5 text-primary" />
               </div>
-              Invitar Nuevo Miembro
+              Invitar usuario
             </DialogTitle>
             <DialogDescription>
-              Envía una invitación por correo electrónico para unirse a la organización
+              Envía una invitación por correo. El asesor genera documentos; el contacto de entidad solo entra al hilo de su alcaldía, sin cuenta de Google.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
+              <Label>Tipo de usuario *</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={inviteData.kind === "member" ? "default" : "outline"}
+                  onClick={() => setInviteData({ ...inviteData, kind: "member", entityIds: [] })}
+                >
+                  Asesor jurídico
+                </Button>
+                <Button
+                  type="button"
+                  variant={inviteData.kind === "entity_contact" ? "default" : "outline"}
+                  onClick={() =>
+                    setInviteData({
+                      ...inviteData,
+                      kind: "entity_contact",
+                      entityIds: inviteData.entityIds.slice(0, 1),
+                    })
+                  }
+                >
+                  Contacto de entidad
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="invite-email">Correo Electrónico *</Label>
               <Input
                 id="invite-email"
                 type="email"
-                placeholder="asesor@ejemplo.com"
+                placeholder={inviteData.kind === "entity_contact" ? "funcionario@alcaldia.gov.co" : "asesor@ejemplo.com"}
                 value={inviteData.email}
                 onChange={(e) => setInviteData({ ...inviteData, email: e.target.value })}
               />
@@ -982,7 +1026,7 @@ export function MembersPage() {
               <Label htmlFor="invite-name">Nombre (Opcional)</Label>
               <Input
                 id="invite-name"
-                placeholder="Nombre del asesor"
+                placeholder={inviteData.kind === "entity_contact" ? "Nombre del funcionario" : "Nombre del asesor"}
                 value={inviteData.name}
                 onChange={(e) => setInviteData({ ...inviteData, name: e.target.value })}
               />
@@ -990,7 +1034,9 @@ export function MembersPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="invite-entities">Entidades a Asociar *</Label>
+              <Label htmlFor="invite-entities">
+                {inviteData.kind === "entity_contact" ? "Entidad *" : "Entidades a Asociar *"}
+              </Label>
               {entities.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No hay entidades disponibles. Crea una entidad primero.</p>
               ) : (
@@ -998,10 +1044,15 @@ export function MembersPage() {
                   {entities.map((entity) => (
                     <div key={entity.id} className="flex items-center space-x-2">
                       <input
-                        type="checkbox"
+                        type={inviteData.kind === "entity_contact" ? "radio" : "checkbox"}
+                        name={inviteData.kind === "entity_contact" ? "invite-entity" : undefined}
                         id={`entity-${entity.id}`}
                         checked={inviteData.entityIds.includes(entity.id)}
                         onChange={(e) => {
+                          if (inviteData.kind === "entity_contact") {
+                            setInviteData({ ...inviteData, entityIds: [entity.id] })
+                            return
+                          }
                           if (e.target.checked) {
                             setInviteData({
                               ...inviteData,
@@ -1024,7 +1075,9 @@ export function MembersPage() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                Selecciona las entidades a las que el miembro tendrá acceso
+                {inviteData.kind === "entity_contact"
+                  ? "Solo verá los hilos de los procesos de esta entidad. No necesita conectar Google ni entrar a Drive."
+                  : "Selecciona las entidades a las que el miembro tendrá acceso"}
               </p>
             </div>
 
@@ -1273,7 +1326,9 @@ export function MembersPage() {
               Asignar Entidades
             </DialogTitle>
             <DialogDescription>
-              Selecciona las entidades a las que {selectedMember?.name} tendrá acceso
+              {selectedMember?.role === "entity_contact"
+                ? `Elige la única entidad cuyos hilos podrá ver ${selectedMember?.name}`
+                : `Selecciona las entidades a las que ${selectedMember?.name} tendrá acceso`}
             </DialogDescription>
           </DialogHeader>
 

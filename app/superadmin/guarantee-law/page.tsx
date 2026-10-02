@@ -7,6 +7,10 @@
  */
 
 import * as React from "react"
+import { logger } from "@/lib/logger"
+import { AppSidebar } from "@/components/app-sidebar"
+import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,7 +40,7 @@ function isActive(p: Period): boolean {
   return p.starts_on <= today && today <= p.ends_on
 }
 
-export default function GuaranteeLawPage() {
+function GuaranteeLawContent() {
   const [periods, setPeriods] = React.useState<Period[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [isSaving, setIsSaving] = React.useState(false)
@@ -91,7 +95,7 @@ export default function GuaranteeLawPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Eliminar este periodo de ley de garantías?")) return
+    if (!confirm("¿Eliminar este periodo de restricción?")) return
     try {
       const res = await fetch(`/api/guarantee-law-periods?id=${id}`, { method: "DELETE" })
       if (!res.ok) {
@@ -109,18 +113,18 @@ export default function GuaranteeLawPage() {
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
           <Scale className="h-6 w-6" />
-          Ley de garantías
+          Periodos de restricción
         </h1>
         <p className="text-sm text-muted-foreground">
-          Periodos de restricción a la contratación pública. EVA advierte cuando la fecha de una etapa cae dentro
-          de un periodo activo.
+          Ventanas en las que la contratación pública queda limitada (ley de garantías, vedas u otras).
+          EVA advierte cuando la fecha de una etapa cae dentro de un periodo activo.
         </p>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Nuevo periodo</CardTitle>
-          <CardDescription>Ej: elecciones regionales, con su fecha de inicio y fin</CardDescription>
+          <CardDescription>Ej: ley de garantías por elecciones regionales, con su fecha de inicio y fin</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
@@ -130,7 +134,7 @@ export default function GuaranteeLawPage() {
                 id="period-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Elecciones regionales 2027"
+                placeholder="Ley de garantías 2027"
                 className="w-[240px]"
               />
             </div>
@@ -160,7 +164,7 @@ export default function GuaranteeLawPage() {
                 id="period-scope"
                 value={scope}
                 onChange={(e) => setScope(e.target.value)}
-                placeholder="Qué restrige"
+                placeholder="Qué restringe"
                 className="w-[220px]"
               />
             </div>
@@ -233,6 +237,32 @@ export default function GuaranteeLawPage() {
           )}
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+export default function GuaranteeLawPage() {
+  const { profile, isLoading } = useProfile()
+  const { isImpersonating } = useImpersonation()
+
+  React.useEffect(() => {
+    logger.pageView("/superadmin/guarantee-law", profile?.id, profile?.role)
+  }, [profile?.id, profile?.role])
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
+      <AppSidebar profile={profile} />
+      <main className={`min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-8 ${isImpersonating ? "md:pt-14" : ""}`}>
+        <GuaranteeLawContent />
+      </main>
     </div>
   )
 }

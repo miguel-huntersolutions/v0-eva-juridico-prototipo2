@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   Plus,
   FolderKanban,
@@ -284,6 +284,7 @@ function ProcessActionsMenu({
 
 export function ProcessesPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { profile } = useProfile()
   const { isImpersonating, impersonatedOrg } = useImpersonation()
   const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
@@ -316,6 +317,11 @@ export function ProcessesPage() {
 
   // CAP-07: hilo de comunicación del proceso
   const [threadProcess, setThreadProcess] = React.useState<ProcessMapped | null>(null)
+  const [workspaceMeta, setWorkspaceMeta] = React.useState<{
+    assignees: Record<string, string>
+    unreadByProcess: Record<string, number>
+    messageCountByProcess: Record<string, number>
+  }>({ assignees: {}, unreadByProcess: {}, messageCountByProcess: {} })
 
   // CAP-11: cronograma de etapas del proceso
   const [stagesProcess, setStagesProcess] = React.useState<ProcessMapped | null>(null)
@@ -383,6 +389,60 @@ export function ProcessesPage() {
     }
   }, [orgId, isImpersonating])
 
+  const loadWorkspaceMeta = React.useCallback(() => {
+    fetch("/api/processes/workspace-meta")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return
+        setWorkspaceMeta({
+          assignees: data.assignees || {},
+          unreadByProcess: data.unreadByProcess || {},
+          messageCountByProcess: data.messageCountByProcess || {},
+        })
+      })
+      .catch(() => {})
+  }, [])
+
+  React.useEffect(() => {
+    if (processes.length === 0) return
+    loadWorkspaceMeta()
+  }, [processes, loadWorkspaceMeta])
+
+  const assigneeName = (process: ProcessMapped) => {
+    if (process.assignedToId && workspaceMeta.assignees[process.assignedToId]) {
+      return workspaceMeta.assignees[process.assignedToId]
+    }
+    if (process.assignedToName) return process.assignedToName
+    if (process.assignedToId && process.assignedToId === profile?.id) {
+      return profile.name || "Tú"
+    }
+    return null
+  }
+
+  const openThread = (process: ProcessMapped) => {
+    setThreadProcess(process)
+    if ((workspaceMeta.unreadByProcess[process.id] || 0) > 0) {
+      fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId: process.id, type: "thread_message" }),
+      }).catch(() => {})
+      setWorkspaceMeta((prev) => ({
+        ...prev,
+        unreadByProcess: { ...prev.unreadByProcess, [process.id]: 0 },
+      }))
+    }
+  }
+
+  React.useEffect(() => {
+    const threadId = searchParams.get("thread")
+    if (!threadId || processes.length === 0) return
+    const process = processes.find((p) => p.id === threadId)
+    if (process) openThread(process)
+    // openThread cambia con meta; solo abrir al llegar el id
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, processes])
+
   // CAP-08: cargar miembros de la org para el selector de responsable (solo admin)
   React.useEffect(() => {
     if (!orgId || !isAdmin) return
@@ -392,7 +452,7 @@ export function ProcessesPage() {
         if (cancelled) return
         setMembers(
           (list || [])
-            .filter((m) => m.role !== "superadmin")
+            .filter((m) => m.role === "member" || m.role === "admin")
             .map((m) => ({ id: m.id, name: m.name || m.full_name || m.email, email: m.email })),
         )
       })
@@ -899,11 +959,9 @@ export function ProcessesPage() {
                           {process.processTypeName ? ` · ${process.processTypeName}` : ""}
                         </p>
                         {/* CAP-08 (RF-030): responsable asignado */}
-                        {process.assignedToName && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            Responsable: {process.assignedToName}
-                          </p>
-                        )}
+                        <p className="truncate text-xs text-muted-foreground">
+                          Responsable: {assigneeName(process) || "Sin asignar"}
+                        </p>
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                           <StatusBadge status={process.status} />
                           <Badge variant="secondary">{process.documentsCount} docs</Badge>
@@ -920,6 +978,24 @@ export function ProcessesPage() {
                               {continueLabel(process)}
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="relative h-7 px-2"
+                            title={
+                              (workspaceMeta.unreadByProcess[process.id] || 0) > 0
+                                ? `${workspaceMeta.unreadByProcess[process.id]} mensaje(s) nuevo(s)`
+                                : "Hilo de comunicación"
+                            }
+                            onClick={() => openThread(process)}
+                          >
+                            <MessageSquareText className="h-3.5 w-3.5" />
+                            {(workspaceMeta.unreadByProcess[process.id] || 0) > 0 && (
+                              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                                {workspaceMeta.unreadByProcess[process.id]}
+                              </span>
+                            )}
+                          </Button>
                         </div>
                       </div>
                       <ProcessActionsMenu
@@ -939,7 +1015,7 @@ export function ProcessesPage() {
                         isAdmin={isAdmin}
                         onAssign={() => openAssignDialog(process)}
                         onViewAudit={() => openAuditDialog(process)}
-                        onOpenThread={() => setThreadProcess(process)}
+                        onOpenThread={() => openThread(process)}
                         onOpenStages={() => setStagesProcess(process)}
                         progressLabel={
                           generationProgress[process.id]?.total > 0
@@ -998,8 +1074,8 @@ export function ProcessesPage() {
                         </TableCell>
                         {/* CAP-08 (RF-030): responsable visible en la vista de procesos */}
                         <TableCell>
-                          {process.assignedToName ? (
-                            <span className="text-sm">{process.assignedToName}</span>
+                          {assigneeName(process) ? (
+                            <span className="text-sm">{assigneeName(process)}</span>
                           ) : (
                             <span className="text-xs italic text-muted-foreground">Sin asignar</span>
                           )}
@@ -1025,6 +1101,29 @@ export function ProcessesPage() {
                                 {continueLabel(process)}
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="relative h-8 w-8"
+                              title={
+                                (workspaceMeta.unreadByProcess[process.id] || 0) > 0
+                                  ? `${workspaceMeta.unreadByProcess[process.id]} mensaje(s) nuevo(s)`
+                                  : "Hilo de comunicación"
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openThread(process)
+                              }}
+                            >
+                              <MessageSquareText className="h-4 w-4" />
+                              {(workspaceMeta.unreadByProcess[process.id] || 0) > 0 && (
+                                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                                  {workspaceMeta.unreadByProcess[process.id] > 9
+                                    ? "9+"
+                                    : workspaceMeta.unreadByProcess[process.id]}
+                                </span>
+                              )}
+                            </Button>
                             <ProcessActionsMenu
                               process={process}
                               isUpdatingStatus={isUpdatingStatus}
@@ -1042,7 +1141,7 @@ export function ProcessesPage() {
                               isAdmin={isAdmin}
                               onAssign={() => openAssignDialog(process)}
                               onViewAudit={() => openAuditDialog(process)}
-                              onOpenThread={() => setThreadProcess(process)}
+                              onOpenThread={() => openThread(process)}
                               onOpenStages={() => setStagesProcess(process)}
                               progressLabel={
                                 generationProgress[process.id]?.total > 0
@@ -1105,6 +1204,10 @@ export function ProcessesPage() {
                 <div>
                   <h4 className="font-semibold mb-1">Estado</h4>
                   <StatusBadge status={selectedProcess.status} />
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Responsable</h4>
+                  <p className="text-sm text-muted-foreground">{assigneeName(selectedProcess) || "Sin asignar"}</p>
                 </div>
                 <div>
                   <h4 className="font-semibold mb-1">Fecha de Creación</h4>
@@ -1179,8 +1282,8 @@ export function ProcessesPage() {
           <DialogHeader>
             <DialogTitle>Asignar responsable</DialogTitle>
             <DialogDescription>
-              Proceso <strong>{assignProcess?.code}</strong> · {assignProcess?.entityName}. El responsable recibirá
-              una notificación y obtendrá acceso a la entidad si aún no lo tiene.
+              Proceso <strong>{assignProcess?.code}</strong> · {assignProcess?.entityName}. Solo asesores o
+              administradores de la firma. El responsable recibirá una notificación y acceso a la entidad.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-2">
@@ -1288,7 +1391,12 @@ export function ProcessesPage() {
         processId={threadProcess?.id ?? null}
         processCode={threadProcess?.code}
         open={!!threadProcess}
-        onOpenChange={(open) => !open && setThreadProcess(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setThreadProcess(null)
+            loadWorkspaceMeta()
+          }
+        }}
       />
 
       {/* CAP-11 (RF-044): cronograma de etapas del proceso */}

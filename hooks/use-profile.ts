@@ -9,9 +9,10 @@ export interface Profile {
   id: string
   email: string
   name: string
-  role: "superadmin" | "admin" | "member"
+  role: "superadmin" | "admin" | "member" | "entity_contact"
   organization_id: string | null
   avatar_url: string | null
+  entity_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -64,6 +65,7 @@ export function useProfile(redirectOnUnauthenticated = true) {
             role: "member",
             organization_id: null,
             avatar_url: null,
+            entity_id: null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }

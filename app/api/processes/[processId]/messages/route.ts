@@ -34,7 +34,7 @@ interface ProfileRow {
   role: string
   organization_id: string | null
   entity_id: string | null
-  full_name: string | null
+  name: string | null
 }
 
 /** Valida el acceso al hilo según el rol. Devuelve null si tiene acceso, o la respuesta de error. */
@@ -96,7 +96,7 @@ export async function GET(
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role, organization_id, entity_id, full_name")
+      .select("role, organization_id, entity_id, name")
       .eq("id", user.id)
       .single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
@@ -108,7 +108,7 @@ export async function GET(
     const { data: messages, error } = await service
       .from("process_messages")
       .select(
-        "id, body, created_at, author:profiles!process_messages_author_id_fkey(id, full_name, email, role), attachment:process_attachments(id, name, file_url, mime_type)",
+        "id, body, created_at, author:profiles!process_messages_author_id_fkey(id, name, email, role), attachment:process_attachments(id, name, file_url, mime_type)",
       )
       .eq("process_id", processId)
       .order("created_at", { ascending: true })
@@ -121,7 +121,7 @@ export async function GET(
       body: m.body,
       createdAt: m.created_at,
       authorId: m.author?.id ?? null,
-      authorName: m.author?.full_name || m.author?.email || "Usuario",
+      authorName: m.author?.name || m.author?.email || "Usuario",
       authorRole: m.author?.role ?? null,
       isMine: m.author?.id === user.id,
       attachment: m.attachment
@@ -161,7 +161,7 @@ export async function POST(
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role, organization_id, entity_id, full_name")
+      .select("role, organization_id, entity_id, name")
       .eq("id", user.id)
       .single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
@@ -207,7 +207,7 @@ export async function POST(
 
     if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
 
-    const authorName = (profile as ProfileRow).full_name || user.email || "Un usuario"
+    const authorName = (profile as ProfileRow).name || user.email || "Un usuario"
     const ip = getRequestIp(request)
 
     // RF-040: cada mensaje queda en el registro de auditoría (autor, fecha, IP, proceso)
@@ -220,23 +220,15 @@ export async function POST(
       ip,
     })
 
-    // RF-026: notificar en la app a los demás participantes del hilo:
-    // responsable asignado + creador + autores previos + admins de la org
-    // (+ contactos de la entidad). El correo queda pendiente (CA-026.3: si el
-    // correo falla, el mensaje queda en el hilo igual).
+    // RF-026: solo participantes del proceso/hilo — no todos los admins de la firma.
+    // Responsable, creador, quienes ya escribieron y el contacto de ESA entidad.
     try {
       const recipients = new Set<string>()
       if (proc.assigned_to) recipients.add(proc.assigned_to as string)
       if (proc.created_by) recipients.add(proc.created_by as string)
 
-      const [{ data: prevAuthors }, { data: admins }, { data: contacts }] = await Promise.all([
+      const [{ data: prevAuthors }, { data: contacts }] = await Promise.all([
         service.from("process_messages").select("author_id").eq("process_id", processId),
-        service
-          .from("profiles")
-          .select("id")
-          .eq("organization_id", orgId)
-          .eq("role", "admin")
-          .eq("status", "approved"),
         service
           .from("profiles")
           .select("id")
@@ -245,9 +237,8 @@ export async function POST(
           .eq("status", "approved"),
       ])
       for (const a of prevAuthors || []) if (a.author_id) recipients.add(a.author_id)
-      for (const a of admins || []) recipients.add(a.id)
       for (const c of contacts || []) recipients.add(c.id)
-      recipients.delete(user.id) // no notificar al autor
+      recipients.delete(user.id)
 
       if (recipients.size > 0) {
         const preview = text.length > 140 ? `${text.slice(0, 140)}…` : text

@@ -47,22 +47,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Determine final role based on requester's permissions
-    // Superadmins can create admins or members, admins can only create members
-    let finalRole: "admin" | "member" = "member"
-    
+    // Superadmin: admin | member | entity_contact. Admin: member | entity_contact.
+    let finalRole: "admin" | "member" | "entity_contact" = "member"
+
     if (profile.role === "superadmin") {
-      // Superadmins can create admins or members
-      finalRole = role === "admin" ? "admin" : "member"
+      if (role === "admin") finalRole = "admin"
+      else if (role === "entity_contact") finalRole = "entity_contact"
+      else finalRole = "member"
     } else if (profile.role === "admin") {
-      // Admins can only create members (not other admins)
       if (role === "admin") {
         return NextResponse.json(
           { error: "Forbidden: Admins can only create members, not other admins" },
           { status: 403 },
         )
       }
-      finalRole = "member"
+      finalRole = role === "entity_contact" ? "entity_contact" : "member"
     }
 
     // If user is admin (not superadmin), verify they can only create members in their own organization
@@ -89,16 +88,42 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    let contactEntityId: string | null = null
+    if (finalRole === "entity_contact") {
+      if (!Array.isArray(entityIds) || entityIds.length !== 1) {
+        return NextResponse.json(
+          {
+            error: "invalid_entity",
+            message: "El contacto de entidad debe quedar asociado a una sola entidad.",
+          },
+          { status: 400 },
+        )
+      }
+      const { data: entityRow, error: entityErr } = await serviceRoleClient
+        .from("entities")
+        .select("id, organization_id")
+        .eq("id", entityIds[0])
+        .maybeSingle()
+      if (entityErr || !entityRow || entityRow.organization_id !== organizationId) {
+        return NextResponse.json(
+          { error: "invalid_entity", message: "La entidad no pertenece a esta organización." },
+          { status: 400 },
+        )
+      }
+      contactEntityId = entityRow.id
+    }
+
     // Generate invitation link - redirect to password setup page for new users
     // IMPORTANT: This URL must be in the Redirect URLs list in Supabase Dashboard
     const baseUrl = getAppUrl()
     const redirectTo = `${baseUrl}/auth/update-password?invite=true&org=${organizationId}`
     
-    const userMetadata = {
+    const userMetadata: Record<string, unknown> = {
       name,
       role: finalRole,
       organization_id: organizationId,
     }
+    if (contactEntityId) userMetadata.entity_id = contactEntityId
 
     // First, check if user already exists
     let existingUser = null
@@ -320,10 +345,11 @@ export async function POST(request: NextRequest) {
         .update({
           email,
           name,
-          role: finalRole, // Use finalRole to ensure it's 'member'
+          role: finalRole,
           status: statusToSet, // Preserve pending status for new users
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
+          ...(contactEntityId ? { entity_id: contactEntityId } : {}),
         })
         .eq("id", userId)
         .select()
@@ -369,10 +395,11 @@ export async function POST(request: NextRequest) {
           id: userId,
           email,
           name,
-            role: finalRole, // Use finalRole to ensure it's 'member'
+          role: finalRole,
           status: "approved", // New users are created via invite (email sent); approved so they can log in
           organization_id: organizationId,
           avatar_url: avatarUrl || null,
+          ...(contactEntityId ? { entity_id: contactEntityId } : {}),
         })
         .select()
         .single()
@@ -424,7 +451,7 @@ export async function POST(request: NextRequest) {
     // pero se reporta la advertencia para que el admin reintente la asignación
     // (antes fallaba en silencio y el miembro quedaba sin entidades sin avisar).
     let entitiesWarning: string | null = null
-    if (entityIds && entityIds.length > 0) {
+    if (finalRole !== "entity_contact" && entityIds && entityIds.length > 0) {
       try {
         const { error: deleteErr } = await serviceRoleClient
           .from("member_entities")

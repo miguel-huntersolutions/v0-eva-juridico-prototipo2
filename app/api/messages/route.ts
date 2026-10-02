@@ -36,7 +36,7 @@ export async function GET() {
     // 1. Procesos visibles según el rol
     let procQuery = service
       .from("processes")
-      .select("id, code, entity_id, assigned_to, created_by, entity:entities(name, organization_id)")
+      .select("id, code, status, entity_id, assigned_to, created_by, entity:entities(name, organization_id)")
       .order("updated_at", { ascending: false })
       .limit(500)
 
@@ -75,7 +75,7 @@ export async function GET() {
     const processIds = visible.map((p: any) => p.id)
     const { data: messages, error: msgErr } = await service
       .from("process_messages")
-      .select("process_id, body, created_at, author:profiles!process_messages_author_id_fkey(full_name, email)")
+      .select("process_id, body, created_at, author:profiles!process_messages_author_id_fkey(name, email)")
       .in("process_id", processIds)
       .order("created_at", { ascending: false })
       .limit(2000)
@@ -94,11 +94,12 @@ export async function GET() {
         return {
           processId: p.id,
           processCode: p.code,
+          processStatus: p.status ?? null,
           entityName: p.entity?.name ?? "",
           messageCount: countByProcess[p.id] || 0,
           lastMessageAt: last?.created_at ?? null,
           lastMessagePreview: last ? String(last.body).slice(0, 120) : null,
-          lastMessageAuthor: last?.author?.full_name || last?.author?.email || null,
+          lastMessageAuthor: last?.author?.name || last?.author?.email || null,
         }
       })
       // CA-025.2: ordenadas por último mensaje; sin mensajes al final

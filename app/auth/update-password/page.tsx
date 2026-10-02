@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2, Lock, Eye, EyeOff } from "lucide-react"
+import { homePathForRole } from "@/lib/auth/home-path"
 
 function UpdatePasswordContent() {
   const router = useRouter()
@@ -168,9 +169,7 @@ function UpdatePasswordContent() {
             return
           }
           const role = profile?.role || "member"
-          if (role === "superadmin") router.push("/superadmin")
-          else if (role === "admin") router.push("/admin")
-          else router.push("/member")
+          router.push(homePathForRole(role))
           return
         }
         setError("Enlace inválido o expirado. Por favor, solicita una nueva invitación.")
@@ -244,13 +243,7 @@ function UpdatePasswordContent() {
 
       // Redirect based on role
       const role = profile?.role || "member"
-      if (role === "superadmin") {
-        router.push("/superadmin")
-      } else if (role === "admin") {
-        router.push("/admin")
-      } else {
-        router.push("/member")
-      }
+      router.push(homePathForRole(role))
     } catch (err) {
       console.error("Error updating password:", err)
       setError(err instanceof Error ? err.message : "Error desconocido")

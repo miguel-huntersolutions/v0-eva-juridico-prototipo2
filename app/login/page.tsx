@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import type { UserRole } from "@/lib/mock-data"
-import { logger } from "@/lib/logger"
+import { homePathForRole } from "@/lib/auth/home-path"
 
 interface ProfileOption {
   role: UserRole
@@ -119,7 +119,7 @@ function LoginPageContent() {
 
           const role = profile?.role || "member"
           logger.auth("SESSION_CHECK", user.id, role, true)
-          const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          const route = homePathForRole(role)
           window.location.href = route
           return
         }
@@ -173,7 +173,7 @@ function LoginPageContent() {
 
         const role = profile?.role || "member"
         logger.auth("LOGIN", data.user.id, role, true)
-        const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+        const route = homePathForRole(role)
 
         window.location.href = route
       }

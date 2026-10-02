@@ -976,7 +976,7 @@ export async function getProcessesMapped(filters?: {
       entity:entities(id, name),
       secretary:secretaries(id, name),
       process_type:process_types(id, name),
-      assigned:profiles!processes_assigned_to_fkey(id, full_name, email)
+      assigned:profiles!processes_assigned_to_fkey(id, name, email)
     `)
     .order("updated_at", { ascending: false })
 
@@ -1029,7 +1029,7 @@ export async function getProcessesMapped(filters?: {
     driveFolderId: (p as any).drive_folder_id || null,
     driveFolderUrl: (p as any).drive_folder_url || null,
     assignedToId: (p as any).assigned_to ?? null,
-    assignedToName: (p as any).assigned?.full_name || (p as any).assigned?.email || null,
+    assignedToName: (p as any).assigned?.name || (p as any).assigned?.email || null,
     assignedAt: (p as any).assigned_at ?? null,
   }))
 }
@@ -1408,6 +1408,7 @@ export async function updateMember(
     name: string
     role: string
     avatarUrl: string
+    entityId: string | null
   }>,
 ) {
   // Use API route to update member (bypasses RLS using service role)

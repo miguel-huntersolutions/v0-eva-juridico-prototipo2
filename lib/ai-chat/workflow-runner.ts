@@ -23,6 +23,7 @@ import {
   ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT,
   ASESOR_JURIDICO_TEMPERATURE_DEFAULT,
 } from "@/lib/ai-chat/asesor-juridico-system-prompt"
+import { buildGuaranteeLawEvaContext } from "@/lib/guarantee-law/eva-context"
 
 // Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
@@ -447,6 +448,8 @@ export async function runWorkflow(
 
 const GENERAL_FALLBACK_FOOTER = `\n\n---\n**Nota:** Respuesta en **modo asesor normativo** (no hubo material suficiente en los documentos indexados del repositorio para responder solo con archivos). Contrastar con un abogado titulado ante el caso concreto.`
 
+const PLATFORM_RESTRICTION_FOOTER = `\n\n---\n**Nota:** Los periodos de restricción y las fechas de etapa salen de la **configuración de EVA**, no de los PDF indexados. El resto del criterio jurídico, si lo hay, es modo asesor. Contrastar con un abogado titulado ante el caso concreto.`
+
 const DOCS_ANSWER_PREFIX = "**Fuente:** documentos indexados en el sistema.\n\n"
 
 /**
@@ -528,9 +531,10 @@ export async function runRagFirstThenGeneralChat(
       { role: "user" as const, content: effectiveUserText },
     ]
 
+    const restrictionContext = await buildGuaranteeLawEvaContext(effectiveUserText)
     const result = await generateText({
       model: openaiModel,
-      system: getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT),
+      system: `${getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT)}${restrictionContext}`,
       messages: historyMessages,
       ...temperatureOptionForModel(
         chatModelId,
@@ -540,8 +544,9 @@ export async function runRagFirstThenGeneralChat(
     })
 
     const body = (result.text || "").trim()
+    const footer = restrictionContext.trim() ? PLATFORM_RESTRICTION_FOOTER : GENERAL_FALLBACK_FOOTER
     return {
-      text: body ? `${body}${GENERAL_FALLBACK_FOOTER}` : `No fue posible generar una respuesta.${GENERAL_FALLBACK_FOOTER}`,
+      text: body ? `${body}${footer}` : `No fue posible generar una respuesta.${footer}`,
       source: "general",
     }
   })

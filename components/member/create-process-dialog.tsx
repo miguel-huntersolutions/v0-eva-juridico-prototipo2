@@ -30,6 +30,7 @@ import {
   type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { ProposeEntityDialog } from "@/components/member/propose-entity-dialog"
 
 interface ProcessData {

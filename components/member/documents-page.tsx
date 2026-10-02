@@ -55,6 +55,7 @@ import { DocumentVersionsDialog } from "@/components/member/document-versions-di
 import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { useImpersonation } from "@/lib/impersonation-context"
+import { ProcessAttachments } from "@/components/member/process-attachments"
 
 type DocumentStatus = "all" | "draft" | "pending" | "in_review" | "approved" | "rejected"
 
@@ -86,6 +87,31 @@ function formatFileSize(bytes: number): string {
 function getDocumentTypeName(typeId: string): string {
   if (typeId === "attachment") return "Adjunto"
   return documentTypes.find((t) => t.id === typeId)?.name || typeId
+}
+
+function mapDocumentRow(d: any): MappedDocument {
+  const rawStatus = d.status == null ? "draft" : String(d.status).toLowerCase().trim()
+  const status = ["draft", "pending", "in_review", "approved", "rejected"].includes(rawStatus)
+    ? (rawStatus as MappedDocument["status"])
+    : "draft"
+  return {
+    id: d.id,
+    processId: d.processId || d.process_id || d.process?.id || "",
+    processCode: d.processCode || d.process?.code || "",
+    processObject: d.processObject || d.process?.object || "",
+    name: d.name,
+    type: d.type,
+    version: d.version ?? 1,
+    status,
+    entityId: d.entityId || d.process?.entity?.id || "",
+    entityName: d.entityName || d.process?.entity?.name || "",
+    fileUrl: d.fileUrl || d.file_url || "",
+    fileSize: d.fileSize ?? d.file_size ?? 0,
+    createdBy: "",
+    createdAt: (d.createdAt || d.created_at || "").toString().split("T")[0],
+    updatedAt: (d.updatedAt || d.updated_at || "").toString().split("T")[0],
+    driveFolderUrl: d.driveFolderUrl ?? d.process?.drive_folder_url ?? null,
+  }
 }
 
 interface MappedDocument {
@@ -271,11 +297,15 @@ export function DocumentsPage() {
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
 
-  // Aplicar filtro por proceso cuando se llega con ?processId=xxx (ej. desde lista de procesos)
+  // Vista de un proceso: filtrar por él y mostrar todos los estados
   React.useEffect(() => {
     const processId = searchParams.get("processId")
     if (processId) {
       setProcessFilter(processId)
+      setActiveTab("all")
+      setStatusFilter("all")
+    } else {
+      setProcessFilter("all")
     }
   }, [searchParams])
 
@@ -285,45 +315,33 @@ export function DocumentsPage() {
         setIsLoadingDocs(false)
         return
       }
+      const urlProcessId = searchParams.get("processId")
       try {
+        setIsLoadingDocs(true)
         if (isImpersonating) {
-          const mapped = await getDocumentsForImpersonation(orgId)
-          setAllDocuments((mapped ?? []) as unknown as MappedDocument[])
+          const mapped = (await getDocumentsForImpersonation(orgId)).map(mapDocumentRow)
+          setAllDocuments(mapped)
+        } else if (urlProcessId) {
+          const processDocs = await getDocuments({ processId: urlProcessId })
+          setAllDocuments((processDocs || []).map(mapDocumentRow))
         } else {
           const orgEntities = await getEntities(orgId)
           const entityIds = orgEntities.map((e) => e.id)
           const allDocs = await getDocuments()
-          const filteredDocs = allDocs.filter((d: any) => {
+          const filteredDocs = (allDocs || []).filter((d: any) => {
             const processEntityId = d.process?.entity?.id
             return processEntityId && entityIds.includes(processEntityId)
           })
-          const mapped: MappedDocument[] = filteredDocs.map((d) => ({
-            id: d.id,
-            processId: d.process_id,
-            processCode: d.process?.code || "",
-            processObject: d.process?.object || "",
-            name: d.name,
-            type: d.type,
-            version: d.version || 1,
-            status: d.status as MappedDocument["status"],
-            entityId: d.process?.entity?.id || "",
-            entityName: d.process?.entity?.name || "",
-            fileUrl: d.file_url || "",
-            fileSize: d.file_size || 0,
-            createdBy: "",
-            createdAt: d.created_at?.split("T")[0] || "",
-            updatedAt: d.updated_at?.split("T")[0] || "",
-            driveFolderUrl: (d.process as any)?.drive_folder_url || null,
-          }))
-          setAllDocuments(mapped)
+          setAllDocuments(filteredDocs.map(mapDocumentRow))
         }
       } catch (err) {
+        console.error("Error loading documents:", err)
       } finally {
         setIsLoadingDocs(false)
       }
     }
     if (orgId) loadDocuments()
-  }, [orgId, isImpersonating])
+  }, [orgId, isImpersonating, searchParams])
 
   React.useEffect(() => {
     async function loadEntities() {
@@ -455,14 +473,19 @@ export function DocumentsPage() {
     return docs
   }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter, attachmentsRaw])
 
-  // Stats
+  const isProcessScoped = processFilter !== "all"
+  const scopedDocuments = React.useMemo(
+    () => (isProcessScoped ? allDocuments.filter((d) => d.processId === processFilter) : allDocuments),
+    [allDocuments, isProcessScoped, processFilter],
+  )
+
   const stats = {
-    total: allDocuments.length,
-    approved: allDocuments.filter((d) => d.status === "approved").length,
-    pending: allDocuments.filter((d) => d.status === "pending").length,
-    in_review: allDocuments.filter((d) => d.status === "in_review").length,
-    draft: allDocuments.filter((d) => d.status === "draft").length,
-    rejected: allDocuments.filter((d) => d.status === "rejected").length,
+    total: scopedDocuments.length,
+    approved: scopedDocuments.filter((d) => d.status === "approved").length,
+    pending: scopedDocuments.filter((d) => d.status === "pending").length,
+    in_review: scopedDocuments.filter((d) => d.status === "in_review").length,
+    draft: scopedDocuments.filter((d) => d.status === "draft").length,
+    rejected: scopedDocuments.filter((d) => d.status === "rejected").length,
   }
 
   const handleViewDocument = (document: MappedDocument) => {
@@ -607,12 +630,12 @@ export function DocumentsPage() {
   const hasActiveFilters =
     statusFilter !== "all" || entityFilter !== "all" || processFilter !== "all" || typeFilter !== "all"
 
-  const filteredByProcessCode = processFilter !== "all"
-    ? allDocuments.find((d) => d.processId === processFilter)?.processCode || null
+  const filteredByProcessCode = isProcessScoped
+    ? scopedDocuments.find((d) => d.processCode)?.processCode || processFilter
     : null
 
   const tabOptions = [
-    { value: "all", label: "Todos", count: allDocuments.length },
+    { value: "all", label: "Todos", count: stats.total },
     { value: "approved", label: "Aprobados", count: stats.approved },
     { value: "pending", label: "Pendientes", count: stats.pending },
     { value: "in_review", label: "En revisión", count: stats.in_review },
@@ -623,7 +646,13 @@ export function DocumentsPage() {
   const emptyState = (
     <div className="flex flex-col items-center gap-2 py-12 text-center text-muted-foreground">
       <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
-      <p>No se encontraron documentos</p>
+      <p>
+        {isProcessScoped && scopedDocuments.length === 0
+          ? "Este proceso no tiene documentos generados"
+          : isProcessScoped
+            ? "No hay documentos en este estado para este proceso"
+            : "No se encontraron documentos"}
+      </p>
       {hasActiveFilters && (
         <Button variant="link" size="sm" onClick={clearFilters}>
           Limpiar filtros
@@ -636,11 +665,19 @@ export function DocumentsPage() {
     <div className="flex flex-col gap-4 md:gap-6">
       {/* Header */}
       <PageHeader
-        title="Gestión de Documentos"
-        description="Visualiza y administra todos los documentos generados para tus procesos"
+        title={
+          isProcessScoped
+            ? `Documentos del proceso${filteredByProcessCode && filteredByProcessCode !== processFilter ? ` ${filteredByProcessCode}` : ""}`
+            : "Gestión de Documentos"
+        }
+        description={
+          isProcessScoped
+            ? "Documentos generados de este proceso, en cualquier estado"
+            : "Visualiza y administra todos los documentos generados para tus procesos"
+        }
       />
 
-      {filteredByProcessCode && (
+      {isProcessScoped && (
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
@@ -678,6 +715,8 @@ export function DocumentsPage() {
         </Card>
       )}
 
+      {isProcessScoped && <ProcessAttachments processId={processFilter} />}
+
       {stats.in_review > 0 && (
         <Card className="border-blue-500/30 bg-blue-500/5">
           <CardContent className="flex flex-row items-start gap-3 py-3 sm:items-center">
@@ -692,7 +731,12 @@ export function DocumentsPage() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <StatsCard title="Total Documentos" value={stats.total} description="En todos los procesos" icon={Files} />
+        <StatsCard
+          title="Total Documentos"
+          value={stats.total}
+          description={isProcessScoped ? "De este proceso" : "En todos los procesos"}
+          icon={Files}
+        />
         <StatsCard title="Aprobados" value={stats.approved} description="Listos para uso" icon={CheckCircle2} />
         <StatsCard title="Pendientes" value={stats.pending} description="En espera de revisión" icon={Clock} />
         <StatsCard title="En revisión" value={stats.in_review} description="Revisando el admin" icon={Eye} />
@@ -757,20 +801,22 @@ export function DocumentsPage() {
                   />
                 </div>
 
-                <Select value={entityFilter} onValueChange={setEntityFilter}>
-                  <SelectTrigger className="w-full sm:w-44">
-                    <Building className="mr-2 h-4 w-4" />
-                    <SelectValue placeholder="Entidad" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas las entidades</SelectItem>
-                    {entities.map((entity) => (
-                      <SelectItem key={entity.id} value={entity.id}>
-                        {entity.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {!isProcessScoped && (
+                  <Select value={entityFilter} onValueChange={setEntityFilter}>
+                    <SelectTrigger className="w-full sm:w-44">
+                      <Building className="mr-2 h-4 w-4" />
+                      <SelectValue placeholder="Entidad" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las entidades</SelectItem>
+                      {entities.map((entity) => (
+                        <SelectItem key={entity.id} value={entity.id}>
+                          {entity.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
 
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
                   <SelectTrigger className="w-full sm:w-44">

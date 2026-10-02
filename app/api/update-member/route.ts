@@ -29,7 +29,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { memberId, name, role, avatarUrl } = body
+    const { memberId, name, role, avatarUrl, entityId } = body
 
     if (!memberId) {
       return NextResponse.json(
@@ -87,6 +87,24 @@ export async function PUT(request: NextRequest) {
     if (name !== undefined) updateData.name = name
     if (role !== undefined) updateData.role = role
     if (avatarUrl !== undefined) updateData.avatar_url = avatarUrl
+    if (entityId !== undefined) {
+      if (entityId === null || entityId === "") {
+        updateData.entity_id = null
+      } else {
+        const { data: entityRow } = await serviceRoleClient
+          .from("entities")
+          .select("id, organization_id")
+          .eq("id", entityId)
+          .maybeSingle()
+        if (!entityRow || entityRow.organization_id !== memberProfile.organization_id) {
+          return NextResponse.json(
+            { error: "invalid_entity", message: "La entidad no pertenece a la organización del usuario." },
+            { status: 400 },
+          )
+        }
+        updateData.entity_id = entityRow.id
+      }
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(

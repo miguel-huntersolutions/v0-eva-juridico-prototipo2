@@ -52,7 +52,7 @@ export async function GET(
     // Procesos de la entidad con su responsable
     const { data: processes, error: procErr } = await service
       .from("processes")
-      .select("id, code, status, assigned:profiles!processes_assigned_to_fkey(full_name, email)")
+      .select("id, code, status, assigned:profiles!processes_assigned_to_fkey(name, email)")
       .eq("entity_id", entityId)
     if (procErr) return NextResponse.json({ error: procErr.message }, { status: 500 })
 
@@ -95,7 +95,7 @@ export async function GET(
         version: d.version || 1,
         isCurrentVersion: isCurrent,
         currentVersionDate: d.created_at,
-        responsibleName: proc?.assigned?.full_name || proc?.assigned?.email || null,
+        responsibleName: proc?.assigned?.name || proc?.assigned?.email || null,
       }
     })
 

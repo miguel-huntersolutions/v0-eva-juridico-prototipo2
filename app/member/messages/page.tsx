@@ -15,11 +15,24 @@ import { ProcessThreadDialog } from "@/components/member/process-thread-dialog"
 interface Conversation {
   processId: string
   processCode: string
+  processStatus?: string | null
   entityName: string
   messageCount: number
   lastMessageAt: string | null
   lastMessagePreview: string | null
   lastMessageAuthor: string | null
+}
+
+function statusLabel(status: string | null | undefined): string | null {
+  if (!status) return null
+  const map: Record<string, string> = {
+    draft: "Borrador",
+    in_progress: "En curso",
+    review: "En revisión",
+    completed: "Completado",
+    archived: "Archivado",
+  }
+  return map[status] || status
 }
 
 function formatWhen(iso: string | null): string {
@@ -99,6 +112,11 @@ export default function MessagesPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-medium">{c.processCode}</span>
+                        {statusLabel(c.processStatus) && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {statusLabel(c.processStatus)}
+                          </Badge>
+                        )}
                         <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                           <Building className="h-3 w-3" />
                           {c.entityName}

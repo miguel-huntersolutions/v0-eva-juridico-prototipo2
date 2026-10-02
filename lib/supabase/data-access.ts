@@ -94,10 +94,11 @@ export interface Profile {
   id: string
   name: string
   email: string
-  role: "superadmin" | "admin" | "member"
+  role: "superadmin" | "admin" | "member" | "entity_contact"
   status: "pending" | "approved" | "rejected"
   organization_id: string | null
   avatar_url: string | null
+  entity_id?: string | null
   created_at: string
   updated_at: string
 }

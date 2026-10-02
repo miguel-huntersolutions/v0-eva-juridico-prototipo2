@@ -68,8 +68,11 @@ export async function PATCH(request: NextRequest) {
       query = query.eq("user_id", user.id)
     } else if (typeof body?.id === "string") {
       query = query.eq("id", body.id)
+    } else if (typeof body?.processId === "string") {
+      query = query.eq("user_id", user.id).eq("process_id", body.processId)
+      if (typeof body?.type === "string") query = query.eq("type", body.type)
     } else {
-      return NextResponse.json({ error: "Missing id or all" }, { status: 400 })
+      return NextResponse.json({ error: "Missing id, processId or all" }, { status: 400 })
     }
 
     const { error } = await query

@@ -5,6 +5,7 @@ import { Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createBrowserClient } from "@/lib/supabase/client"
 import { Loader2 } from "lucide-react"
+import { homePathForRole } from "@/lib/auth/home-path"
 
 function AuthCallbackContent() {
   const router = useRouter()
@@ -287,13 +288,7 @@ function AuthCallbackContent() {
           }).catch(() => {})
 
           // Redirect based on role
-          if (role === "superadmin") {
-            router.push("/superadmin")
-          } else if (role === "admin") {
-            router.push("/admin")
-          } else {
-            router.push("/member")
-          }
+          router.push(homePathForRole(role))
         } else {
           // No tokens, check if we're already authenticated
           const {
@@ -400,13 +395,7 @@ function AuthCallbackContent() {
             }
 
             const role = profile?.role || "member"
-            if (role === "superadmin") {
-              router.push("/superadmin")
-            } else if (role === "admin") {
-              router.push("/admin")
-            } else {
-              router.push("/member")
-            }
+            router.push(homePathForRole(role))
           } else {
             setError("No se recibieron tokens de autenticación")
             setIsLoading(false)

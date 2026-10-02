@@ -34,7 +34,7 @@ export async function POST(
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role, organization_id, full_name")
+      .select("role, organization_id, name")
       .eq("id", user.id)
       .single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
@@ -72,14 +72,20 @@ export async function POST(
     if (assigneeId) {
       const { data: assignee, error: asgErr } = await service
         .from("profiles")
-        .select("id, full_name, email, organization_id, role")
+        .select("id, name, email, organization_id, role")
         .eq("id", assigneeId)
         .single()
       if (asgErr || !assignee) return NextResponse.json({ error: "Assignee not found" }, { status: 404 })
       if (assignee.organization_id !== orgId) {
         return NextResponse.json({ error: "El abogado debe pertenecer a la organización" }, { status: 400 })
       }
-      assigneeName = assignee.full_name || assignee.email || null
+      if (assignee.role !== "member" && assignee.role !== "admin") {
+        return NextResponse.json(
+          { error: "Solo se puede asignar a un asesor o administrador de la firma" },
+          { status: 400 },
+        )
+      }
+      assigneeName = assignee.name || assignee.email || null
     }
 
     const previousAssignee = (proc as any).assigned_to as string | null
@@ -153,7 +159,7 @@ export async function POST(
     // bloquea la asignación; queda en auditoría (email_failed).
     const notifications: Array<Record<string, unknown>> = []
     const entityName = (proc.entity as any)?.name ?? "entidad"
-    const actorName = profile.full_name || "El administrador"
+    const actorName = profile.name || "El administrador"
     if (assigneeId) {
       const title = `Se te asignó el proceso ${proc.code}`
       const body = `${actorName} te asignó el proceso ${proc.code} (${entityName}).`

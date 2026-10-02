@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role, organization_id, full_name")
+      .select("role, organization_id, name")
       .eq("id", user.id)
       .single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
@@ -105,12 +105,12 @@ export async function POST(request: NextRequest) {
             organization_id: profile.organization_id,
             type: "entity_proposed",
             title: `Entidad propuesta: ${name}`,
-            body: `${profile.full_name || "Un asesor"} propuso la entidad "${name}" (NIT ${nit}). Revísala en Entidades.`,
+            body: `${profile.name || "Un asesor"} propuso la entidad "${name}" (NIT ${nit}). Revísala en Entidades.`,
           })),
         )
         const link = entitiesAdminUrl()
         const subject = `Entidad propuesta: ${name}`
-        const text = `${profile.full_name || "Un asesor"} propuso la entidad "${name}" (NIT ${nit}).`
+        const text = `${profile.name || "Un asesor"} propuso la entidad "${name}" (NIT ${nit}).`
         await sendEmailToUserIds(
           service,
           adminIds,

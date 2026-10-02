@@ -67,7 +67,7 @@ const navItems: NavItem[] = [
   { title: "Tipos de Proceso", href: "/superadmin/process-types", icon: FolderKanban, roles: ["superadmin"] },
   { title: "Plantillas", href: "/superadmin/templates", icon: FileStack, roles: ["superadmin"] },
   // CAP-11 (RF-046): periodos de ley de garantías
-  { title: "Ley de Garantías", href: "/superadmin/guarantee-law", icon: Scale, roles: ["superadmin"] },
+  { title: "Periodos de restricción", href: "/superadmin/guarantee-law", icon: Scale, roles: ["superadmin"] },
 
   // Admin items
   { title: "Panel Principal", href: "/dashboard", icon: LayoutDashboard, roles: ["admin"] },
@@ -75,6 +75,7 @@ const navItems: NavItem[] = [
   { title: "Miembros", href: "/admin/members", icon: Users, roles: ["admin"] },
   { title: "Procesos", href: "/admin/processes", icon: FolderKanban, roles: ["admin"] },
   { title: "Documentos", href: "/admin/documents", icon: FileText, roles: ["admin"] },
+  { title: "Auditoría", href: "/admin/audit", icon: ScrollText, roles: ["admin"] },
 
   // Member items
   { title: "Dashboard", href: "/member/dashboard", icon: Home, roles: ["member"] },
@@ -493,6 +494,8 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
       router.push("/dashboard")
     } else if (role === "admin") {
       router.push("/dashboard")
+    } else if (role === "entity_contact") {
+      router.push("/member/messages")
     } else if (role === "member") {
       router.push("/member/dashboard")
     }

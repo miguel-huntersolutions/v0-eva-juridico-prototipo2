@@ -11,6 +11,8 @@ export interface Profile {
   status: "pending" | "approved" | "rejected"
   avatar_url?: string | null
   organization_id?: string | null
+  /** CAP-07: solo aplica a entity_contact — entidad cuyos hilos puede ver. */
+  entity_id?: string | null
   created_at: string
   updated_at: string
 }

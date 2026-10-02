@@ -90,7 +90,9 @@ export function NotificationsBell() {
       setUnreadCount((c) => Math.max(0, c - 1))
     }
     setOpen(false)
-    if (n.processId) {
+    if (n.type === "thread_message" && n.processId) {
+      router.push(`/member/processes?thread=${n.processId}`)
+    } else if (n.processId) {
       router.push(`/member/documents?processId=${n.processId}`)
     } else if (n.type === "entity_proposed") {
       router.push("/admin/entities")

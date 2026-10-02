@@ -13,6 +13,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState, useEffect, useRef } from "react"
 import { FileText, Loader2 } from "lucide-react"
+import { homePathForRole } from "@/lib/auth/home-path"
 import { Chrome } from "lucide-react"
 
 function LoginContent() {
@@ -59,7 +60,7 @@ function LoginContent() {
 
           const role = profile?.role || "member"
           logger.auth("SESSION_CHECK", user.id, role, true)
-          const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          const route = homePathForRole(role)
           window.location.href = route
           return
         }
@@ -120,7 +121,7 @@ function LoginContent() {
           body: JSON.stringify({ action: "login", details: { method: "password" } }),
         }).catch(() => {})
 
-        const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          const route = homePathForRole(role)
 
         window.location.href = route
       }

@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { getProcesses, type Entity, type ProcessWithRelations } from "@/lib/supabase/client-data-access"
 import { CreateProcessDialog } from "./create-process-dialog"
-import { AIAssistant } from "./ai-assistant"
+import { AssistantSheet } from "@/components/assistant/assistant-sheet"
 
 interface MemberDashboardProps {
   entity: Entity
@@ -276,8 +276,9 @@ export function MemberDashboard({ entity, onBack }: MemberDashboardProps) {
       {/* Create Process Dialog */}
       <CreateProcessDialog open={isCreateProcessOpen} onOpenChange={setIsCreateProcessOpen} entity={entity} />
 
-      {/* AI Assistant */}
-      <AIAssistant open={isAssistantOpen} onOpenChange={setIsAssistantOpen} />
+      <React.Suspense fallback={null}>
+        <AssistantSheet open={isAssistantOpen} onOpenChange={setIsAssistantOpen} />
+      </React.Suspense>
     </div>
   )
 }

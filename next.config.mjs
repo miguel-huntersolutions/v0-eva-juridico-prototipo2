@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ["nodemailer"],
   typescript: {
     // En producción recomendado: false y corregir errores de tipos (ver docs/production-checklist.md)
     ignoreBuildErrors: true,

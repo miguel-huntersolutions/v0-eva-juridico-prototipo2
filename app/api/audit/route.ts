@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     let query = service
       .from("audit_log")
       .select(
-        "id, action, details, ip, created_at, process_id, document_id, actor:profiles!audit_log_actor_id_fkey(full_name, email), process:processes(code)",
+        "id, action, details, ip, created_at, process_id, document_id, actor:profiles!audit_log_actor_id_fkey(name, email), process:processes(code)",
       )
       .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
       id: e.id,
       action: e.action as string,
       actionLabel: ACTION_LABELS[e.action] ?? e.action,
-      actorName: e.actor?.full_name || e.actor?.email || "Usuario desconocido",
+      actorName: e.actor?.name || e.actor?.email || "Usuario desconocido",
       processCode: e.process?.code ?? null,
       processId: e.process_id,
       documentId: e.document_id,

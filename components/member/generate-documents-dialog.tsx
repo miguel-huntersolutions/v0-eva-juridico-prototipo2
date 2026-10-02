@@ -34,6 +34,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 import { getTemplates, createProcess, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
 import { ProcessAttachments } from "@/components/member/process-attachments"
@@ -103,6 +104,15 @@ type DynamicTableFamilyDef = {
   variants: DynamicTableDef[]
   requiredFields: string[]
 }
+
+/** RF-034: un campo vacío listado al intentar avanzar o generar. */
+type EmptyFieldItem = {
+  key: string
+  label: string
+  templateName?: string
+}
+
+type EmptyGateAction = "next" | "generate" | "generateAll"
 
 export function GenerateDocumentsDialog({
   open,
@@ -217,6 +227,10 @@ export function GenerateDocumentsDialog({
   // RF-013: diálogo de confirmación de campos clave antes de generar (proceso reutilizado)
   const [reuseConfirmOpen, setReuseConfirmOpen] = React.useState(false)
   const [pendingGenerateAction, setPendingGenerateAction] = React.useState<(() => void) | null>(null)
+  // RF-034: campos que el asesor marcó explícitamente como "van vacíos"
+  const [allowEmptyKeys, setAllowEmptyKeys] = React.useState<Set<string>>(new Set())
+  const [emptyGate, setEmptyGate] = React.useState<{ action: EmptyGateAction; fields: EmptyFieldItem[] } | null>(null)
+  const [emptyChecked, setEmptyChecked] = React.useState<Set<string>>(new Set())
   // RF-037 (CAP-02): paso final de adjuntos, justo después de generar todos los documentos
   // (la generación crea la estructura Entidad/Secretaría/Proceso en Drive donde caen los adjuntos)
   const [showAttachmentsStep, setShowAttachmentsStep] = React.useState(false)
@@ -335,6 +349,9 @@ export function GenerateDocumentsDialog({
     setImprovingField(null)
     setGeneratingStep(null)
     setShowAttachmentsStep(false)
+    setAllowEmptyKeys(new Set())
+    setEmptyGate(null)
+    setEmptyChecked(new Set())
     onOpenChange(false)
   }
 
@@ -358,9 +375,34 @@ export function GenerateDocumentsDialog({
     else onOpenChange(newOpen)
   }
 
+  const clearAllowEmptyKey = (key: string) => {
+    setAllowEmptyKeys((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }
+
+  const clearAllowEmptyPrefix = (prefix: string) => {
+    setAllowEmptyKeys((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const k of prev) {
+        if (k.startsWith(prefix)) {
+          changed = true
+          continue
+        }
+        next.add(k)
+      }
+      return changed ? next : prev
+    })
+  }
+
   const handleFieldChange = (tag: string, value: string) => {
     setFormData((prev) => ({ ...prev, [tag]: value }))
     markStaleByTag(tag)
+    if (value.trim()) clearAllowEmptyKey(`scalar:${tag}`)
     // RF-013: marcar como editado (ya no "viene del original" sin tocar)
     setEditedFields((prev) => new Set(prev).add(tag))
     // Remove from improved fields if user edits after improvement
@@ -375,6 +417,10 @@ export function GenerateDocumentsDialog({
 
   const handleTableCellChange = (tableFamily: string, rowIndex: number, field: string, value: string) => {
     markStaleByTag(tableFamily)
+    if (value.trim()) {
+      clearAllowEmptyKey(`table:${tableFamily}:${rowIndex}:${field}`)
+      clearAllowEmptyKey(`table:${tableFamily}:empty`)
+    }
     setTableData((prev) => {
       const rows = [...(prev[tableFamily] || [])]
       const currentRow = rows[rowIndex] || {}
@@ -394,6 +440,7 @@ export function GenerateDocumentsDialog({
 
   const removeTableRow = (tableFamily: string, rowIndex: number, fields: string[]) => {
     markStaleByTag(tableFamily)
+    clearAllowEmptyPrefix(`table:${tableFamily}:`)
     setTableData((prev) => {
       const rows = [...(prev[tableFamily] || [])]
       rows.splice(rowIndex, 1)
@@ -745,6 +792,13 @@ export function GenerateDocumentsDialog({
         if (isImageTag(cleanTag)) return
         replacements[cleanTag] = value || ""
       })
+      // RF-034: todo tag escalar de esta plantilla debe ir al docxtemplater,
+      // aunque esté vacío a propósito (queda en blanco, no como {{TAG}}).
+      for (const tag of template.variables || []) {
+        if (parseDynamicTableTagToken(tag) || isImageTag(tag)) continue
+        const cleanTag = tag.replace(/[{}]/g, "")
+        if (!(cleanTag in replacements)) replacements[cleanTag] = ""
+      }
       // Imágenes subidas por el usuario para los tags IMAGE / IMAGE_*
       const imagesPayload: Record<string, { dataUrl: string }> = {}
       Object.entries(imageData).forEach(([tag, img]) => {
@@ -970,7 +1024,88 @@ export function GenerateDocumentsDialog({
     }
   }
 
-  /** Valida si una plantilla (por índice) tiene todos sus campos requeridos diligenciados. */
+  /** RF-034: campos de una plantilla que siguen vacíos y no están marcados "va vacío". */
+  const collectEmptyFields = (template: Template): EmptyFieldItem[] => {
+    const fields: EmptyFieldItem[] = []
+    if (!template.variables) return fields
+
+    for (const tag of template.variables) {
+      const tableDef = parseDynamicTableTagToken(tag)
+      if (tableDef) {
+        const family = tableDef.loopName.split("@")[0] || tableDef.loopName
+        const requiredFields = tableDef.loopName.endsWith("@base") ? tableDef.fields : []
+        if (requiredFields.length === 0) continue
+        const rows = tableData[family] || []
+        if (rows.length === 0) {
+          const key = `table:${family}:empty`
+          if (!allowEmptyKeys.has(key)) {
+            fields.push({
+              key,
+              label: `Tabla ${family.replace(/_/g, " ")} (sin filas)`,
+              templateName: template.name,
+            })
+          }
+          continue
+        }
+        rows.forEach((row, i) => {
+          requiredFields.forEach((field) => {
+            if ((row?.[field] || "").trim()) return
+            const key = `table:${family}:${i}:${field}`
+            if (allowEmptyKeys.has(key)) return
+            fields.push({
+              key,
+              label: `${family.replace(/_/g, " ")} · ${field} (fila ${i + 1})`,
+              templateName: template.name,
+            })
+          })
+        })
+        continue
+      }
+      if (isImageTag(tag)) {
+        if (imageData[tag]?.dataUrl) continue
+        const key = `image:${tag}`
+        if (!allowEmptyKeys.has(key)) {
+          fields.push({ key, label: tag.replace(/_/g, " "), templateName: template.name })
+        }
+        continue
+      }
+      const value = formData[tag] || ""
+      if (tag === "ENTIDAD" && (value.trim() || entity?.name)) continue
+      if (tag === "SECRETARIA" && (value.trim() || secretaryName)) continue
+      if (tag === "LOGO_ENTIDAD" && entity?.logoUrl) continue
+      if (value.trim()) continue
+      const key = `scalar:${tag}`
+      if (!allowEmptyKeys.has(key)) {
+        fields.push({ key, label: tag.replace(/_/g, " "), templateName: template.name })
+      }
+    }
+    return fields
+  }
+
+  const collectPendingEmptyFields = (): EmptyFieldItem[] => {
+    const seen = new Set<string>()
+    const out: EmptyFieldItem[] = []
+    for (const t of templates) {
+      if (isTemplateGenerated(t.id)) continue
+      for (const f of collectEmptyFields(t)) {
+        if (seen.has(f.key)) continue
+        seen.add(f.key)
+        out.push(f)
+      }
+    }
+    return out
+  }
+
+  const openEmptyGate = (action: EmptyGateAction, fields: EmptyFieldItem[], proceed: () => void) => {
+    if (fields.length === 0) {
+      proceed()
+      return
+    }
+    setEmptyChecked(new Set())
+    setEmptyGate({ action, fields })
+  }
+
+  /** Valida si una plantilla (por índice) tiene todos sus campos diligenciados o marcados vacíos. */
   const isStepComplete = (index: number): boolean => {
     if (index >= templates.length) return false
     const template = templates[index]
@@ -979,23 +1114,29 @@ export function GenerateDocumentsDialog({
     return template.variables.every((tag) => {
       const tableDef = parseDynamicTableTagToken(tag)
       if (tableDef) {
-        const [family] = tableDef.loopName.split("@")
-        const rows = tableData[family || tableDef.loopName] || []
-        if (rows.length === 0) return false
+        const family = tableDef.loopName.split("@")[0] || tableDef.loopName
+        const rows = tableData[family] || []
         // Only base fields are required; detail-only extra fields can remain empty.
         const requiredFields = tableDef.loopName.endsWith("@base") ? tableDef.fields : []
         if (requiredFields.length === 0) return true
-        return rows.every((row) => requiredFields.every((field) => (row?.[field] || "").trim().length > 0))
+        if (rows.length === 0) return allowEmptyKeys.has(`table:${family}:empty`)
+        return rows.every((row, i) =>
+          requiredFields.every(
+            (field) =>
+              (row?.[field] || "").trim().length > 0 || allowEmptyKeys.has(`table:${family}:${i}:${field}`),
+          ),
+        )
       }
       if (isImageTag(tag)) {
-        return !!imageData[tag]?.dataUrl
+        return !!imageData[tag]?.dataUrl || allowEmptyKeys.has(`image:${tag}`)
       }
+      if (tag === "ENTIDAD" && (formData[tag]?.trim() || entity?.name)) return true
+      if (tag === "SECRETARIA" && (formData[tag]?.trim() || secretaryName)) return true
+      if (tag === "LOGO_ENTIDAD" && entity?.logoUrl) return true
       const value = formData[tag] || ""
-      return value.trim().length > 0
+      return value.trim().length > 0 || allowEmptyKeys.has(`scalar:${tag}`)
     })
   }
-
-  const canProceedToNext = () => isStepComplete(currentStep)
 
   /** Paso máximo alcanzable: todos los pasos completos consecutivos + 1.
       El stepper permite saltar solo hasta ahí (no se puede avanzar dejando huecos).
@@ -1009,12 +1150,7 @@ export function GenerateDocumentsDialog({
     }
     return Math.min(max, Math.max(templates.length - 1, 0))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templates, formData, tableData, imageData, generatedTemplateIds])
-
-  const canGenerateCurrent = () => {
-    if (currentStep >= templates.length) return false
-    return canProceedToNext()
-  }
+  }, [templates, formData, tableData, imageData, generatedTemplateIds, allowEmptyKeys])
 
   // CAP-02: cuántas plantillas faltan por generar (continuación parcial)
   const pendingCount = templates.filter((t) => !isTemplateGenerated(t.id)).length
@@ -1028,6 +1164,42 @@ export function GenerateDocumentsDialog({
   const currentTemplate = templates[currentStep] || null
   const currentGenerated = currentTemplate ? isTemplateGenerated(currentTemplate.id) : false
   const currentStale = currentTemplate ? staleTemplateIds.includes(currentTemplate.id) : false
+
+  const requestNext = () => {
+    if (!currentTemplate) return
+    openEmptyGate("next", collectEmptyFields(currentTemplate), () => setCurrentStep(currentStep + 1))
+  }
+
+  const requestGenerateCurrent = () => {
+    if (!currentTemplate) return
+    withReuseConfirmation(() => {
+      openEmptyGate("generate", collectEmptyFields(currentTemplate), () => {
+        void handleGenerateDocument(currentTemplate)
+      })
+    })
+  }
+
+  const requestGenerateAll = () => {
+    withReuseConfirmation(() => {
+      openEmptyGate("generateAll", collectPendingEmptyFields(), () => {
+        void handleGenerateAll()
+      })
+    })
+  }
+
+  const confirmEmptyFields = () => {
+    if (!emptyGate) return
+    if (emptyChecked.size !== emptyGate.fields.length) return
+    const nextAllow = new Set(allowEmptyKeys)
+    emptyGate.fields.forEach((f) => nextAllow.add(f.key))
+    setAllowEmptyKeys(nextAllow)
+    const action = emptyGate.action
+    setEmptyGate(null)
+    setEmptyChecked(new Set())
+    if (action === "next") setCurrentStep(currentStep + 1)
+    else if (action === "generate" && currentTemplate) void handleGenerateDocument(currentTemplate)
+    else if (action === "generateAll") void handleGenerateAll()
+  }
 
   /** Guardar borrador: persiste los campos actuales en BD SIN generar documento.
       Si el proceso es nuevo, lo crea primero (queda como borrador con campos). */
@@ -1136,9 +1308,13 @@ export function GenerateDocumentsDialog({
   const pendingInCurrentMinute = React.useMemo(
     () =>
       currentTemplateScalarTags.filter(
-        (tag) => tag !== "ENTIDAD" && tag !== "SECRETARIA" && (formData[tag] || "").trim().length === 0,
+        (tag) =>
+          tag !== "ENTIDAD" &&
+          tag !== "SECRETARIA" &&
+          (formData[tag] || "").trim().length === 0 &&
+          !allowEmptyKeys.has(`scalar:${tag}`),
       ),
-    [currentTemplateScalarTags, formData],
+    [currentTemplateScalarTags, formData, allowEmptyKeys],
   )
 
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024 // 4 MB
@@ -1166,6 +1342,7 @@ export function GenerateDocumentsDialog({
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : ""
       if (!result.startsWith("data:")) return
+      clearAllowEmptyKey(`image:${tag}`)
       setImageData((prev) => ({
         ...prev,
         [tag]: { dataUrl: result, mime: file.type, fileName: file.name },
@@ -1418,8 +1595,13 @@ export function GenerateDocumentsDialog({
                         const inputId = `field-${tag}`
                         return (
                           <div key={tag} className="space-y-2">
-                            <Label htmlFor={inputId}>
+                            <Label htmlFor={inputId} className="flex items-center gap-2">
                               {tag.replace(/_/g, " ")} *
+                              {allowEmptyKeys.has(`image:${tag}`) && (
+                                <Badge variant="secondary" className="h-5 text-xs">
+                                  Va vacío
+                                </Badge>
+                              )}
                             </Label>
                             <div className="flex items-start gap-3">
                               <label
@@ -1493,6 +1675,11 @@ export function GenerateDocumentsDialog({
                                   className="h-5 gap-1 text-xs bg-amber-500/10 text-amber-500 border-amber-500/20"
                                 >
                                   Del original
+                                </Badge>
+                              )}
+                              {allowEmptyKeys.has(`scalar:${tag}`) && (
+                                <Badge variant="secondary" className="h-5 text-xs">
+                                  Va vacío
                                 </Badge>
                               )}
                             </div>
@@ -1623,7 +1810,14 @@ export function GenerateDocumentsDialog({
                                 <div key={`${tableFamily.family}-${rowIndex}`} className="grid gap-2 md:grid-cols-12 items-end">
                                   {tableFamily.fields.map((field) => (
                                     <div key={`${tableFamily.family}-${rowIndex}-${field}`} className="space-y-1 md:col-span-3">
-                                      <Label className="text-xs">{field}</Label>
+                                      <Label className="text-xs flex items-center gap-1">
+                                        {field}
+                                        {allowEmptyKeys.has(`table:${tableFamily.family}:${rowIndex}:${field}`) && (
+                                          <Badge variant="secondary" className="h-4 px-1 text-[10px]">
+                                            Va vacío
+                                          </Badge>
+                                        )}
+                                      </Label>
                                       <Input
                                         value={row?.[field] || ""}
                                         onChange={(e) =>
@@ -1696,15 +1890,15 @@ export function GenerateDocumentsDialog({
                   {/* "Generar Este" (o "Regenerar" si ya tiene doc): genera SOLO la plantilla
                       actual. "Siguiente" solo navega, no genera nada. Al final, "Generar
                       Todos" genera todo lo pendiente de una vez. */}
-                  <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                  <Button variant="outline" onClick={requestGenerateCurrent} disabled={!currentTemplate || isGenerating || isSaving}>
                     {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> {currentGenerated ? "Regenerar" : "Generar Este"}</>}
                   </Button>
                   {currentStep < templates.length - 1 ? (
-                    <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
+                    <Button onClick={requestNext} disabled={isGenerating || isSaving}>
                       Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                     </Button>
                   ) : (
-                    <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
+                    <Button onClick={requestGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
                       {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {generateAllLabel}</>}
                     </Button>
                   )}
@@ -1730,15 +1924,15 @@ export function GenerateDocumentsDialog({
                     )}
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => withReuseConfirmation(() => handleGenerateDocument(currentTemplate))} disabled={!canGenerateCurrent() || isGenerating || isSaving}>
+                    <Button variant="outline" onClick={requestGenerateCurrent} disabled={!currentTemplate || isGenerating || isSaving}>
                       {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> {currentGenerated ? "Regenerar" : "Generar Este"}</>}
                     </Button>
                     {currentStep < templates.length - 1 ? (
-                      <Button onClick={() => setCurrentStep(currentStep + 1)} disabled={!canProceedToNext() || isGenerating || isSaving}>
+                      <Button onClick={requestNext} disabled={isGenerating || isSaving}>
                         Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                       </Button>
                     ) : (
-                      <Button onClick={() => withReuseConfirmation(handleGenerateAll)} disabled={isGenerating || isSaving} className="gap-2">
+                      <Button onClick={requestGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
                         {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {generateAllLabel}</>}
                       </Button>
                     )}
@@ -1751,6 +1945,67 @@ export function GenerateDocumentsDialog({
 
           </>
         )}
+
+      {/* RF-034: listar vacíos y exigir marcar "va vacío" antes de avanzar o generar */}
+      <Dialog open={!!emptyGate} onOpenChange={(open) => !open && setEmptyGate(null)}>
+        <DialogContent className="sm:max-w-md max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Campos vacíos
+            </DialogTitle>
+            <DialogDescription>
+              {emptyGate?.action === "generateAll"
+                ? "Hay campos vacíos en las plantillas pendientes. Márcalos como vacíos a propósito o cancela y llénalos."
+                : "Hay campos vacíos en este documento. Márcalos como vacíos a propósito o cancela y llénalos."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
+            {emptyGate?.fields.map((field) => {
+              const id = `empty-${field.key}`
+              const checked = emptyChecked.has(field.key)
+              return (
+                <div key={field.key} className="flex items-start gap-3 rounded-md border p-3">
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={(value) => {
+                      setEmptyChecked((prev) => {
+                        const next = new Set(prev)
+                        if (value === true) next.add(field.key)
+                        else next.delete(field.key)
+                        return next
+                      })
+                    }}
+                  />
+                  <Label htmlFor={id} className="text-sm leading-snug cursor-pointer">
+                    <span className="font-medium">{field.label}</span>
+                    {emptyGate.action === "generateAll" && field.templateName && (
+                      <span className="block text-xs text-muted-foreground">{field.templateName}</span>
+                    )}
+                    <span className="block text-xs text-muted-foreground mt-0.5">Va vacío a propósito</span>
+                  </Label>
+                </div>
+              )
+            })}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmptyGate(null)}>
+              Cancelar y llenar
+            </Button>
+            <Button
+              onClick={confirmEmptyFields}
+              disabled={!emptyGate || emptyChecked.size !== emptyGate.fields.length}
+            >
+              {emptyGate?.action === "next"
+                ? "Continuar"
+                : emptyGate?.action === "generateAll"
+                  ? "Continuar y generar pendientes"
+                  : "Continuar y generar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* RF-013 (CAP-03): confirmación de campos clave antes de generar (proceso reutilizado) */}
       <Dialog open={reuseConfirmOpen} onOpenChange={(open) => !open && setReuseConfirmOpen(false)}>

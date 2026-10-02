@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   FileText,
   Download,
@@ -52,6 +52,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { documentTypes } from "@/lib/mock-data"
+import { ProcessAttachments } from "@/components/member/process-attachments"
 import { getEntities, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { DocumentAuditLog } from "@/components/document-audit-log"
 import { useProfile } from "@/hooks/use-profile"
@@ -111,6 +112,8 @@ interface MappedDocument {
 
 export function DocumentsPage() {
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   const { profile } = useProfile()
   const { actualRole } = useRoleSwitcher(profile?.role)
   const isSuperadmin = actualRole === "superadmin"
@@ -136,10 +139,16 @@ export function DocumentsPage() {
   const [typeFilter, setTypeFilter] = React.useState<string>("all")
   const [activeTab, setActiveTab] = React.useState("pending")
 
-  // Aplicar filtro por proceso cuando se llega con ?processId=xxx (ej. desde lista de procesos)
+  // Vista de un proceso: filtrar por él y mostrar todos los estados (no solo pendientes)
   React.useEffect(() => {
     const processId = searchParams.get("processId")
-    if (processId) setProcessFilter(processId)
+    if (processId) {
+      setProcessFilter(processId)
+      setActiveTab("all")
+      setStatusFilter("all")
+    } else {
+      setProcessFilter("all")
+    }
   }, [searchParams])
 
   const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
@@ -270,14 +279,23 @@ export function DocumentsPage() {
     return filtered
   }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter])
 
-  // Stats
+  const isProcessScoped = processFilter !== "all"
+  const scopedDocuments = React.useMemo(
+    () => (isProcessScoped ? allDocuments.filter((d) => d.processId === processFilter) : allDocuments),
+    [allDocuments, isProcessScoped, processFilter],
+  )
+  const processCode =
+    scopedDocuments.find((d) => d.processCode)?.processCode ||
+    allDocuments.find((d) => d.processId === processFilter)?.processCode ||
+    null
+
   const stats = {
-    total: allDocuments.length,
-    approved: allDocuments.filter((d) => d.status === "approved").length,
-    pending: allDocuments.filter((d) => d.status === "pending").length,
-    in_review: allDocuments.filter((d) => d.status === "in_review").length,
-    draft: allDocuments.filter((d) => d.status === "draft").length,
-    rejected: allDocuments.filter((d) => d.status === "rejected").length,
+    total: scopedDocuments.length,
+    approved: scopedDocuments.filter((d) => d.status === "approved").length,
+    pending: scopedDocuments.filter((d) => d.status === "pending").length,
+    in_review: scopedDocuments.filter((d) => d.status === "in_review").length,
+    draft: scopedDocuments.filter((d) => d.status === "draft").length,
+    rejected: scopedDocuments.filter((d) => d.status === "rejected").length,
   }
 
   const handleViewDocument = (document: MappedDocument) => {
@@ -399,6 +417,13 @@ export function DocumentsPage() {
     setEntityFilter("all")
     setProcessFilter("all")
     setTypeFilter("all")
+    setActiveTab("pending")
+    const processId = searchParams.get("processId")
+    if (processId) {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete("processId")
+      router.replace(params.toString() ? `${pathname}?${params}` : pathname)
+    }
   }
 
   const hasActiveFilters =
@@ -416,13 +441,38 @@ export function DocumentsPage() {
     <div className="flex flex-col gap-6 p-8">
       {/* Header */}
       <PageHeader
-        title="Revisión de Documentos"
-        description="Revisa y aprueba documentos generados por los miembros del equipo"
+        title={isProcessScoped ? `Documentos del proceso${processCode ? ` ${processCode}` : ""}` : "Revisión de Documentos"}
+        description={
+          isProcessScoped
+            ? "Documentos generados de este proceso, en cualquier estado"
+            : "Revisa y aprueba documentos generados por los miembros del equipo"
+        }
       />
 
-      {/* Stats Grid */}
+      {isProcessScoped && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm">
+              Mostrando documentos del proceso{" "}
+              <span className="font-mono font-medium">{processCode || processFilter}</span>
+            </p>
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              <X className="mr-1 h-4 w-4" />
+              Ver todos los documentos
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {isProcessScoped && <ProcessAttachments processId={processFilter} />}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-        <StatsCard title="Total" value={stats.total} description="Documentos" icon={Files} />
+        <StatsCard
+          title="Total"
+          value={stats.total}
+          description={isProcessScoped ? "De este proceso" : "Documentos"}
+          icon={Files}
+        />
         <StatsCard title="Pendientes" value={stats.pending} description="Enviados por miembro" icon={Clock} />
         <StatsCard title="En revisión" value={stats.in_review} description="Revisando" icon={Eye} />
         <StatsCard title="Aprobados" value={stats.approved} description="Aprobados" icon={CheckCircle2} />
@@ -435,7 +485,7 @@ export function DocumentsPage() {
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle>Documentos para Revisión</CardTitle>
+              <CardTitle>{isProcessScoped ? "Documentos del proceso" : "Documentos para Revisión"}</CardTitle>
               <CardDescription>{filteredDocuments.length} documentos encontrados</CardDescription>
             </div>
           </div>
@@ -485,20 +535,22 @@ export function DocumentsPage() {
                   <SelectItem value="rejected">Rechazado</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={entityFilter} onValueChange={setEntityFilter}>
-                <SelectTrigger className="w-[200px]">
-                  <Building className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Entidad" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las entidades</SelectItem>
-                  {entities.map((entity) => (
-                    <SelectItem key={entity.id} value={entity.id}>
-                      {entity.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {!isProcessScoped && (
+                <Select value={entityFilter} onValueChange={setEntityFilter}>
+                  <SelectTrigger className="w-[200px]">
+                    <Building className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Entidad" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las entidades</SelectItem>
+                    {entities.map((entity) => (
+                      <SelectItem key={entity.id} value={entity.id}>
+                        {entity.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               {hasActiveFilters && (
                 <Button variant="ghost" size="icon" onClick={clearFilters}>
                   <X className="h-4 w-4" />
@@ -524,8 +576,12 @@ export function DocumentsPage() {
               <TableBody>
                 {filteredDocuments.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
-                      No se encontraron documentos
+                    <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                      {isProcessScoped && scopedDocuments.length === 0
+                        ? "Este proceso no tiene documentos generados"
+                        : isProcessScoped
+                          ? "No hay documentos en este estado para este proceso"
+                          : "No se encontraron documentos"}
                     </TableCell>
                   </TableRow>
                 ) : (

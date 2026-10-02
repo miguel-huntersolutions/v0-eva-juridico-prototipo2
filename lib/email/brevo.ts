@@ -8,11 +8,13 @@
  * mensaje, alertar) ya ocurrió. CA-026.3: el fallo se registra en auditoría.
  *
  * Variables:
- *   BREVO_API_KEY       — clave API (no la SMTP key)
+ *   BREVO_API_KEY       — xkeysib- (API HTTP) o xsmtpsib- (SMTP)
  *   BREVO_SENDER_EMAIL  — remitente verificado en Brevo
  *   BREVO_SENDER_NAME   — opcional; default "EVA Jurídico"
+ *   BREVO_SMTP_USER     — login SMTP (si no, usa BREVO_SENDER_EMAIL)
  */
 
+import nodemailer from "nodemailer"
 import { getAppUrl } from "@/lib/app-config"
 import { logAuditEvent } from "@/lib/audit/log"
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -65,12 +67,52 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
 }
 
+async function sendViaSmtp(
+  msg: EmailMessage,
+  from: { email: string; name: string },
+  smtpKey: string,
+): Promise<{ sent: boolean; error?: string }> {
+  const user = process.env.BREVO_SMTP_USER?.trim() || from.email
+  const transporter = nodemailer.createTransport({
+    host: process.env.BREVO_SMTP_HOST?.trim() || "smtp-relay.sendinblue.com",
+    port: Number(process.env.BREVO_SMTP_PORT || 587),
+    secure: false,
+    auth: { user, pass: smtpKey },
+    tls: { servername: "smtp-relay.sendinblue.com" },
+  })
+  try {
+    await transporter.sendMail({
+      from: `"${from.name}" <${from.email}>`,
+      to: msg.toName ? `"${msg.toName}" <${msg.toEmail}>` : msg.toEmail,
+      subject: msg.subject,
+      text: msg.text,
+      html: msg.html || wrapEmailHtml(msg.subject, [msg.text]),
+    })
+    return { sent: true }
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : "Error SMTP al enviar"
+    if (/535|Authentication failed/i.test(raw)) {
+      return {
+        sent: false,
+        error:
+          "SMTP 535: el login no es el correo del remitente. En Brevo → Settings → SMTP & API copia el Login (formato xxx@smtp-brevo.com) a BREVO_SMTP_USER.",
+      }
+    }
+    return { sent: false, error: raw }
+  }
+}
+
 /** Envía un correo. Devuelve false si no está configurado o si Brevo responde error. */
 export async function sendBrevoEmail(msg: EmailMessage): Promise<{ sent: boolean; error?: string }> {
   const apiKey = process.env.BREVO_API_KEY?.trim()
   const from = sender()
   if (!apiKey || !from) {
     return { sent: false, error: "Brevo no configurado (BREVO_API_KEY / BREVO_SENDER_EMAIL)" }
+  }
+
+  // xsmtpsib- es clave SMTP: la API HTTP responde 401 "Key not found"
+  if (apiKey.startsWith("xsmtpsib-") || apiKey.startsWith("bsk-")) {
+    return sendViaSmtp(msg, from, apiKey)
   }
 
   try {
@@ -129,7 +171,7 @@ export async function sendEmailToUserIds(
     return
   }
 
-  const { data: profiles, error } = await service.from("profiles").select("id, email, full_name, name").in("id", unique)
+  const { data: profiles, error } = await service.from("profiles").select("id, email, name").in("id", unique)
   if (error) {
     console.warn("[email] No se pudieron leer destinatarios:", error.message)
     return
@@ -137,11 +179,11 @@ export async function sendEmailToUserIds(
 
   const failures: string[] = []
   await Promise.all(
-    (profiles || []).map(async (p: { id: string; email: string | null; full_name?: string | null; name?: string | null }) => {
+    (profiles || []).map(async (p: { id: string; email: string | null; name?: string | null }) => {
       if (!p.email) return
       const result = await sendBrevoEmail({
         toEmail: p.email,
-        toName: p.full_name || p.name,
+        toName: p.name,
         subject: content.subject,
         text: content.text,
         html: content.html,
