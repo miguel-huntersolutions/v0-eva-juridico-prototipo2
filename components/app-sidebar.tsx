@@ -84,7 +84,7 @@ const navItems: NavItem[] = [
     href: "/superadmin/process-types",
     icon: FolderKanban,
     roles: ["superadmin"],
-    platformOnly: true,
+    // Visible para plataforma y org-superadmin (gestiona plantillas de su tenant)
   },
   { title: "Plantillas", href: "/superadmin/templates", icon: FileStack, roles: ["superadmin"] },
   // CAP-11 (RF-046): periodos de ley de garantías
@@ -475,14 +475,18 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
   })
 
   const filteredItems = React.useMemo(() => {
-    // Superadmin de org: plantillas + operación de admin de su tenant
+    // Superadmin de org: tipos/plantillas + entidades/miembros (sin procesos ni documentos)
     if (orgSa && effectiveRole === "superadmin") {
       return navItems.filter((item) => {
         if (item.platformOnly) return false
         if (item.href === "/superadmin/templates") return true
+        if (item.href === "/superadmin/process-types") return true
         if (item.href === "/dashboard" && item.roles.includes("superadmin")) return true
-        if (item.roles.includes("admin") && item.href.startsWith("/admin")) return true
-        // Mensajes/docs; auditoría ya viene de /admin/audit
+        if (item.roles.includes("admin") && item.href.startsWith("/admin")) {
+          // No opera procesos/documentos; eso es del admin/member del bufete
+          if (item.href === "/admin/processes" || item.href === "/admin/documents") return false
+          return true
+        }
         if (
           item.roles.includes("superadmin") &&
           ["/member/messages", "/docs"].includes(item.href)

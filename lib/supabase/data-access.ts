@@ -41,6 +41,7 @@ export interface ProcessType {
   id: string
   name: string
   description: string
+  organization_id?: string | null
   created_at: string
   updated_at: string
 }

@@ -68,9 +68,16 @@ import {
   updateTemplate,
 } from "@/lib/supabase/client-data-access"
 import type { ProcessType, Template } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
+import { isOrgSuperadmin, isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 export function ProcessTypesPage() {
   const router = useRouter()
+  const { profile, isLoading: profileLoading } = useProfile()
+  const platformSa = isPlatformSuperadmin(profile)
+  const orgSa = isOrgSuperadmin(profile)
+  const tenantOrgId = orgSa ? profile!.organization_id! : null
+
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
@@ -94,15 +101,27 @@ export function ProcessTypesPage() {
   const [isDeleting, setIsDeleting] = React.useState(false)
 
   React.useEffect(() => {
+    if (profileLoading) return
     loadData()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileLoading, tenantOrgId, platformSa])
 
   async function loadData() {
     try {
       setIsLoading(true)
       setError(null)
-      const [typesData, templatesData] = await Promise.all([getProcessTypes(), getTemplates()])
-      setProcessTypes(typesData)
+      // Org-SA: solo tipos de su org (+ compartidos vía getProcessTypes). Plataforma: todos.
+      const orgScope = platformSa ? null : tenantOrgId
+      const [typesData, templatesData] = await Promise.all([
+        getProcessTypes(orgScope),
+        getTemplates(undefined, undefined, orgScope),
+      ])
+      // Org-SA gestiona solo los tipos de su org (no el catálogo compartido de plataforma)
+      setProcessTypes(
+        orgSa && tenantOrgId
+          ? typesData.filter((t) => t.organization_id === tenantOrgId)
+          : typesData,
+      )
       setTemplates(templatesData)
     } catch (err) {
       console.error("Error loading data:", err)
@@ -299,12 +318,18 @@ export function ProcessTypesPage() {
 
   async function handleCreate() {
     if (!formData.name.trim() || !formData.description.trim()) return
+    if (orgSa && !tenantOrgId) {
+      setError("No se pudo determinar su organización para crear el tipo de proceso")
+      return
+    }
 
     try {
       setIsSaving(true)
       const newType = await createProcessType({
         name: formData.name.trim(),
         description: formData.description.trim(),
+        // Org-SA: siempre de su tenant. Plataforma: compartido (null).
+        organizationId: orgSa ? tenantOrgId : null,
       })
       setProcessTypes((prev) => [...prev, newType])
       setIsCreateOpen(false)
@@ -377,11 +402,22 @@ export function ProcessTypesPage() {
     )
   }
 
+  const canMutateType = (type: ProcessType) => {
+    if (platformSa) return true
+    if (!orgSa || !tenantOrgId) return false
+    // Org-SA solo edita/borra tipos de su organización (no el catálogo compartido)
+    return type.organization_id === tenantOrgId
+  }
+
   return (
     <div className="flex flex-col gap-8 p-8">
       <PageHeader
         title="Tipos de Proceso"
-        description="Configura los tipos de contratación disponibles para todas las organizaciones"
+        description={
+          orgSa
+            ? "Crea y gestiona los tipos de contratación de su organización para asociar plantillas"
+            : "Configura los tipos de contratación disponibles para todas las organizaciones"
+        }
       >
         <Button
           onClick={() => {
@@ -559,19 +595,25 @@ export function ProcessTypesPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEdit(type)}>
-                                <Pencil className="mr-2 h-4 w-4" />
-                                Editar
-                              </DropdownMenuItem>
+                              {canMutateType(type) && (
+                                <DropdownMenuItem onClick={() => handleEdit(type)}>
+                                  <Pencil className="mr-2 h-4 w-4" />
+                                  Editar
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem onClick={() => handleViewTemplates(type)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 Ver Plantillas ({typeTemplates.length})
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(type)}>
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Eliminar
-                              </DropdownMenuItem>
+                              {canMutateType(type) && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(type)}>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Eliminar
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>

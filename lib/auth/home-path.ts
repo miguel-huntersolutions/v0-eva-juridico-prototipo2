@@ -3,9 +3,9 @@ export function homePathForRole(
   role: string | null | undefined,
   organizationId?: string | null,
 ): string {
-  // Superadmin de org → plantillas de su tenant; plataforma → panel global
+  // Superadmin de org → tipos de proceso (para armar plantillas); plataforma → panel global
   if (role === "superadmin") {
-    return organizationId ? "/superadmin/templates" : "/superadmin"
+    return organizationId ? "/superadmin/process-types" : "/superadmin"
   }
   if (role === "admin") return "/admin"
   if (role === "entity_contact") return "/member/messages"

@@ -58,6 +58,8 @@ export interface ProcessType {
   id: string
   name: string
   description?: string | null
+  /** NULL = compartido de plataforma; UUID = exclusivo del tenant */
+  organization_id?: string | null
   created_at: string
   updated_at: string
 }
