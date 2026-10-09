@@ -38,7 +38,8 @@ export default function MemberLayout({
     )
   }
 
-  const showAssistant = profile?.role !== "entity_contact"
+  // Asistente solo para member/admin; no para superadmin ni contacto de entidad
+  const showAssistant = profile?.role !== "entity_contact" && profile?.role !== "superadmin"
 
   return (
     <SidebarProvider>

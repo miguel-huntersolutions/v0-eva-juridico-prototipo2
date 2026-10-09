@@ -364,16 +364,23 @@ export function ProcessesPage() {
     let cancelled = false
     setIsLoadingProcesses(true)
     setIsLoadingEntities(true)
-    const loadProcesses = isImpersonating
-      ? getProcessesForImpersonation(orgId)
-      : getProcessesMapped()
+    // Con organización: siempre acotar a ese tenant (evita que superadmin vea otras orgs vía RLS)
+    const loadProcesses =
+      isImpersonating || profile?.role === "superadmin" || profile?.role === "admin"
+        ? getProcessesForImpersonation(orgId)
+        : getProcessesMapped()
     const loadEntities = isImpersonating
       ? getEntitiesForImpersonation(orgId)
       : getEntities(orgId)
     Promise.all([loadProcesses, loadEntities])
       .then(([processesData, entitiesData]) => {
         if (!cancelled) {
-          setProcesses(processesData)
+          const entityIds = new Set(entitiesData.map((e) => e.id))
+          const scoped =
+            entityIds.size > 0
+              ? processesData.filter((p) => entityIds.has(p.entityId))
+              : processesData
+          setProcesses(scoped)
           setEntities(entitiesData)
         }
       })
@@ -387,7 +394,7 @@ export function ProcessesPage() {
     return () => {
       cancelled = true
     }
-  }, [orgId, isImpersonating])
+  }, [orgId, isImpersonating, profile?.role])
 
   const loadWorkspaceMeta = React.useCallback(() => {
     fetch("/api/processes/workspace-meta")
@@ -443,6 +450,13 @@ export function ProcessesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, processes])
 
+  // Abrir diálogo de alta desde /admin/processes (Nuevo Proceso)
+  React.useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setIsCreateDialogOpen(true)
+    }
+  }, [searchParams])
+
   // CAP-08: cargar miembros de la org para el selector de responsable (solo admin)
   React.useEffect(() => {
     if (!orgId || !isAdmin) return
@@ -496,12 +510,20 @@ export function ProcessesPage() {
   const reloadProcesses = React.useCallback(async () => {
     if (!orgId) return
     try {
-      const data = isImpersonating ? await getProcessesForImpersonation(orgId) : await getProcessesMapped()
-      setProcesses(data)
+      const useOrgApi =
+        isImpersonating || profile?.role === "superadmin" || profile?.role === "admin"
+      const data = useOrgApi ? await getProcessesForImpersonation(orgId) : await getProcessesMapped()
+      if (useOrgApi) {
+        setProcesses(data)
+      } else {
+        const ents = await getEntities(orgId)
+        const entityIds = new Set(ents.map((e) => e.id))
+        setProcesses(entityIds.size > 0 ? data.filter((p) => entityIds.has(p.entityId)) : data)
+      }
     } catch {
       // silencioso
     }
-  }, [orgId, isImpersonating])
+  }, [orgId, isImpersonating, profile?.role])
 
   // CAP-02: progreso de generación por proceso (plantillas con doc / total del tipo).
   // Define si se muestra "Continuar" y el texto con el avance ("Continuar 3/9").

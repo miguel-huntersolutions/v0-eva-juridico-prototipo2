@@ -119,11 +119,11 @@ const navItems: NavItem[] = [
     title: "Asistente Jurídico",
     href: "/member/assistant",
     icon: MessageSquareText,
-    roles: ["member", "admin", "superadmin"],
+    roles: ["member", "admin"],
     badge: "IA",
   },
-  // CAP-09 (RF-031/032/041): auditoría solo para admin/superadmin (CA-031.3)
-  { title: "Auditoría", href: "/member/audit", icon: ScrollText, roles: ["admin", "superadmin"] },
+  // CAP-09: auditoría member (plataforma). Admin/org-SA usan /admin/audit para no duplicar.
+  { title: "Auditoría", href: "/member/audit", icon: ScrollText, roles: ["superadmin"] },
 
   { title: "Documentación", href: "/docs", icon: Book, roles: ["superadmin", "admin", "member"] },
 ]
@@ -482,9 +482,10 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
         if (item.href === "/superadmin/templates") return true
         if (item.href === "/dashboard" && item.roles.includes("superadmin")) return true
         if (item.roles.includes("admin") && item.href.startsWith("/admin")) return true
+        // Mensajes/docs; auditoría ya viene de /admin/audit
         if (
           item.roles.includes("superadmin") &&
-          ["/member/messages", "/member/assistant", "/member/audit", "/docs"].includes(item.href)
+          ["/member/messages", "/docs"].includes(item.href)
         ) {
           return true
         }

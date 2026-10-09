@@ -39,10 +39,11 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // If user is admin (not superadmin), verify they can only view members in their own organization
-    if (profile.role === "admin" && profile.organization_id !== organizationId) {
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
+    // Admin u org-superadmin: solo su organización
+    if (!isPlatformSuperadmin && profile.organization_id !== organizationId) {
       return NextResponse.json(
-        { error: "Forbidden: Admins can only view members in their own organization" },
+        { error: "Forbidden: Solo puedes ver miembros de tu organización" },
         { status: 403 },
       )
     }

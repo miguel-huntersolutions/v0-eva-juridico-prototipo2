@@ -40,11 +40,13 @@ export async function GET() {
       .order("updated_at", { ascending: false })
       .limit(500)
 
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
+
     if (profile.role === "entity_contact") {
       if (!profile.entity_id) return NextResponse.json({ conversations: [] })
       procQuery = procQuery.eq("entity_id", profile.entity_id)
-    } else if (profile.role !== "superadmin") {
-      // admin/member: procesos de su org (filtrado por entidades de la org abajo)
+    } else if (!isPlatformSuperadmin) {
+      // admin / member / org-superadmin: filtrado por org abajo
     }
 
     const { data: processes, error: procErr } = await procQuery
@@ -52,7 +54,7 @@ export async function GET() {
 
     let visible = (processes || []).filter((p: any) => {
       const orgId = p.entity?.organization_id
-      if (profile.role === "superadmin") return true
+      if (isPlatformSuperadmin) return true
       if (profile.role === "entity_contact") return p.entity_id === profile.entity_id
       return orgId === profile.organization_id
     })

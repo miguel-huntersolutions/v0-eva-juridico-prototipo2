@@ -115,14 +115,14 @@ export function DocumentsPage() {
   const router = useRouter()
   const pathname = usePathname()
   const { profile } = useProfile()
-  const { actualRole } = useRoleSwitcher(profile?.role)
-  const isSuperadmin = actualRole === "superadmin"
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole } = useRoleSwitcher(profile?.role, platformSa)
   const {
     effectiveOrganizationId,
     isLoaded: orgLoaded,
   } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin,
+    isSuperadmin: platformSa,
     isSimulatingAdmin: false,
   })
 

@@ -70,13 +70,19 @@ export interface TemplateEntityOption {
   organizationName: string
 }
 
-export async function getTemplateEntityOptions(): Promise<TemplateEntityOption[]> {
+export async function getTemplateEntityOptions(organizationId?: string | null): Promise<TemplateEntityOption[]> {
   const supabase = createBrowserClient()
-  const { data, error } = await supabase
+  let query = supabase
     .from("entities")
     .select("id, name, nit, organization_id, organization:organizations(name)")
     .eq("status", "active")
     .order("name")
+
+  if (organizationId?.trim()) {
+    query = query.eq("organization_id", organizationId.trim())
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
 
@@ -609,12 +615,28 @@ export async function deleteSecretary(id: string) {
 }
 
 // Process Types
-export async function getProcessTypes() {
+/** @param organizationId si se pasa, solo tipos compartidos (null) + de esa org */
+export async function getProcessTypes(organizationId?: string | null) {
   const supabase = createBrowserClient()
-  const { data, error } = await supabase.from("process_types").select("*").order("name")
+  let query = supabase.from("process_types").select("*").order("name")
+
+  const orgId = typeof organizationId === "string" ? organizationId.trim() : ""
+  if (orgId) {
+    // Compartidos de plataforma + exclusivos del tenant (no los de otras orgs)
+    query = query.or(`organization_id.is.null,organization_id.eq.${orgId}`)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
-  return data as ProcessType[]
+
+  const rows = (data || []) as Array<ProcessType & { organization_id?: string | null }>
+  if (!orgId) return rows as ProcessType[]
+
+  // Defensa client-side por si el filtro OR falla
+  return rows.filter(
+    (pt) => pt.organization_id == null || pt.organization_id === orgId,
+  ) as ProcessType[]
 }
 
 /**
@@ -652,7 +674,11 @@ export async function getProcessTypesForEntity(entityId: string): Promise<Proces
   return allTypes.filter((pt) => typeIdSet.has(pt.id))
 }
 
-export async function createProcessType(data: { name: string; description: string }) {
+export async function createProcessType(data: {
+  name: string
+  description: string
+  organizationId?: string | null
+}) {
   const supabase = createBrowserClient()
 
   const { data: newProcessType, error } = await supabase
@@ -660,6 +686,7 @@ export async function createProcessType(data: { name: string; description: strin
     .insert({
       name: data.name,
       description: data.description,
+      organization_id: data.organizationId?.trim() || null,
     })
     .select()
     .single()
@@ -699,13 +726,25 @@ function filterTemplatesByEntityScope(templates: Template[], entityId?: string |
   return templates.filter((t) => !t.entityId || t.entityId === id)
 }
 
-export async function getTemplates(processTypeId?: string, entityId?: string | null) {
+function filterTemplatesByOrganization(templates: Template[], organizationId?: string | null): Template[] {
+  const orgId = typeof organizationId === "string" ? organizationId.trim() : ""
+  if (!orgId) return templates
+  // Solo plantillas del tenant (no legados globales de otras orgs)
+  return templates.filter((t) => t.organizationId === orgId)
+}
+
+export async function getTemplates(
+  processTypeId?: string,
+  entityId?: string | null,
+  organizationId?: string | null,
+) {
   const supabase = createBrowserClient()
 
   const shouldFilterEntity = typeof entityId === "string" && entityId.trim().length > 0
   const entityScope = shouldFilterEntity ? entityId!.trim() : ""
+  const orgScope = typeof organizationId === "string" ? organizationId.trim() : ""
 
-  console.log("[getTemplates] Called with", { processTypeId, entityId, shouldFilterEntity })
+  console.log("[getTemplates] Called with", { processTypeId, entityId, organizationId: orgScope || null, shouldFilterEntity })
 
   if (processTypeId) {
     const { data: relationData, error: relationError } = await supabase
@@ -730,11 +769,15 @@ export async function getTemplates(processTypeId?: string, entityId?: string | n
 
     if (templateIds.length === 0) {
       console.log("[getTemplates] No relations found, falling back to direct process_type_id lookup")
-      const { data: fallbackData, error: fallbackError } = await supabase
+      let fallbackQuery = supabase
         .from("templates")
         .select(TEMPLATE_LIST_SELECT)
         .eq("process_type_id", processTypeId)
         .order("created_at", { ascending: true })
+      if (orgScope) {
+        fallbackQuery = fallbackQuery.eq("organization_id", orgScope)
+      }
+      const { data: fallbackData, error: fallbackError } = await fallbackQuery
 
       if (fallbackError) {
         console.error("[getTemplates] Error in fallback query:", fallbackError)
@@ -756,11 +799,16 @@ export async function getTemplates(processTypeId?: string, entityId?: string | n
         }
       }
 
-      const mapped = (fallbackData || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+      let mapped = (fallbackData || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+      mapped = filterTemplatesByOrganization(mapped, orgScope || null)
       return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
     }
 
-    const { data, error } = await supabase.from("templates").select(TEMPLATE_LIST_SELECT).in("id", templateIds)
+    let templatesQuery = supabase.from("templates").select(TEMPLATE_LIST_SELECT).in("id", templateIds)
+    if (orgScope) {
+      templatesQuery = templatesQuery.eq("organization_id", orgScope)
+    }
+    const { data, error } = await templatesQuery
 
     if (error) {
       console.error("[getTemplates] Error fetching templates:", error)
@@ -774,17 +822,20 @@ export async function getTemplates(processTypeId?: string, entityId?: string | n
       return ia - ib
     })
 
-    const mapped = sorted.map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+    let mapped = sorted.map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+    mapped = filterTemplatesByOrganization(mapped, orgScope || null)
     return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
   }
 
-  const { data, error } = await supabase
-    .from("templates")
-    .select(TEMPLATE_LIST_SELECT)
-    .order("created_at", { ascending: true })
+  let query = supabase.from("templates").select(TEMPLATE_LIST_SELECT).order("created_at", { ascending: true })
+  if (orgScope) {
+    query = query.eq("organization_id", orgScope)
+  }
+  const { data, error } = await query
   if (error) throw error
 
-  const mapped = (data || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+  let mapped = (data || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+  mapped = filterTemplatesByOrganization(mapped, orgScope || null)
   return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
 }
 

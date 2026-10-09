@@ -5,6 +5,7 @@ import { SuperadminDashboard } from "@/components/superadmin/dashboard"
 import { AdminDashboard } from "@/components/admin/dashboard"
 import { MemberEntitySelector } from "@/components/member/entity-selector"
 import { useImpersonation } from "@/lib/impersonation-context"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 import type { Profile } from "@/lib/types/database"
 
 interface DashboardClientProps {
@@ -17,7 +18,8 @@ export function DashboardClient({ profile }: DashboardClientProps) {
   const renderContent = () => {
     switch (profile.role) {
       case "superadmin":
-        return <SuperadminDashboard />
+        // Solo plataforma ve el dash global; org-superadmin ve el de su tenant
+        return isPlatformSuperadmin(profile) ? <SuperadminDashboard /> : <AdminDashboard />
       case "admin":
         return <AdminDashboard />
       case "member":

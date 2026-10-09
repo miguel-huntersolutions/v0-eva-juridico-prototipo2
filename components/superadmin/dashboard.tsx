@@ -48,12 +48,16 @@ import {
   type Template,
 } from "@/lib/supabase/client-data-access"
 import { useImpersonation } from "@/lib/impersonation-context"
+import { useProfile } from "@/hooks/use-profile"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
+import { AdminDashboard } from "@/components/admin/dashboard"
 
 // Alias for backward compatibility
 type OrganizationWithCounts = OrganizationMapped
 
 export function SuperadminDashboard() {
   const router = useRouter()
+  const { profile, isLoading: profileLoading } = useProfile()
   const { startImpersonation } = useImpersonation()
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false)
   const [isEditOrgOpen, setIsEditOrgOpen] = React.useState(false)
@@ -68,12 +72,20 @@ export function SuperadminDashboard() {
   const [orgsThisMonth, setOrgsThisMonth] = React.useState(0)
   const [orgsLastMonth, setOrgsLastMonth] = React.useState(0)
 
+  const platformSa = isPlatformSuperadmin(profile)
+
   React.useEffect(() => {
     async function loadData() {
+      // Org superadmin: no cargar métricas globales (se muestra AdminDashboard)
+      if (profileLoading) return
+      if (profile && !platformSa) {
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
-        // For superadmin, we need to get ALL organizations, not just active ones
-        // So we'll fetch directly from Supabase
+        // For platform superadmin, we need to get ALL organizations, not just active ones
         const { createBrowserClient } = await import("@/lib/supabase/client")
         const supabase = createBrowserClient()
         
@@ -147,7 +159,12 @@ export function SuperadminDashboard() {
       }
     }
     loadData()
-  }, [])
+  }, [profile, profileLoading, platformSa])
+
+  // Defensa: si llega un org-superadmin aquí, mostrar dashboard de tenant
+  if (!profileLoading && profile && !platformSa) {
+    return <AdminDashboard />
+  }
 
   const handleEditOrganization = (org: OrganizationWithCounts) => {
     setSelectedOrg(org)

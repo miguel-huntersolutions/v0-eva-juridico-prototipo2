@@ -52,8 +52,10 @@ async function validateThreadAccess(
   if (error || !proc) return NextResponse.json({ error: "Process not found" }, { status: 404 })
 
   const orgId = (proc.entity as any)?.organization_id as string | undefined
+  const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
 
-  if (profile.role === "superadmin") return { proc, orgId: orgId! }
+  // Plataforma: cualquier proceso. Org-superadmin: solo su org (cae en el check de organization_id)
+  if (isPlatformSuperadmin) return { proc, orgId: orgId! }
 
   // CA-025.3: el contacto de entidad solo toca procesos de SU entidad
   if (profile.role === "entity_contact") {
@@ -66,7 +68,7 @@ async function validateThreadAccess(
   if (profile.organization_id !== orgId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
-  if (profile.role === "admin") return { proc, orgId: orgId! }
+  if (profile.role === "admin" || profile.role === "superadmin") return { proc, orgId: orgId! }
 
   // member: acceso a la entidad, responsable asignado o creador del proceso
   if (proc.assigned_to === userId || proc.created_by === userId) {

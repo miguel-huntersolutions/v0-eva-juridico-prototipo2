@@ -75,6 +75,7 @@ import {
   findAllVariablesLooseInDocx,
 } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
+import { isOrgSuperadmin, isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 interface UploadedFile {
   name: string
@@ -88,7 +89,7 @@ export function TemplatesPage() {
   const MAX_DOCX_SIZE_BYTES = 4.5 * 1024 * 1024
   const searchParams = useSearchParams()
   const router = useRouter()
-  const { profile } = useProfile()
+  const { profile, isLoading: profileLoading } = useProfile()
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
@@ -156,20 +157,38 @@ export function TemplatesPage() {
     }
   }, [searchParams])
 
+  const tenantOrgId = isOrgSuperadmin(profile)
+    ? profile!.organization_id!
+    : !isPlatformSuperadmin(profile)
+      ? profile?.organization_id ?? null
+      : null
+
+  const loadEntityOptionsForScope = React.useCallback(async (orgScope: string | null) => {
+    const entityOpts = await getTemplateEntityOptions(orgScope).catch((e) => {
+      console.warn("[TemplatesPage] No se pudieron cargar entidades:", e)
+      return [] as TemplateEntityOption[]
+    })
+    if (!orgScope) return entityOpts
+    return entityOpts.filter((e) => e.organizationId === orgScope)
+  }, [])
+
   React.useEffect(() => {
     async function loadData() {
+      if (profileLoading) return
+
       try {
         setIsLoadingTypes(true)
         setIsLoadingTemplates(true)
         setLoadError(null)
 
+        // Org-superadmin / admin: siempre su org. Plataforma: sin filtro.
+        const orgScope = tenantOrgId
+
         const [typesData, templatesData, entityOpts] = await Promise.all([
-          getProcessTypes(),
-          getTemplates(),
-          getTemplateEntityOptions().catch((e) => {
-            console.warn("[TemplatesPage] No se pudieron cargar entidades:", e)
-            return [] as TemplateEntityOption[]
-          }),
+          // Tenant: solo tipos compartidos + de su org (nunca los exclusivos de otra)
+          getProcessTypes(orgScope),
+          getTemplates(undefined, undefined, orgScope),
+          loadEntityOptionsForScope(orgScope),
         ])
 
         setProcessTypes(
@@ -191,7 +210,7 @@ export function TemplatesPage() {
     }
 
     loadData()
-  }, [])
+  }, [profileLoading, profile?.id, profile?.role, tenantOrgId, loadEntityOptionsForScope])
 
   // Sync edit form values when selectedTemplate changes and dialog opens
   React.useEffect(() => {
@@ -240,6 +259,8 @@ export function TemplatesPage() {
     return null
   }
 
+  const isTenantScoped = !!tenantOrgId
+
   // Modified filteredTemplates logic slightly
   const filteredTemplates = React.useMemo(() => {
     let result = [...templates]
@@ -264,6 +285,22 @@ export function TemplatesPage() {
 
     return result
   }, [templates, filterProcessType, filterEntityId, searchQuery])
+
+  // En el filtro de listado: solo tipos que tienen plantillas del tenant (no el catálogo global)
+  const filterProcessTypeOptions = React.useMemo(() => {
+    if (!isTenantScoped) return processTypes
+    const usedIds = new Set(templates.map((t) => t.processTypeId).filter(Boolean))
+    return processTypes.filter((pt) => usedIds.has(pt.id))
+  }, [isTenantScoped, processTypes, templates])
+
+  React.useEffect(() => {
+    if (
+      filterProcessType !== "all" &&
+      !filterProcessTypeOptions.some((pt) => pt.id === filterProcessType)
+    ) {
+      setFilterProcessType("all")
+    }
+  }, [filterProcessType, filterProcessTypeOptions])
 
   // Added templatesByType memo (though not used in the final merged code)
   const templatesByType = React.useMemo(() => {
@@ -526,8 +563,18 @@ export function TemplatesPage() {
     setLargeFileWarning(null)
   }
 
-  const handleOpenCreate = () => {
+  const handleOpenCreate = async () => {
     resetCreateDialog()
+    // Re-cargar entidades del tenant al abrir (evita listado cruzado en caché)
+    if (tenantOrgId) {
+      try {
+        const ents = await loadEntityOptionsForScope(tenantOrgId)
+        setEntityOptions(ents)
+        if (ents.length === 1) setSelectedEntityId(ents[0].id)
+      } catch (e) {
+        console.warn("[TemplatesPage] Error refreshing entities on create:", e)
+      }
+    }
     setIsCreateOpen(true)
   }
 
@@ -989,7 +1036,7 @@ export function TemplatesPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los tipos de proceso</SelectItem>
-                {processTypes.map((pt) => (
+                {filterProcessTypeOptions.map((pt) => (
                   <SelectItem key={pt.id} value={pt.id}>
                     {pt.name}
                   </SelectItem>
@@ -1004,7 +1051,7 @@ export function TemplatesPage() {
                 <SelectItem value="all">Todas las entidades</SelectItem>
                 {entityOptions.map((ent) => (
                   <SelectItem key={ent.id} value={ent.id}>
-                    {ent.organizationName} — {ent.name}
+                    {isTenantScoped ? ent.name : `${ent.organizationName} — ${ent.name}`}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1209,7 +1256,7 @@ export function TemplatesPage() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    La plantilla se usará para generar documentos de este tipo de proceso
+                    Solo tipos compartidos de EVA y los de su organización (no los exclusivos de otros tenants).
                   </p>
                 </div>
 
@@ -1220,9 +1267,7 @@ export function TemplatesPage() {
                       <Info className="h-4 w-4" />
                       <AlertTitle>No hay entidades disponibles</AlertTitle>
                       <AlertDescription className="text-sm">
-                        Cree entidades en las organizaciones antes de asociar plantillas. Si acaba de aplicar la
-                        migración de base de datos, verifique que exista la columna{" "}
-                        <span className="font-mono">templates.entity_id</span>.
+                        Cree entidades en su organización antes de asociar plantillas.
                       </AlertDescription>
                     </Alert>
                   ) : (
@@ -1234,7 +1279,7 @@ export function TemplatesPage() {
                         {entityOptions.map((ent) => (
                           <SelectItem key={ent.id} value={ent.id}>
                             <span className="line-clamp-2">
-                              {ent.organizationName} — {ent.name}
+                              {isTenantScoped ? ent.name : `${ent.organizationName} — ${ent.name}`}
                             </span>
                           </SelectItem>
                         ))}
@@ -1242,8 +1287,7 @@ export function TemplatesPage() {
                     </Select>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Solo los procesos de esta entidad verán esta plantilla al generar documentos (además del tipo de
-                    proceso). Las plantillas sin entidad (legado) aplican a cualquier entidad.
+                    Solo los procesos de esta entidad (de su organización) verán esta plantilla al generar documentos.
                   </p>
                 </div>
 
@@ -1644,7 +1688,9 @@ export function TemplatesPage() {
                       <SelectValue placeholder="Entidad" />
                     </SelectTrigger>
                     <SelectContent className="max-h-[280px]">
-                      <SelectItem value={ENTITY_GLOBAL_VALUE}>Todas las entidades (sin restricción)</SelectItem>
+                      {!isTenantScoped && (
+                        <SelectItem value={ENTITY_GLOBAL_VALUE}>Todas las entidades (sin restricción)</SelectItem>
+                      )}
                       {selectedTemplate?.entityId &&
                         !entityOptions.some((e) => e.id === selectedTemplate.entityId) && (
                           <SelectItem value={selectedTemplate.entityId}>
@@ -1653,13 +1699,15 @@ export function TemplatesPage() {
                         )}
                       {entityOptions.map((ent) => (
                         <SelectItem key={ent.id} value={ent.id}>
-                          {ent.organizationName} — {ent.name}
+                          {isTenantScoped ? ent.name : `${ent.organizationName} — ${ent.name}`}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Restringe la plantilla a una entidad o déjala global para compatibilidad con datos antiguos.
+                    {isTenantScoped
+                      ? "La plantilla aplica a procesos de esta entidad de su organización."
+                      : "Restringe la plantilla a una entidad o déjala global para compatibilidad con datos antiguos."}
                   </p>
                 </div>
 

@@ -33,8 +33,10 @@ export async function GET(request: NextRequest) {
     if (profile.role !== "admin" && profile.role !== "superadmin") {
       return NextResponse.json({ error: "Forbidden: only admin or superadmin" }, { status: 403 })
     }
-    if (profile.role === "admin" && profile.organization_id !== organizationId) {
-      return NextResponse.json({ error: "Forbidden: admin can only request own organization" }, { status: 403 })
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
+    // Admin u org-superadmin: solo su organización
+    if (!isPlatformSuperadmin && profile.organization_id !== organizationId) {
+      return NextResponse.json({ error: "Forbidden: solo puedes consultar procesos de tu organización" }, { status: 403 })
     }
 
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY

@@ -86,8 +86,9 @@ import {
 
 export function EntitiesPage() {
   const { profile, isLoading: profileLoading } = useProfile()
-  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role)
-  const isSuperadmin = actualRole === "superadmin"
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role, platformSa)
+  const isSuperadmin = platformSa
   const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
 
   const {

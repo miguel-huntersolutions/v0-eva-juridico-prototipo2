@@ -91,11 +91,12 @@ export function AdminDashboard() {
   const [isSavingEdit, setIsSavingEdit] = React.useState(false)
 
   const { profile } = useProfile()
-  const { actualRole, isSimulating } = useRoleSwitcher(profile?.role)
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole, isSimulating } = useRoleSwitcher(profile?.role, platformSa)
   const { effectiveOrganizationId, selectedOrganization } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin: actualRole === "superadmin",
-    isSimulatingAdmin: isSimulating && actualRole === "superadmin",
+    isSuperadmin: platformSa,
+    isSimulatingAdmin: isSimulating && platformSa,
   })
 
   React.useEffect(() => {

@@ -55,7 +55,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
       <AppSidebar profile={profile} selectedOrganizationId={effectiveOrganizationId || undefined} />
       <main className={`min-h-0 flex-1 overflow-y-auto bg-background ${isImpersonating ? "md:pt-[48px]" : ""}`}>{children}</main>
-      <FloatingChat />
+      {/* Asistente flotante solo para admin de org; no para superadmin */}
+      {profile?.role !== "superadmin" ? <FloatingChat /> : null}
     </div>
   )
 }

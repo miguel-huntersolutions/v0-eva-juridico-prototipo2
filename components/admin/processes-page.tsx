@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import {
   FolderKanban,
   FileText,
@@ -27,6 +28,7 @@ import {
   MessageSquareText,
   ScrollText,
   Download,
+  Plus,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -56,7 +58,7 @@ import {
 import {
   getProcessTypes,
   getEntities,
-  getProcessesMapped,
+  getProcessesForImpersonation,
   getOrganizationMembers,
   deleteProcess as deleteProcessDB,
   type ProcessType,
@@ -68,19 +70,21 @@ import { ProcessThreadDialog } from "@/components/member/process-thread-dialog"
 import { useProfile } from "@/hooks/use-profile"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
 export function ProcessesPage() {
+  const router = useRouter()
   const { profile } = useProfile()
-  const { actualRole } = useRoleSwitcher(profile?.role)
-  const isSuperadmin = actualRole === "superadmin"
+  const platformSa = isPlatformSuperadmin(profile)
+  const { actualRole } = useRoleSwitcher(profile?.role, platformSa)
   const {
     effectiveOrganizationId,
     isLoaded: orgLoaded,
   } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin,
+    isSuperadmin: platformSa,
     isSimulatingAdmin: false,
   })
 
@@ -132,15 +136,12 @@ export function ProcessesPage() {
     }
     try {
       setIsLoadingProcesses(true)
-      const allProcesses = await getProcessesMapped()
-      
-      // Filter processes by organization entities
-      const orgEntities = await getEntities(effectiveOrganizationId)
-      const entityIds = orgEntities.map((e) => e.id)
-      const filteredProcesses = allProcesses.filter((p) => entityIds.includes(p.entityId))
-      
-      setProcesses(filteredProcesses)
-      console.log("[AdminProcessesPage] Total processes:", allProcesses.length, "Organization processes:", filteredProcesses.length)
+      // Siempre por organización (API con service role + filtro de tenant)
+      const orgProcesses = await getProcessesForImpersonation(effectiveOrganizationId)
+      setProcesses(orgProcesses)
+      console.log("[AdminProcessesPage] Organization processes:", orgProcesses.length, {
+        organizationId: effectiveOrganizationId,
+      })
     } catch (error) {
       console.error("Error loading processes:", error)
     } finally {
@@ -453,7 +454,15 @@ export function ProcessesPage() {
       <PageHeader
         title="Gestión de Procesos"
         description={`Gestiona y monitorea todos los procesos de contratación de la organización (${processes.length} procesos)`}
-      />
+      >
+        <Button
+          className="w-full gap-2 sm:w-auto"
+          onClick={() => router.push("/member/processes?create=1")}
+        >
+          <Plus className="h-4 w-4" />
+          Nuevo Proceso
+        </Button>
+      </PageHeader>
 
       {/* Stats Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-7">

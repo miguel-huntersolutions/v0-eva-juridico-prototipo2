@@ -44,8 +44,9 @@ export async function GET() {
     const { data: processes, error: procErr } = await procQuery
     if (procErr) return NextResponse.json({ error: procErr.message }, { status: 500 })
 
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
     const visible = (processes || []).filter((p: any) => {
-      if (profile.role === "superadmin") return true
+      if (isPlatformSuperadmin) return true
       if (profile.role === "entity_contact") return p.entity_id === profile.entity_id
       return p.entity?.organization_id === profile.organization_id
     })
