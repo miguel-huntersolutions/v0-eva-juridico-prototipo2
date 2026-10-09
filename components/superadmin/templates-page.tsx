@@ -191,8 +191,12 @@ export function TemplatesPage() {
           loadEntityOptionsForScope(orgScope),
         ])
 
+        // Org-SA: solo tipos de su org (los que crea en Tipos de Proceso), no el catálogo ajeno
+        const scopedTypes = orgScope
+          ? typesData.filter((pt) => pt.organization_id === orgScope)
+          : typesData
         setProcessTypes(
-          typesData.map((pt) => ({
+          scopedTypes.map((pt) => ({
             id: pt.id,
             name: pt.name,
             description: pt.description || "",
