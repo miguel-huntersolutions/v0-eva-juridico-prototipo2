@@ -25,6 +25,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Scale, Plus, Loader2, Trash2 } from "lucide-react"
+import { isOrgSuperadmin } from "@/lib/auth/superadmin-scope"
 
 interface Period {
   id: string
@@ -116,8 +117,8 @@ function GuaranteeLawContent() {
           Periodos de restricción
         </h1>
         <p className="text-sm text-muted-foreground">
-          Ventanas en las que la contratación pública queda limitada (ley de garantías, vedas u otras).
-          EVA advierte cuando la fecha de una etapa cae dentro de un periodo activo.
+          Periodos de tu organización (ley de garantías, vedas u otras). EVA advierte cuando la fecha
+          de una etapa cae dentro de un periodo activo de tu tenant.
         </p>
       </div>
 
@@ -253,6 +254,18 @@ export default function GuaranteeLawPage() {
     return (
       <div className="flex h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!isOrgSuperadmin(profile)) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-2 px-4">
+        <Scale className="h-10 w-10 text-muted-foreground" />
+        <p className="text-lg font-medium">Acceso restringido</p>
+        <p className="max-w-md text-center text-sm text-muted-foreground">
+          Los periodos de restricción los define el superadministrador de cada organización.
+        </p>
       </div>
     )
   }

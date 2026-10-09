@@ -7,16 +7,28 @@ import { NextRequest, NextResponse } from "next/server"
 import { runRagFirstThenGeneralChat } from "@/lib/ai-chat/workflow-runner"
 import { fetchConversation } from "@/lib/ai-chat/services/conversations-api"
 import { requireAuth } from "@/lib/supabase/require-auth"
+import { createServerClient } from "@/lib/supabase/server"
 
 /** Segment config must be static; runtime can use ASSISTANT_MAX_DURATION / Vercel. */
 export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   // RF-005 (CAP-01): exigir sesión antes de consumir el modelo.
-  const { error: authError } = await requireAuth()
+  const { user, error: authError } = await requireAuth()
   if (authError) return authError
 
   try {
+    let organizationId: string | null = null
+    if (user?.id) {
+      const supabase = await createServerClient()
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("organization_id")
+        .eq("id", user.id)
+        .maybeSingle()
+      organizationId = profile?.organization_id ?? null
+    }
+
     if (!process.env.OPENAI_API_KEY?.trim()) {
       return NextResponse.json(
         { error: "OpenAI API key not configured" },
@@ -51,6 +63,7 @@ export async function POST(req: NextRequest) {
     const { text: responseText, source: answerSource } = await runRagFirstThenGeneralChat(
       message,
       conversationHistory,
+      { organizationId },
     )
 
     return NextResponse.json({

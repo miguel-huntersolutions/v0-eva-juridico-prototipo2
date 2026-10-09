@@ -47,13 +47,17 @@ async function getProcessWithOrg(service: ReturnType<typeof getServiceClient>, p
   return data
 }
 
-/** Periodos de ley de garantías que cubren alguna de las fechas dadas. */
+/** Periodos de ley de garantías de la org que cubren alguna de las fechas dadas. */
 async function findGuaranteePeriods(
   service: ReturnType<typeof getServiceClient>,
   dates: string[],
+  organizationId: string | null | undefined,
 ) {
-  if (dates.length === 0) return []
-  const { data: periods } = await service.from("guarantee_law_periods").select("*")
+  if (dates.length === 0 || !organizationId) return []
+  const { data: periods } = await service
+    .from("guarantee_law_periods")
+    .select("*")
+    .eq("organization_id", organizationId)
   return (periods || []).filter((p) =>
     dates.some((d) => d >= p.starts_on && d <= p.ends_on),
   )
@@ -112,7 +116,7 @@ export async function GET(
 
     // Advertencia de ley de garantías vigente sobre las fechas cargadas
     const dates = mapped.filter((s) => s.dueDate).map((s) => s.dueDate as string)
-    const periods = await findGuaranteePeriods(service, dates)
+    const periods = await findGuaranteePeriods(service, dates, orgId)
 
     return NextResponse.json({
       stages: mapped,
@@ -191,7 +195,7 @@ export async function PUT(
 
     // CA-046.1: advertir si alguna fecha cae en ley de garantías
     const dates = withDates.map((s) => s.dueDate as string)
-    const periods = await findGuaranteePeriods(service, dates)
+    const periods = await findGuaranteePeriods(service, dates, orgId)
     if (periods.length > 0 && !confirmGuarantee) {
       const p = periods[0]
       return NextResponse.json(

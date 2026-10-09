@@ -1,9 +1,9 @@
 /**
- * CAP-11 (RF-046): administración de los periodos de ley de garantías.
+ * CAP-11 (RF-046): periodos de ley de garantías por organización.
  *
- * GET    → lista los periodos (cualquier usuario autenticado: EVA los advierte).
- * POST   → crea un periodo (SOLO superadmin).
- * DELETE → elimina un periodo (?id=) (SOLO superadmin).
+ * GET    → periodos de la org del usuario (EVA / UI).
+ * POST   → crea (solo org-superadmin de esa org).
+ * DELETE → elimina (solo org-superadmin dueño del periodo).
  */
 
 import { NextRequest, NextResponse } from "next/server"
@@ -32,15 +32,32 @@ async function getProfile() {
   return { user, profile }
 }
 
-export async function GET() {
+function isOrgSuperadmin(profile: { role?: string | null; organization_id?: string | null } | null) {
+  return profile?.role === "superadmin" && !!profile.organization_id
+}
+
+export async function GET(request: NextRequest) {
   try {
-    const { user } = await getProfile()
+    const { user, profile } = await getProfile()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+    const url = new URL(request.url)
+    const orgParam = url.searchParams.get("orgId")
+    // Org-SA / admin / member: su org. Plataforma puede pedir orgId explícito (solo lectura).
+    const orgId =
+      profile?.role === "superadmin" && !profile.organization_id
+        ? orgParam
+        : profile?.organization_id || orgParam
+
+    if (!orgId) {
+      return NextResponse.json({ error: "organization_id is required" }, { status: 400 })
+    }
 
     const service = getServiceClient()
     const { data, error } = await service
       .from("guarantee_law_periods")
-      .select("id, name, starts_on, ends_on, scope, created_at")
+      .select("id, name, starts_on, ends_on, scope, organization_id, created_at")
+      .eq("organization_id", orgId)
       .order("starts_on", { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -57,8 +74,11 @@ export async function POST(request: NextRequest) {
   try {
     const { user, profile } = await getProfile()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    if (profile?.role !== "superadmin" || profile.organization_id) {
-      return NextResponse.json({ error: "Solo el superadministrador de plataforma administra la ley de garantías" }, { status: 403 })
+    if (!isOrgSuperadmin(profile)) {
+      return NextResponse.json(
+        { error: "Solo el superadministrador de la organización administra los periodos de restricción" },
+        { status: 403 },
+      )
     }
 
     const body = await request.json().catch(() => ({}))
@@ -74,10 +94,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "La fecha de fin no puede ser anterior a la de inicio" }, { status: 400 })
     }
 
+    const organizationId = profile!.organization_id as string
     const service = getServiceClient()
     const { data, error } = await service
       .from("guarantee_law_periods")
-      .insert({ name, starts_on: startsOn, ends_on: endsOn, scope, created_by: user.id })
+      .insert({
+        name,
+        starts_on: startsOn,
+        ends_on: endsOn,
+        scope,
+        organization_id: organizationId,
+        created_by: user.id,
+      })
       .select()
       .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -95,14 +123,27 @@ export async function DELETE(request: NextRequest) {
   try {
     const { user, profile } = await getProfile()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    if (profile?.role !== "superadmin" || profile.organization_id) {
-      return NextResponse.json({ error: "Solo el superadministrador de plataforma administra la ley de garantías" }, { status: 403 })
+    if (!isOrgSuperadmin(profile)) {
+      return NextResponse.json(
+        { error: "Solo el superadministrador de la organización administra los periodos de restricción" },
+        { status: 403 },
+      )
     }
 
     const id = new URL(request.url).searchParams.get("id")
     if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 })
 
     const service = getServiceClient()
+    const { data: existing } = await service
+      .from("guarantee_law_periods")
+      .select("id, organization_id")
+      .eq("id", id)
+      .maybeSingle()
+
+    if (!existing || existing.organization_id !== profile!.organization_id) {
+      return NextResponse.json({ error: "Periodo no encontrado" }, { status: 404 })
+    }
+
     const { error } = await service.from("guarantee_law_periods").delete().eq("id", id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

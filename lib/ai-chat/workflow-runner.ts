@@ -322,6 +322,8 @@ type WorkflowInput = { input_as_text: string }
 export type RunWorkflowOptions = {
   /** Si true, no se ejecutan guardrails (evita que el prompt largo del RAG dispare jailbreak y devuelva el JSON de guardrails en vez de la respuesta del agente). */
   skipGuardrails?: boolean
+  /** Organización del usuario para filtrar periodos de restricción. */
+  organizationId?: string | null
 }
 
 /**
@@ -461,7 +463,7 @@ export async function runRagFirstThenGeneralChat(
   conversationHistory: ChatMessage[] = [],
   options: RunWorkflowOptions = {},
 ): Promise<{ text: string; source: "documents" | "general" }> {
-  const { skipGuardrails = false } = options
+  const { skipGuardrails = false, organizationId = null } = options
   const workflow: WorkflowInput = { input_as_text: inputText }
 
   const agentHistory: AgentInputItem[] = convertMessagesToAgentInput(conversationHistory)
@@ -531,7 +533,7 @@ export async function runRagFirstThenGeneralChat(
       { role: "user" as const, content: effectiveUserText },
     ]
 
-    const restrictionContext = await buildGuaranteeLawEvaContext(effectiveUserText)
+    const restrictionContext = await buildGuaranteeLawEvaContext(effectiveUserText, organizationId)
     const result = await generateText({
       model: openaiModel,
       system: `${getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT)}${restrictionContext}`,

@@ -32,7 +32,13 @@ import {
 } from "@/components/ui/table"
 import { ScrollText, Download, Loader2, Building, FileText } from "lucide-react"
 import { useProfile } from "@/hooks/use-profile"
-import { getEntities, type Entity } from "@/lib/supabase/client-data-access"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
+import {
+  getEntities,
+  getOrganizations,
+  type Entity,
+  type OrganizationMapped,
+} from "@/lib/supabase/client-data-access"
 
 interface AuditEvent {
   id: string
@@ -79,7 +85,10 @@ function detailsToText(details: Record<string, unknown> | null): string {
 export default function AuditPage() {
   const { profile, isLoading: isLoadingProfile } = useProfile()
   const isAdmin = profile?.role === "admin" || profile?.role === "superadmin"
+  const platformSa = isPlatformSuperadmin(profile)
 
+  const [organizations, setOrganizations] = React.useState<OrganizationMapped[]>([])
+  const [orgFilter, setOrgFilter] = React.useState<string>("all")
   const [entities, setEntities] = React.useState<Entity[]>([])
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
   const [fromDate, setFromDate] = React.useState("")
@@ -93,21 +102,40 @@ export default function AuditPage() {
   const [entityDocsName, setEntityDocsName] = React.useState<string | null>(null)
   const [isLoadingDocs, setIsLoadingDocs] = React.useState(false)
 
-  // Cargar entidades de la organización
+  const effectiveOrgId = platformSa
+    ? orgFilter !== "all"
+      ? orgFilter
+      : null
+    : profile?.organization_id || null
+
+  // Plataforma: listar organizaciones para filtrar auditoría
   React.useEffect(() => {
-    if (!profile?.organization_id) return
-    getEntities(profile.organization_id)
+    if (!platformSa) return
+    getOrganizations()
+      .then(setOrganizations)
+      .catch(() => setOrganizations([]))
+  }, [platformSa])
+
+  // Cargar entidades de la organización efectiva
+  React.useEffect(() => {
+    if (!effectiveOrgId) {
+      setEntities([])
+      setEntityFilter("all")
+      return
+    }
+    getEntities(effectiveOrgId)
       .then(setEntities)
       .catch(() => setEntities([]))
-  }, [profile?.organization_id])
+  }, [effectiveOrgId])
 
   const buildQuery = React.useCallback(() => {
     const params = new URLSearchParams()
+    if (platformSa && orgFilter !== "all") params.set("orgId", orgFilter)
     if (entityFilter !== "all") params.set("entityId", entityFilter)
     if (fromDate) params.set("from", fromDate)
     if (toDate) params.set("to", toDate)
     return params.toString()
-  }, [entityFilter, fromDate, toDate])
+  }, [platformSa, orgFilter, entityFilter, fromDate, toDate])
 
   const loadEvents = React.useCallback(async () => {
     setIsLoadingEvents(true)
@@ -191,7 +219,9 @@ export default function AuditPage() {
           Auditoría y Trazabilidad
         </h1>
         <p className="text-sm text-muted-foreground">
-          Registro inalterable de eventos de la organización: procesos, documentos, asignaciones y accesos.
+          {platformSa
+            ? "Registro inalterable de eventos. Como superadmin de plataforma puedes ver todas las organizaciones o filtrar por una."
+            : "Registro inalterable de eventos de la organización: procesos, documentos, asignaciones y accesos."}
         </p>
       </div>
 
@@ -199,16 +229,55 @@ export default function AuditPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Filtros</CardTitle>
-          <CardDescription>Filtra por entidad y/o rango de fechas</CardDescription>
+          <CardDescription>
+            {platformSa
+              ? "Filtra por organización, entidad y/o rango de fechas"
+              : "Filtra por entidad y/o rango de fechas"}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-3">
+            {platformSa && (
+              <div className="space-y-1">
+                <Label htmlFor="audit-org">Organización</Label>
+                <Select
+                  value={orgFilter}
+                  onValueChange={(v) => {
+                    setOrgFilter(v)
+                    setEntityFilter("all")
+                  }}
+                >
+                  <SelectTrigger id="audit-org" className="w-full sm:w-[260px]">
+                    <Building className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Organización" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las organizaciones</SelectItem>
+                    {organizations.map((o) => (
+                      <SelectItem key={o.id} value={o.id}>
+                        {o.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1">
               <Label htmlFor="audit-entity">Entidad</Label>
-              <Select value={entityFilter} onValueChange={setEntityFilter}>
+              <Select
+                value={entityFilter}
+                onValueChange={setEntityFilter}
+                disabled={platformSa && !effectiveOrgId}
+              >
                 <SelectTrigger id="audit-entity" className="w-full sm:w-[240px]">
                   <Building className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Entidad" />
+                  <SelectValue
+                    placeholder={
+                      platformSa && !effectiveOrgId
+                        ? "Elige una organización"
+                        : "Entidad"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas las entidades</SelectItem>

@@ -60,6 +60,8 @@ interface NavItem {
   badge?: string
   /** Solo superadmin de plataforma (sin organization_id). */
   platformOnly?: boolean
+  /** Solo superadmin de organización (con organization_id). */
+  orgOnly?: boolean
 }
 
 const navItems: NavItem[] = [
@@ -87,13 +89,14 @@ const navItems: NavItem[] = [
     // Visible para plataforma y org-superadmin (gestiona plantillas de su tenant)
   },
   { title: "Plantillas", href: "/superadmin/templates", icon: FileStack, roles: ["superadmin"] },
-  // CAP-11 (RF-046): periodos de ley de garantías
+  // CAP-11 (RF-046): periodos por organización (solo org-superadmin)
   {
     title: "Periodos de restricción",
     href: "/superadmin/guarantee-law",
     icon: Scale,
     roles: ["superadmin"],
-    platformOnly: true,
+    /** Solo superadmin con organization_id (no plataforma). */
+    orgOnly: true,
   },
 
   // Admin items (también visibles para superadmin de org)
@@ -481,6 +484,7 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
         if (item.platformOnly) return false
         if (item.href === "/superadmin/templates") return true
         if (item.href === "/superadmin/process-types") return true
+        if (item.href === "/superadmin/guarantee-law") return true
         if (item.href === "/dashboard" && item.roles.includes("superadmin")) return true
         if (item.roles.includes("admin") && item.href.startsWith("/admin")) {
           // No opera procesos/documentos; eso es del admin/member del bufete
@@ -500,6 +504,7 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
     return navItems.filter((item) => {
       if (!item.roles.includes(effectiveRole)) return false
       if (item.platformOnly && !platformSa) return false
+      if (item.orgOnly && !orgSa) return false
       return true
     })
   }, [effectiveRole, orgSa, platformSa])

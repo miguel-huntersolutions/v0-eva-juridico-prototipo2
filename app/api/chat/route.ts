@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server"
 import { createChatRoute } from "@/lib/ai-chat/create-chat-api-route"
 import { requireAuth } from "@/lib/supabase/require-auth"
+import { createServerClient } from "@/lib/supabase/server"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 import { getChatMaxDuration } from "@/lib/app-config"
 import {
@@ -26,9 +26,9 @@ const BASE_SYSTEM_PROMPT = `${ASESOR_JURIDICO_CHAT_WEB_MODE_PREFIX}${getAsesorJu
 - Al cierre, cuando aplique: **Fuentes consultadas:** (normas citadas) y recordatorio breve de la advertencia ética si el caso lo requiere.`
 
 /** CA-046.2: periodos de EVA + etapas si el usuario cita un código de proceso. */
-async function buildSystemPrompt(userHint: string): Promise<string> {
+async function buildSystemPrompt(userHint: string, organizationId?: string | null): Promise<string> {
   try {
-    const extra = await buildGuaranteeLawEvaContext(userHint)
+    const extra = await buildGuaranteeLawEvaContext(userHint, organizationId)
     return extra ? `${BASE_SYSTEM_PROMPT}${extra}` : BASE_SYSTEM_PROMPT
   } catch {
     return BASE_SYSTEM_PROMPT
@@ -71,7 +71,23 @@ export async function POST(req: Request) {
   } catch {
     userHint = ""
   }
-  const systemPrompt = await buildSystemPrompt(userHint)
+
+  let organizationId: string | null = null
+  try {
+    if (user?.id) {
+      const supabase = await createServerClient()
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("organization_id")
+        .eq("id", user.id)
+        .maybeSingle()
+      organizationId = profile?.organization_id ?? null
+    }
+  } catch {
+    organizationId = null
+  }
+
+  const systemPrompt = await buildSystemPrompt(userHint, organizationId)
   const handler = createChatRoute({
     systemPrompt,
     model: getOpenAIChatModelString(),

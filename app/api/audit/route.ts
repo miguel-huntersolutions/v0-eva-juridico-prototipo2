@@ -79,12 +79,15 @@ export async function GET(request: NextRequest) {
     const to = url.searchParams.get("to")
     const format = url.searchParams.get("format")
 
-    // Organización a consultar: la del admin; el superadmin puede pasar orgId
+    // Organización: admin/org-SA usa la suya; plataforma puede pasar orgId o ver todas
+    const isPlatformSa = profile.role === "superadmin" && !profile.organization_id
     const orgId =
       profile.role === "superadmin"
         ? url.searchParams.get("orgId") || profile.organization_id
         : profile.organization_id
-    if (!orgId) return NextResponse.json({ error: "orgId is required" }, { status: 400 })
+    if (!orgId && !isPlatformSa) {
+      return NextResponse.json({ error: "orgId is required" }, { status: 400 })
+    }
 
     // Si filtra por entidad: procesos de esa entidad (para mapear eventos)
     let entityName: string | null = null
@@ -95,7 +98,7 @@ export async function GET(request: NextRequest) {
         .select("id, name, organization_id")
         .eq("id", entityId)
         .single()
-      if (!entity || entity.organization_id !== orgId) {
+      if (!entity || (orgId && entity.organization_id !== orgId)) {
         return NextResponse.json({ error: "Entity not found" }, { status: 404 })
       }
       entityName = entity.name
@@ -108,9 +111,10 @@ export async function GET(request: NextRequest) {
       .select(
         "id, action, details, ip, created_at, process_id, document_id, actor:profiles!audit_log_actor_id_fkey(name, email), process:processes(code)",
       )
-      .eq("organization_id", orgId)
       .order("created_at", { ascending: false })
       .limit(2000)
+
+    if (orgId) query = query.eq("organization_id", orgId)
 
     if (processId) query = query.eq("process_id", processId)
     if (processIdsForEntity) {
