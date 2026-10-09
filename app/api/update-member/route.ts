@@ -29,7 +29,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { memberId, name, role, avatarUrl, entityId } = body
+    const { memberId, name, role, avatarUrl, entityId, organizationId } = body
 
     if (!memberId) {
       return NextResponse.json(
@@ -66,6 +66,9 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 })
     }
 
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
+    const isOrgSuperadmin = profile.role === "superadmin" && !!profile.organization_id
+
     // If user is admin (not superadmin), verify they can only update members in their own organization
     if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
       return NextResponse.json(
@@ -74,10 +77,32 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // Verify that admins can only update members (not change roles to admin)
-    if (profile.role === "admin" && role && role === "admin") {
+    if (isOrgSuperadmin && profile.organization_id !== memberProfile.organization_id) {
       return NextResponse.json(
-        { error: "Forbidden: Admins can only update members, not change roles to admin" },
+        { error: "Forbidden: Solo puedes actualizar usuarios de tu organización" },
+        { status: 403 },
+      )
+    }
+
+    // Verify that admins can only update members (not change roles to admin)
+    if (profile.role === "admin" && role && (role === "admin" || role === "superadmin")) {
+      return NextResponse.json(
+        { error: "Forbidden: Admins can only update members, not change roles to admin/superadmin" },
+        { status: 403 },
+      )
+    }
+
+    if (role === "superadmin" && !isPlatformSuperadmin) {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede asignar superadmin de organización" },
+        { status: 403 },
+      )
+    }
+
+    // Org superadmin cannot promote/demote other org superadmins
+    if (isOrgSuperadmin && role === "superadmin") {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede asignar superadmin de organización" },
         { status: 403 },
       )
     }
@@ -87,6 +112,10 @@ export async function PUT(request: NextRequest) {
     if (name !== undefined) updateData.name = name
     if (role !== undefined) updateData.role = role
     if (avatarUrl !== undefined) updateData.avatar_url = avatarUrl
+    // Platform may assign a user without org into this tenant
+    if (organizationId !== undefined && isPlatformSuperadmin) {
+      updateData.organization_id = organizationId
+    }
     if (entityId !== undefined) {
       if (entityId === null || entityId === "") {
         updateData.entity_id = null

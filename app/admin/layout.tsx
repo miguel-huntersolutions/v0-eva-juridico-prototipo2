@@ -9,10 +9,12 @@ import { useImpersonation } from "@/lib/impersonation-context"
 import { OrganizationSelector } from "@/components/admin/organization-selector"
 import { Loader2 } from "lucide-react"
 import { FloatingChat } from "@/components/floating-chat/floating-chat"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { profile, isLoading: profileLoading } = useProfile()
-  const { actualRole, isSimulating, isLoaded: roleLoaded } = useRoleSwitcher(profile?.role)
+  const platformSa = isPlatformSuperadmin(profile)
+  const { actualRole, isSimulating, isLoaded: roleLoaded } = useRoleSwitcher(profile?.role, platformSa)
   const {
     effectiveOrganizationId,
     needsOrganizationSelection,
@@ -20,8 +22,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     selectOrganization,
   } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin: actualRole === "superadmin",
-    isSimulatingAdmin: isSimulating && actualRole === "superadmin",
+    isSuperadmin: platformSa,
+    isSimulatingAdmin: isSimulating && platformSa,
   })
   const { isImpersonating } = useImpersonation()
 

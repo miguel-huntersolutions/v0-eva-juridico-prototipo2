@@ -50,6 +50,7 @@ import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { NotificationsBell } from "@/components/member/notifications-bell"
+import { isOrgSuperadmin, isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 interface NavItem {
   title: string
@@ -57,19 +58,45 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>
   roles: UserRole[]
   badge?: string
+  /** Solo superadmin de plataforma (sin organization_id). */
+  platformOnly?: boolean
 }
 
 const navItems: NavItem[] = [
   // Superadmin items
   { title: "Panel Principal", href: "/dashboard", icon: LayoutDashboard, roles: ["superadmin"] },
-  { title: "Usuarios pendientes", href: "/superadmin/pending-users", icon: Users, roles: ["superadmin"] },
-  { title: "Organizaciones", href: "/superadmin/organizations", icon: Building2, roles: ["superadmin"] },
-  { title: "Tipos de Proceso", href: "/superadmin/process-types", icon: FolderKanban, roles: ["superadmin"] },
+  {
+    title: "Usuarios pendientes",
+    href: "/superadmin/pending-users",
+    icon: Users,
+    roles: ["superadmin"],
+    platformOnly: true,
+  },
+  {
+    title: "Organizaciones",
+    href: "/superadmin/organizations",
+    icon: Building2,
+    roles: ["superadmin"],
+    platformOnly: true,
+  },
+  {
+    title: "Tipos de Proceso",
+    href: "/superadmin/process-types",
+    icon: FolderKanban,
+    roles: ["superadmin"],
+    platformOnly: true,
+  },
   { title: "Plantillas", href: "/superadmin/templates", icon: FileStack, roles: ["superadmin"] },
   // CAP-11 (RF-046): periodos de ley de garantías
-  { title: "Periodos de restricción", href: "/superadmin/guarantee-law", icon: Scale, roles: ["superadmin"] },
+  {
+    title: "Periodos de restricción",
+    href: "/superadmin/guarantee-law",
+    icon: Scale,
+    roles: ["superadmin"],
+    platformOnly: true,
+  },
 
-  // Admin items
+  // Admin items (también visibles para superadmin de org)
   { title: "Panel Principal", href: "/dashboard", icon: LayoutDashboard, roles: ["admin"] },
   { title: "Entidades", href: "/admin/entities", icon: Building, roles: ["admin"] },
   { title: "Miembros", href: "/admin/members", icon: Users, roles: ["admin"] },
@@ -432,19 +459,45 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
   const userAvatar =
     ("avatar_url" in userData ? userData.avatar_url : null) || ("avatar" in userData ? (userData as any).avatar : null)
 
-  const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(actualRole)
+  const platformSa = isPlatformSuperadmin(profile)
+  const orgSa = isOrgSuperadmin(profile)
+
+  const { effectiveRole, canSwitchRole, isSimulating, switchToRole, resetRole } = useRoleSwitcher(
+    actualRole,
+    platformSa,
+  )
   const { isImpersonating, impersonatedOrg, stopImpersonation } = useImpersonation()
 
   const { selectedOrganization, canChangeOrganization, clearSelection } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin: actualRole === "superadmin",
+    isSuperadmin: platformSa,
     isSimulatingAdmin: isSimulating && effectiveRole === "admin",
   })
 
-  const filteredItems = React.useMemo(
-    () => navItems.filter((item) => item.roles.includes(effectiveRole)),
-    [effectiveRole],
-  )
+  const filteredItems = React.useMemo(() => {
+    // Superadmin de org: plantillas + operación de admin de su tenant
+    if (orgSa && effectiveRole === "superadmin") {
+      return navItems.filter((item) => {
+        if (item.platformOnly) return false
+        if (item.href === "/superadmin/templates") return true
+        if (item.href === "/dashboard" && item.roles.includes("superadmin")) return true
+        if (item.roles.includes("admin") && item.href.startsWith("/admin")) return true
+        if (
+          item.roles.includes("superadmin") &&
+          ["/member/messages", "/member/assistant", "/member/audit", "/docs"].includes(item.href)
+        ) {
+          return true
+        }
+        return false
+      })
+    }
+
+    return navItems.filter((item) => {
+      if (!item.roles.includes(effectiveRole)) return false
+      if (item.platformOnly && !platformSa) return false
+      return true
+    })
+  }, [effectiveRole, orgSa, platformSa])
 
   React.useEffect(() => {
     setMobileOpen(false)
@@ -453,7 +506,7 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
       case "superadmin":
-        return "Superadministrador"
+        return orgSa ? "Superadmin (org)" : "Superadministrador"
       case "admin":
         return "Administrador"
       case "member":

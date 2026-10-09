@@ -161,7 +161,11 @@ function UpdatePasswordContent() {
             setIsLoading(false)
             return
           }
-          const { data: profileData } = await supabase.from("profiles").select("role, status").eq("id", user.id).single()
+          const { data: profileData } = await supabase
+            .from("profiles")
+            .select("role, status, organization_id")
+            .eq("id", user.id)
+            .single()
           const profile = profileData
           if (!profile || profile.status !== "approved") {
             await supabase.auth.signOut()
@@ -169,7 +173,7 @@ function UpdatePasswordContent() {
             return
           }
           const role = profile?.role || "member"
-          router.push(homePathForRole(role))
+          router.push(homePathForRole(role, profile?.organization_id))
           return
         }
         setError("Enlace inválido o expirado. Por favor, solicita una nueva invitación.")
@@ -221,7 +225,7 @@ function UpdatePasswordContent() {
       while (!profile && attempts < 5) {
         const { data: profileData } = await supabase
           .from("profiles")
-          .select("role, status")
+          .select("role, status, organization_id")
           .eq("id", user.id)
           .single()
 
@@ -243,7 +247,7 @@ function UpdatePasswordContent() {
 
       // Redirect based on role
       const role = profile?.role || "member"
-      router.push(homePathForRole(role))
+      router.push(homePathForRole(role, profile?.organization_id))
     } catch (err) {
       console.error("Error updating password:", err)
       setError(err instanceof Error ? err.message : "Error desconocido")

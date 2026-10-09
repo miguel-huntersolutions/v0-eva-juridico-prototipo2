@@ -57,8 +57,8 @@ export async function POST(request: NextRequest) {
   try {
     const { user, profile } = await getProfile()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    if (profile?.role !== "superadmin") {
-      return NextResponse.json({ error: "Solo el superadministrador administra la ley de garantías" }, { status: 403 })
+    if (profile?.role !== "superadmin" || profile.organization_id) {
+      return NextResponse.json({ error: "Solo el superadministrador de plataforma administra la ley de garantías" }, { status: 403 })
     }
 
     const body = await request.json().catch(() => ({}))
@@ -95,8 +95,8 @@ export async function DELETE(request: NextRequest) {
   try {
     const { user, profile } = await getProfile()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    if (profile?.role !== "superadmin") {
-      return NextResponse.json({ error: "Solo el superadministrador administra la ley de garantías" }, { status: 403 })
+    if (profile?.role !== "superadmin" || profile.organization_id) {
+      return NextResponse.json({ error: "Solo el superadministrador de plataforma administra la ley de garantías" }, { status: 403 })
     }
 
     const id = new URL(request.url).searchParams.get("id")

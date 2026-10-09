@@ -288,7 +288,7 @@ function AuthCallbackContent() {
           }).catch(() => {})
 
           // Redirect based on role
-          router.push(homePathForRole(role))
+          router.push(homePathForRole(role, profile?.organization_id))
         } else {
           // No tokens, check if we're already authenticated
           const {
@@ -395,7 +395,7 @@ function AuthCallbackContent() {
             }
 
             const role = profile?.role || "member"
-            router.push(homePathForRole(role))
+            router.push(homePathForRole(role, profile?.organization_id))
           } else {
             setError("No se recibieron tokens de autenticación")
             setIsLoading(false)

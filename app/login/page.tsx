@@ -107,7 +107,11 @@ function LoginPageContent() {
         } = await supabase.auth.getUser()
 
         if (user) {
-          const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", user.id).single()
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role, status, organization_id")
+            .eq("id", user.id)
+            .single()
 
           // Check if user is approved
           if (!profile || profile.status !== "approved") {
@@ -119,7 +123,7 @@ function LoginPageContent() {
 
           const role = profile?.role || "member"
           logger.auth("SESSION_CHECK", user.id, role, true)
-          const route = homePathForRole(role)
+          const route = homePathForRole(role, profile?.organization_id)
           window.location.href = route
           return
         }
@@ -161,7 +165,11 @@ function LoginPageContent() {
       if (data.user) {
         await new Promise((resolve) => setTimeout(resolve, 200))
 
-        const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", data.user.id).single()
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, status, organization_id")
+          .eq("id", data.user.id)
+          .single()
 
         // Check if user is approved
         if (!profile || profile.status !== "approved") {
@@ -173,7 +181,7 @@ function LoginPageContent() {
 
         const role = profile?.role || "member"
         logger.auth("LOGIN", data.user.id, role, true)
-        const route = homePathForRole(role)
+        const route = homePathForRole(role, profile?.organization_id)
 
         window.location.href = route
       }

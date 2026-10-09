@@ -57,6 +57,8 @@ export interface Template {
   /** Entidad cliente; null = aplica a cualquier entidad (plantillas legadas). */
   entityId?: string | null
   entityName?: string | null
+  /** Organización dueña; null = legado/global. */
+  organizationId?: string | null
 }
 
 /** Entidades activas para asignar plantillas (superadmin). */
@@ -101,6 +103,7 @@ function mapDbTemplateRow(t: Record<string, unknown>): Template {
     createdAt: typeof t.created_at === "string" ? t.created_at.split("T")[0] : "",
     entityId: (t.entity_id as string | null) ?? null,
     entityName: ent?.name ?? null,
+    organizationId: (t.organization_id as string | null) ?? null,
   }
 }
 
@@ -789,6 +792,7 @@ export async function createTemplate(data: {
   name: string
   processTypeId: string
   entityId: string
+  organizationId: string
   fileUrl: string
   description?: string
   variables?: string[]
@@ -798,6 +802,9 @@ export async function createTemplate(data: {
   if (!data.entityId?.trim()) {
     throw new Error("Debe seleccionar una entidad para la plantilla")
   }
+  if (!data.organizationId?.trim()) {
+    throw new Error("Debe indicar la organización de la plantilla")
+  }
 
   const { data: newTemplate, error } = await supabase
     .from("templates")
@@ -805,6 +812,7 @@ export async function createTemplate(data: {
       name: data.name,
       process_type_id: data.processTypeId,
       entity_id: data.entityId.trim(),
+      organization_id: data.organizationId.trim(),
       file_url: data.fileUrl,
       // CAP-10 (RF-033): variables detectadas al cargar (incluye minúsculas)
       detected_variables: data.variables || [],
@@ -1373,7 +1381,7 @@ export async function getOrganizationMembers(organizationId: string) {
 export async function createMember(data: {
   email: string
   name: string
-  role: "admin" | "member"
+  role: "superadmin" | "admin" | "member"
   organizationId: string
   avatarUrl?: string
   isInvitation?: boolean
@@ -1449,23 +1457,27 @@ export async function deleteMember(id: string) {
 
 export async function assignExistingMember(data: {
   userId: string
-  role: "admin" | "member"
+  role: "superadmin" | "admin" | "member"
   organizationId: string
 }) {
-  const supabase = createBrowserClient()
-
-  const { data: updatedProfile, error } = await supabase
-    .from("profiles")
-    .update({
+  // Via API para aplicar reglas de plataforma vs org-superadmin
+  const response = await fetch("/api/update-member", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      memberId: data.userId,
       role: data.role,
-      organization_id: data.organizationId,
-    })
-    .eq("id", data.userId)
-    .select()
-    .single()
+      organizationId: data.organizationId,
+    }),
+  })
 
-  if (error) throw error
-  return updatedProfile as Profile
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.message || errorData.error || "Failed to assign member")
+  }
+
+  const result = await response.json()
+  return result.profile as Profile
 }
 
 export async function searchUserByEmail(email: string) {

@@ -42,7 +42,7 @@ export async function GET(_request: NextRequest) {
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("role")
+      .select("role, organization_id")
       .eq("id", user.id)
       .single()
 
@@ -58,9 +58,9 @@ export async function GET(_request: NextRequest) {
       )
     }
 
-    if (!profile || profile.role !== "superadmin") {
+    if (!profile || profile.role !== "superadmin" || profile.organization_id) {
       return NextResponse.json(
-        { error: "Forbidden: Only superadmins can view pending users" },
+        { error: "Forbidden: Only platform superadmins can view pending users" },
         { status: 403 },
       )
     }

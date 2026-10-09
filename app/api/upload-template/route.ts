@@ -22,6 +22,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    if (profile?.role !== "superadmin") {
+      return NextResponse.json({ error: "Forbidden: only superadmins can upload templates" }, { status: 403 })
+    }
+
     // Check if user has valid Google OAuth tokens
     const hasTokens = await hasValidTokens(user.id)
     if (!hasTokens) {
@@ -96,6 +101,11 @@ export async function DELETE(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    if (profile?.role !== "superadmin") {
+      return NextResponse.json({ error: "Forbidden: only superadmins can delete template files" }, { status: 403 })
     }
 
     // Check if user has valid Google OAuth tokens

@@ -47,10 +47,30 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Superadmin: admin | member | entity_contact. Admin: member | entity_contact.
-    let finalRole: "admin" | "member" | "entity_contact" = "member"
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
+    const isOrgSuperadmin = profile.role === "superadmin" && !!profile.organization_id
 
-    if (profile.role === "superadmin") {
+    // Org-scoped superadmin: only within their org, roles admin|member|entity_contact
+    if (isOrgSuperadmin && profile.organization_id !== organizationId) {
+      return NextResponse.json(
+        { error: "Forbidden: Solo puedes crear usuarios en tu organización" },
+        { status: 403 },
+      )
+    }
+
+    // Platform: admin | member | entity_contact | superadmin (tenant).
+    // Org superadmin / admin: no pueden crear superadmin.
+    let finalRole: "superadmin" | "admin" | "member" | "entity_contact" = "member"
+
+    if (role === "superadmin") {
+      if (!isPlatformSuperadmin) {
+        return NextResponse.json(
+          { error: "Forbidden: Solo el superadmin de plataforma puede asignar superadmin de organización" },
+          { status: 403 },
+        )
+      }
+      finalRole = "superadmin"
+    } else if (isPlatformSuperadmin || isOrgSuperadmin) {
       if (role === "admin") finalRole = "admin"
       else if (role === "entity_contact") finalRole = "entity_contact"
       else finalRole = "member"

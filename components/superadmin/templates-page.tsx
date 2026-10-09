@@ -856,10 +856,16 @@ export function TemplatesPage() {
         ? `fileId:${uploadData.fileId}|path:${uploadData.drivePath || uploadData.directLink || uploadData.webViewLink}`
         : uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
 
+      const selectedEntity = entityOptions.find((e) => e.id === selectedEntityId)
+      if (!selectedEntity?.organizationId) {
+        throw new Error("No se pudo determinar la organización de la entidad seleccionada")
+      }
+
       const newTemplate = await createTemplate({
         name: templateName,
         processTypeId: selectedProcessTypeId,
         entityId: selectedEntityId,
+        organizationId: selectedEntity.organizationId,
         fileUrl: fileUrl, // Store fileId and path for easy access
         description: templateDescription,
         variables: extractedTags, // Save the extracted tags

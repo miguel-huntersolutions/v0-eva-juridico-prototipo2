@@ -5,7 +5,7 @@ import type { UserRole } from "@/lib/types/database"
 
 const SIMULATED_ROLE_KEY = "eva_simulated_role"
 
-export function useRoleSwitcher(actualRole: UserRole | undefined) {
+export function useRoleSwitcher(actualRole: UserRole | undefined, canSimulate = true) {
   const [simulatedRole, setSimulatedRole] = React.useState<UserRole | null>(null)
   const [isLoaded, setIsLoaded] = React.useState(false)
 
@@ -20,16 +20,16 @@ export function useRoleSwitcher(actualRole: UserRole | undefined) {
     }
   }, [])
 
-  // El rol efectivo es el simulado (si existe y el usuario es superadmin) o el actual
+  // El rol efectivo es el simulado (si existe y el usuario es superadmin de plataforma) o el actual
   const effectiveRole = React.useMemo(() => {
-    if (actualRole === "superadmin" && simulatedRole) {
+    if (actualRole === "superadmin" && canSimulate && simulatedRole) {
       return simulatedRole
     }
     return actualRole || "member"
-  }, [actualRole, simulatedRole])
+  }, [actualRole, simulatedRole, canSimulate])
 
-  // Solo superadmins pueden cambiar de rol
-  const canSwitchRole = actualRole === "superadmin"
+  // Solo superadmin de plataforma puede simular roles
+  const canSwitchRole = actualRole === "superadmin" && canSimulate
 
   const switchToRole = React.useCallback((role: UserRole | null) => {
     if (role === null || role === "superadmin") {
