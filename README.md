@@ -6,6 +6,20 @@ EVA Jurídico es una plataforma SaaS (Software as a Service) diseñada para opti
 
 ---
 
+## Documentación técnica
+
+| Documento | Contenido |
+|---|---|
+| [docs/onboarding.md](docs/onboarding.md) | Entorno local paso a paso y flujo de trabajo con PRs |
+| [docs/arquitectura.md](docs/arquitectura.md) | Cómo funcionan el código, la autenticación, el asistente EVA y la generación de documentos |
+| [docs/api.md](docs/api.md) | Referencia de las 19 rutas de `app/api` |
+| [docs/base-de-datos.md](docs/base-de-datos.md) | Modelo de datos, multi-tenant y scripts SQL |
+| [CONFIGURACION_PRODUCCION.md](CONFIGURACION_PRODUCCION.md) | URLs de OAuth en Supabase y Google para producción |
+
+> **Regla del repositorio:** nunca se hace commit ni push directo a `main`, que despliega a producción. Todo cambio entra por Pull Request desde una rama `feat/`, `fix/`, `docs/`…
+
+---
+
 ## Tabla de Contenidos
 
 1. [Descripción General](#descripción-general)
@@ -280,56 +294,27 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 ### Requisitos Previos
 
-- Node.js 18+
-- pnpm (gestor de paquetes del proyecto)
-- Proyecto de Supabase (URL, anon key y service role key)
-- API key de OpenAI con acceso al modelo y al workflow/vector store configurados
-- Credenciales OAuth2 de Google Cloud (Client ID/Secret) si se usa la integración con Drive/Sheets
+- Node.js 22+ (Vercel usa 24.x) y pnpm 10+
+- Acceso al proyecto de Supabase (URL, anon key y service role key)
+- API key de OpenAI con acceso al vector store configurado
+- Cliente OAuth de Google Cloud (Client ID/Secret) para la integración con Drive/Sheets
 
 ### Variables de Entorno
 
-```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-
-# OpenAI (asistente jurídico EVA)
-OPENAI_API_KEY=sk-...
-OPENAI_ASSISTANT_WORKFLOW_ID=wf_...
-OPENAI_VECTOR_STORE_ID=vs_...
-
-# Google OAuth (integración Drive/Sheets)
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GOOGLE_REDIRECT_URI=https://tu-dominio.com/api/google/callback
-
-# App
-NEXT_PUBLIC_APP_URL=https://tu-dominio.com
-```
+Copia [`.env.example`](.env.example) a `.env.local` y complétalo. También puedes descargarlas de Vercel: los pasos y los detalles están en [docs/onboarding.md](docs/onboarding.md#3-variables-de-entorno).
 
 ### Instalación
 
 ```bash
-# Clonar repositorio
-git clone [url-del-repositorio]
-
-# Instalar dependencias
 pnpm install
-
-# Ejecutar en desarrollo
-pnpm dev
-
-# Construir para producción
-pnpm build
-
-# Ejecutar en producción
+pnpm dev        # http://localhost:3000
+pnpm build      # build de producción
 pnpm start
 ```
 
 ### Base de Datos
 
-Las migraciones SQL se encuentran en `scripts/` (numeradas secuencialmente: creación de tablas, políticas RLS, funciones, seeds y ajustes). Deben ejecutarse en orden contra el proyecto de Supabase antes del primer despliegue.
+Las tablas se crearon con los scripts SQL de `scripts/`, aplicados a mano en Supabase. No todos deben ejecutarse, y algunos están obsoletos. Revisa [docs/base-de-datos.md](docs/base-de-datos.md) antes de crear una base nueva.
 
 ---
 
@@ -367,7 +352,7 @@ eva-juridico/
 │   │   ├── google/             # OAuth2 de Google (auth/callback)
 │   │   └── ...                 # CRUD de miembros, entidades, plantillas, etc.
 │   ├── docs/                   # Documentación interna de la app
-│   ├── login/                  # Selector de perfiles
+│   ├── login/                  # Login principal (destino del middleware)
 │   ├── globals.css
 │   ├── layout.tsx
 │   └── page.tsx
@@ -383,11 +368,12 @@ eva-juridico/
 │   │   └── use-ai-chat.ts / use-assistant-chat.ts
 │   ├── google/                  # Cliente OAuth, Drive y Sheets
 │   ├── supabase/                 # Clientes server/browser y data access
-│   ├── types/database.ts        # Tipos generados del esquema Supabase
+│   ├── types/database.ts        # Tipos del esquema (mantenidos a mano)
 │   ├── utils/                    # Generación de documentos, helpers de plantillas
 │   └── impersonation-context.tsx
-├── scripts/                     # Migraciones SQL (Supabase/PostgreSQL)
-├── middleware.ts                # Enrutamiento por rol y protección de sesión
+├── scripts/                     # Scripts SQL históricos (ver docs/base-de-datos.md)
+├── docs/                        # Documentación técnica
+├── middleware.ts                # Refresco de sesión y redirección a /login (no valida rol)
 └── README.md
 ```
 

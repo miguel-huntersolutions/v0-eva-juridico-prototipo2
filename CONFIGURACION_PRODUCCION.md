@@ -1,5 +1,7 @@
 # Configuración para Producción - Google OAuth
 
+> **Nota (oct 2026):** este documento menciona `v0-eva-juridico-project.vercel.app` y el proyecto Supabase `wyhkcydvlbcelgmxjvru`. Hoy producción corre en el proyecto Vercel `evajuridico` (`https://lexaia.huntersolutions.tech`), y su Supabase es el que indica `NEXT_PUBLIC_SUPABASE_URL` en Vercel. Los pasos siguen siendo válidos; cambia las URLs por las vigentes.
+
 ## Problema
 Cuando se hace login con Google en producción, retorna a `localhost:3000` en lugar de la URL de producción.
 
