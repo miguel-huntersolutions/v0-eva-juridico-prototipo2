@@ -15,7 +15,13 @@ const ORG_ANDINO = "a0000000-0000-4000-8000-000000000001"
 const ORG_CARIBE = "a0000000-0000-4000-8000-000000000002"
 
 const USERS = [
-  { email: "superadmin@lexia.test", name: "Sara Superadmin", role: "superadmin", organization_id: null },
+  { email: "superadmin@lexia.test", name: "Sara Superadmin (plataforma)", role: "superadmin", organization_id: null },
+  {
+    email: "superadmin.andino@lexia.test",
+    name: "Sergio Superadmin (Andino)",
+    role: "superadmin",
+    organization_id: ORG_ANDINO,
+  },
   { email: "admin@lexia.test", name: "Andrés Admin (Andino)", role: "admin", organization_id: ORG_ANDINO },
   {
     email: "asesor@lexia.test",
@@ -23,6 +29,13 @@ const USERS = [
     role: "member",
     organization_id: ORG_ANDINO,
     entities: ["b0000000-0000-4000-8000-000000000001"],
+  },
+  {
+    email: "contacto@lexia.test",
+    name: "Camilo Contacto (Alcaldía Norte)",
+    role: "entity_contact",
+    organization_id: ORG_ANDINO,
+    entity_id: "b0000000-0000-4000-8000-000000000001",
   },
   { email: "admin.caribe@lexia.test", name: "Carlos Admin (Caribe)", role: "admin", organization_id: ORG_CARIBE },
   {
@@ -71,7 +84,15 @@ for (const u of USERS) {
 
   // El trigger handle_new_user crea el perfil como member/pending; aquí se fija el rol real.
   const { error: profileError } = await admin.from("profiles").upsert(
-    { id, email: u.email, name: u.name, role: u.role, organization_id: u.organization_id, status: "approved" },
+    {
+      id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      organization_id: u.organization_id,
+      entity_id: u.entity_id ?? null,
+      status: "approved",
+    },
     { onConflict: "id" },
   )
   if (profileError) throw new Error(`${u.email} (perfil): ${profileError.message}`)

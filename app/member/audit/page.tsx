@@ -39,6 +39,7 @@ import {
   type Entity,
   type OrganizationMapped,
 } from "@/lib/supabase/client-data-access"
+import { APP_NAME } from "@/lib/brand"
 
 interface AuditEvent {
   id: string
@@ -391,7 +392,7 @@ export default function AuditPage() {
               Documentos generados{entityDocsName ? ` — ${entityDocsName}` : ""}
             </CardTitle>
             <CardDescription>
-              Contratos y documentos generados en EVA para esta entidad (los anteriores a EVA no se incluyen).
+              Contratos y documentos generados en {APP_NAME} para esta entidad (los anteriores a {APP_NAME} no se incluyen).
             </CardDescription>
           </CardHeader>
           <CardContent>

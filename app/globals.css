@@ -3,7 +3,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* EVA Jurídico - Professional Legal SaaS Theme */
+/* LexIA Tech - Professional Legal SaaS Theme */
 :root {
   --background: oklch(0.985 0.002 247);
   --foreground: oklch(0.145 0.015 260);

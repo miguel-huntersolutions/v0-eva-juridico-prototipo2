@@ -45,7 +45,7 @@ Esta integración permite almacenar los documentos de plantillas en Google Drive
 4. Si es la primera vez, configura la pantalla de consentimiento:
    - Selecciona **"External"** (o "Externo") para usuarios externos
    - Completa la información requerida:
-     - **App name**: EVA Jurídico
+     - **App name**: LexIA Tech
      - **User support email**: Tu email
      - **Developer contact information**: Tu email
    - Haz clic en **"Save and Continue"**
@@ -62,7 +62,7 @@ Esta integración permite almacenar los documentos de plantillas en Google Drive
    - Haz clic en **"Save and Continue"**
 5. Crea el OAuth client ID:
    - **Application type**: Selecciona **"Web application"**
-   - **Name**: Un nombre descriptivo (ej: "EVA Jurídico Web Client")
+   - **Name**: Un nombre descriptivo (ej: "LexIA Tech Web Client")
    - **Authorized JavaScript origins**: 
      - `http://localhost:3000` (para desarrollo)
      - `https://tu-dominio.com` (para producción)

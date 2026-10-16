@@ -17,6 +17,7 @@ import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 import { sendEmailToUserIds, wrapEmailHtml, processUrl } from "@/lib/email/brevo"
+import { APP_NAME } from "@/lib/brand"
 
 export async function POST(
   request: NextRequest,
@@ -199,7 +200,7 @@ export async function POST(
         [assigneeId],
         {
           subject,
-          text: `${text} Ábrelo en EVA: ${link}`,
+          text: `${text} Ábrelo en ${APP_NAME}: ${link}`,
           html: wrapEmailHtml(subject, [text], "Abrir proceso", link),
         },
         { organizationId: orgId, processId, kind: "process_assigned" },

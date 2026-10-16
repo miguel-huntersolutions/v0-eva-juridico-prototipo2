@@ -25,6 +25,7 @@ import { createClient } from "@/lib/supabase/client"
 import type { UserRole } from "@/lib/mock-data"
 import { homePathForRole } from "@/lib/auth/home-path"
 import { DEV_LOGIN_VISIBLE, DevLoginPanel } from "@/components/dev-login-panel"
+import { APP_NAME } from "@/lib/brand"
 
 interface ProfileOption {
   role: UserRole
@@ -256,7 +257,7 @@ function LoginPageContent() {
               <FileText className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight">EVA Jurídico</h1>
+              <h1 className="text-lg font-semibold tracking-tight">{APP_NAME}</h1>
               <p className="text-xs text-muted-foreground">Plataforma de Gestión Legal</p>
             </div>
           </div>
@@ -485,7 +486,7 @@ function LoginPageContent() {
       <footer className="border-t border-border/50 py-4">
         <div className="container mx-auto px-6">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>© 2025 EVA Jurídico. Todos los derechos reservados.</span>
+            <span>© {new Date().getFullYear()} {APP_NAME}. Todos los derechos reservados.</span>
             <div className="flex items-center gap-4">
               <span>Versión 1.0</span>
             </div>

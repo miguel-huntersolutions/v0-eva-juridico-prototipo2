@@ -33,6 +33,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { getDocsForRole, type DocContent, type DocSection, type Tutorial, type FAQ } from "@/lib/docs-content"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { APP_NAME } from "@/lib/brand"
 
 interface DocsPageProps {
   userRole?: string
@@ -458,7 +459,7 @@ function OverviewView({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground mb-3">
-            Si tienes dudas adicionales o necesitas soporte técnico, contacta al equipo de EVA Jurídico.
+            Si tienes dudas adicionales o necesitas soporte técnico, contacta al equipo de {APP_NAME}.
           </p>
           <div className="flex gap-3">
             <Button variant="outline" size="sm" className="gap-2 bg-transparent" asChild>

@@ -14,6 +14,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useEffect, useRef } from "react"
 import { FileText, Chrome, Loader2, Building2 } from "lucide-react"
+import { APP_NAME } from "@/lib/brand"
 
 export default function SignUpPage() {
   const [name, setName] = useState("")
@@ -166,7 +167,7 @@ export default function SignUpPage() {
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
               <FileText className="h-6 w-6 text-primary-foreground" />
             </div>
-            <span className="text-xl font-semibold">EVA Jurídico</span>
+            <span className="text-xl font-semibold">{APP_NAME}</span>
           </div>
 
           <Card>

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Scale, Shield, Sparkles } from "lucide-react"
 import { logger } from "@/lib/logger"
+import { APP_NAME } from "@/lib/brand"
 
 export default function Home() {
   const router = useRouter()
@@ -49,7 +50,7 @@ export default function Home() {
         <div className="text-center mb-16">
           <div className="flex items-center justify-center gap-2 mb-6">
             <Scale className="h-12 w-12 text-primary" />
-            <h1 className="text-4xl font-bold">EVA Jurídico</h1>
+            <h1 className="text-4xl font-bold">{APP_NAME}</h1>
           </div>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
             Plataforma integral de gestión jurídica con inteligencia artificial

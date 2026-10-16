@@ -6,14 +6,14 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { ImpersonationProvider } from "@/lib/impersonation-context"
 import { ImpersonationBanner } from "@/components/impersonation-banner"
 import "./globals.css"
+import { APP_DESCRIPTION, APP_TITLE } from "@/lib/brand"
 
 const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "EVA Jurídico - Plataforma de Gestión Jurídica",
-  description:
-    "Plataforma SaaS para la gestión de procesos de contratación pública y generación documental asistida por IA",
+  title: APP_TITLE,
+  description: APP_DESCRIPTION,
   generator: "v0.app",
 }
 

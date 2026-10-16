@@ -9,6 +9,7 @@ import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 import { sendEmailToUserIds, wrapEmailHtml, entitiesAdminUrl } from "@/lib/email/brevo"
+import { APP_NAME } from "@/lib/brand"
 
 export async function POST(request: NextRequest) {
   try {
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
           adminIds,
           {
             subject,
-            text: `${text} Revísala en EVA: ${link}`,
+            text: `${text} Revísala en ${APP_NAME}: ${link}`,
             html: wrapEmailHtml(subject, [text], "Revisar entidades", link),
           },
           { organizationId: profile.organization_id, kind: "entity_proposed" },

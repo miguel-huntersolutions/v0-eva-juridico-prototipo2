@@ -76,6 +76,7 @@ import {
 } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 import { isOrgSuperadmin, isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
+import { APP_NAME } from "@/lib/brand"
 
 interface UploadedFile {
   name: string
@@ -1260,7 +1261,7 @@ export function TemplatesPage() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    Solo tipos compartidos de EVA y los de su organización (no los exclusivos de otros tenants).
+                    Solo tipos compartidos de {APP_NAME} y los de su organización (no los exclusivos de otros tenants).
                   </p>
                 </div>
 

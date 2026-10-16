@@ -1,4 +1,4 @@
-// Types and configurations for EVA Jurídico platform
+// Types and configurations for LexIA Tech platform
 export type UserRole = "superadmin" | "admin" | "member"
 
 export interface User {

@@ -68,6 +68,7 @@ import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
+import { APP_NAME } from "@/lib/brand"
 
 interface MemberExtended extends Profile {
   status: "pending" | "approved" | "rejected"
@@ -1101,7 +1102,7 @@ export function MembersPage() {
                     <p className="font-medium">Vista previa del correo</p>
                     <p className="text-muted-foreground mt-1">
                       Se enviará un correo a <strong>{inviteData.email || "email@ejemplo.com"}</strong> con un enlace
-                      para registrarse y acceder a la plataforma EVA Jurídico.
+                      para registrarse y acceder a la plataforma {APP_NAME}.
                     </p>
                   </div>
                 </div>

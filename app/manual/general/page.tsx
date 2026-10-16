@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { adminDocs, memberDocs, superadminDocs, type DocContent } from "@/lib/docs-content"
 import { ManualPrintTrigger } from "@/components/docs/manual-print-trigger"
+import { APP_NAME } from "@/lib/brand"
 
 type RoleManual = {
   key: "superadmin" | "admin" | "member"
@@ -128,7 +129,7 @@ export default function ManualGeneralPage() {
       </Suspense>
       <div className="mx-auto max-w-5xl p-8 print:p-6">
         <header className="mb-10 space-y-3">
-          <h1 className="text-3xl font-bold">EVA Juridico - Manual General de Usuario</h1>
+          <h1 className="text-3xl font-bold">{APP_NAME} - Manual General de Usuario</h1>
           <p className="text-muted-foreground">
             Documento consolidado con guias de Superadministrador, Administrador y Asesor Juridico.
           </p>

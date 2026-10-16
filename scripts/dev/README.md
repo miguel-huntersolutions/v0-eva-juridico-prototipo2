@@ -13,9 +13,11 @@ Todos están aprobados. En local se entra con el panel **Acceso rápido** de `/l
 
 | Correo | Rol | Organización |
 |---|---|---|
-| `superadmin@lexia.test` | superadmin | — |
+| `superadmin@lexia.test` | superadmin de plataforma | — |
+| `superadmin.andino@lexia.test` | superadmin de organización | Bufete Demo Andino |
 | `admin@lexia.test` | admin | Bufete Demo Andino |
 | `asesor@lexia.test` | member | Bufete Demo Andino (1 entidad asignada) |
+| `contacto@lexia.test` | entity_contact | Alcaldía de Prueba del Norte |
 | `admin.caribe@lexia.test` | admin | Consultores Legales del Caribe |
 | `asesor.caribe@lexia.test` | member | Consultores Legales del Caribe (1 entidad asignada) |
 

@@ -2,7 +2,7 @@
 
 ## Descripción del Rol
 
-El **Administrador** es el responsable de gestionar una organización (bufete de abogados) específica dentro de EVA Jurídico. Tiene control sobre las entidades cliente, los miembros del equipo y la configuración de su organización.
+El **Administrador** es el responsable de gestionar una organización (bufete de abogados) específica dentro de LexIA Tech. Tiene control sobre las entidades cliente, los miembros del equipo y la configuración de su organización.
 
 ## Funcionalidades Principales
 

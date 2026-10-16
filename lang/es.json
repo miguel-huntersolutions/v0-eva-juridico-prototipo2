@@ -1,0 +1,9 @@
+{
+  "app": {
+    "name": "LexIA Tech",
+    "tagline": "Gestión Legal",
+    "title": "Plataforma de Gestión Jurídica",
+    "description": "Plataforma SaaS para la gestión de procesos de contratación pública y generación documental asistida por IA",
+    "assistantName": "Asistente LexIA"
+  }
+}
