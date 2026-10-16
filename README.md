@@ -6,6 +6,20 @@ EVA Jurídico es una plataforma SaaS (Software as a Service) diseñada para opti
 
 ---
 
+## Documentación técnica
+
+| Documento | Contenido |
+|---|---|
+| [docs/onboarding.md](docs/onboarding.md) | Entorno local, entornos (local / staging / producción) y flujo de ramas y PRs |
+| [docs/arquitectura.md](docs/arquitectura.md) | Cómo funciona cada subsistema y matriz de roles |
+| [docs/api.md](docs/api.md) | Referencia de las rutas de `app/api` |
+| [docs/base-de-datos.md](docs/base-de-datos.md) | Modelo de datos y orden de migraciones |
+| [docs/README.md](docs/README.md) | Índice de toda la documentación (incluye requisitos y especificaciones) |
+
+> **Regla del repositorio:** nunca se hace commit ni push directo a `main` (producción) ni a `develop`. Todo cambio entra por Pull Request hacia `develop`.
+
+---
+
 ## Tabla de Contenidos
 
 1. [Descripción General](#descripción-general)
@@ -45,7 +59,7 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 ### Diagrama de Contenedores
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    PLATAFORMA EVA JURÍDICO                       │
 ├─────────────────────────────────────────────────────────────────┤
@@ -63,18 +77,21 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 │           └─────────────┘ └─────────────┘ └─────────────┘       │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ### Stack Tecnológico
 
 | Capa | Tecnología |
 |------|------------|
-| Frontend | Next.js 15, React 19, TypeScript |
+| Frontend | Next.js 16 (App Router), React 19, TypeScript |
 | Estilos | Tailwind CSS v4, shadcn/ui |
-| Estado | React Context, SWR |
-| IA | Vercel AI SDK, OpenAI GPT-4 |
-| Autenticación | Sistema de roles (RBAC) |
-| Base de Datos | PostgreSQL (preparado) |
+| Backend | Route Handlers de Next.js (`app/api`) |
+| Base de datos y auth | Supabase (PostgreSQL con RLS, Auth, Storage) |
+| IA | OpenAI (Agents SDK, Vercel AI SDK, vector store para RAG) |
+| Documentos | docxtemplater + Google Drive y Sheets (OAuth por usuario) |
+| Correo | Brevo (transaccional) y SMTP de Supabase (Auth) |
+| Canales externos | API HTTP para el bot OpenClaw (Telegram / WhatsApp) |
+| Despliegue | Vercel (incluye cron) |
 
 ---
 
@@ -230,7 +247,7 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 ### Flujo 1: Creación de Proceso con Asistencia de IA
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CREACIÓN DE PROCESO                           │
 ├─────────────────────────────────────────────────────────────────┤
@@ -257,11 +274,11 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 │     └─▶ Almacenar en biblioteca de documentos                   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ### Flujo 2: Suplantación de Organización
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    SUPLANTACIÓN (SUPERADMIN)                     │
 ├─────────────────────────────────────────────────────────────────┤
@@ -285,11 +302,11 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 │     └─▶ Se redirige a /superadmin                               │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ### Flujo 3: Gestión de Entidades
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    CREAR/EDITAR ENTIDAD                          │
 ├─────────────────────────────────────────────────────────────────┤
@@ -324,11 +341,11 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 │  └─────────────────────────────────────────────────────────┘    │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ### Flujo 4: Consulta al Asistente Jurídico
 
-\`\`\`
+```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ASISTENTE JURÍDICO EVA                        │
 ├─────────────────────────────────────────────────────────────────┤
@@ -354,7 +371,7 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 │     └─▶ Opción de copiar respuesta                              │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
-\`\`\`
+```
 
 ---
 
@@ -394,47 +411,29 @@ El sistema opera bajo una arquitectura **multi-tenant**, donde:
 
 ### Requisitos Previos
 
-- Node.js 18+
-- npm o pnpm
+- Node.js 22+ y pnpm 10+
+- Acceso a Vercel (proyecto `evajuridico`) y a Supabase (proyecto de desarrollo)
 
 ### Variables de Entorno
 
-\`\`\`env
-# OpenAI (para el asistente jurídico)
-OPENAI_API_KEY=sk-...
-
-# Base de datos (cuando se implemente)
-DATABASE_URL=postgresql://...
-
-# Correo (cuando se implemente)
-SMTP_HOST=...
-SMTP_PORT=...
-\`\`\`
+Copia [`.env.example`](.env.example) a `.env.local`. La descripción de cada variable está en [docs/env-config.md](docs/env-config.md).
 
 ### Instalación
 
-\`\`\`bash
-# Clonar repositorio
-git clone [url-del-repositorio]
+```bash
+pnpm install
+pnpm dev        # http://localhost:3000
+pnpm build
+pnpm start
+```
 
-# Instalar dependencias
-npm install
-
-# Ejecutar en desarrollo
-npm run dev
-
-# Construir para producción
-npm run build
-
-# Ejecutar en producción
-npm start
-\`\`\`
+La guía completa, con base de datos de desarrollo, usuarios de prueba y configuración de Google, está en [docs/onboarding.md](docs/onboarding.md).
 
 ---
 
 ## Estructura del Proyecto
 
-\`\`\`
+```
 eva-juridico/
 ├── app/
 │   ├── admin/
@@ -501,7 +500,7 @@ eva-juridico/
 │   ├── mock-data.ts            # Datos de prueba
 │   └── utils.ts
 └── README.md
-\`\`\`
+```
 
 ---
 
