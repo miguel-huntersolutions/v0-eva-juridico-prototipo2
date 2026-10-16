@@ -226,7 +226,7 @@ function AuthCallbackContent() {
                 id: user.id,
                 email: user.email || "",
                 name: userName,
-                role: user.user_metadata?.role || "member",
+                role: "member", // Nunca desde user_metadata: lo controla quien se registra (ver scripts/047)
                 status: "pending", // New users must be approved
                 organization_id: organizationId, // Associate with selected organization
               })
@@ -341,7 +341,7 @@ function AuthCallbackContent() {
                   id: user.id,
                   email: user.email || "",
                   name: userName,
-                  role: user.user_metadata?.role || "member",
+                  role: "member", // Nunca desde user_metadata: lo controla quien se registra (ver scripts/047)
                   status: "pending", // New users must be approved
                   organization_id: organizationId, // Associate with selected organization
                 })
