@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { createServerClient } from "@/lib/supabase/server"
+import { homePathForRole } from "@/lib/auth/home-path"
 
 /**
  * POST /api/dev/login  — SOLO DESARROLLO LOCAL
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
     // Solo usuarios existentes: nunca crear cuentas desde aquí.
     const { data: profile } = await admin
       .from("profiles")
-      .select("id, role, status")
+      .select("id, role, status, organization_id")
       .ilike("email", normalizedEmail)
       .maybeSingle()
     if (!profile) {
@@ -77,8 +78,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: verifyError.message }, { status: 500 })
     }
 
-    const route = profile.role === "superadmin" ? "/superadmin" : profile.role === "admin" ? "/admin" : "/member"
-    return NextResponse.json({ success: true, role: profile.role, redirectTo: route })
+    return NextResponse.json({
+      success: true,
+      role: profile.role,
+      redirectTo: homePathForRole(profile.role, profile.organization_id),
+    })
   } catch (error) {
     console.error("[dev/login] error:", error instanceof Error ? error.message : error)
     return NextResponse.json({ error: "Dev login failed" }, { status: 500 })
