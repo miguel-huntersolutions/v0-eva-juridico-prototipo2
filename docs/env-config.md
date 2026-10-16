@@ -48,14 +48,12 @@ Los modelos y parámetros del asesor jurídico se leen desde `lib/ai-model-confi
 
 | Variable | Requerida | Descripción |
 |----------|-----------|-------------|
-| `GOOGLE_DRIVE_ID` | Sí | ID del Shared Drive (número). |
-| `GOOGLE_DRIVE_FOLDER_ID` | Sí | ID de la carpeta raíz donde se crean documentos/carpetas. |
+| `GOOGLE_DRIVE_ID` | Una de las dos | ID del Shared Drive. Recomendado: con Shared Drive los archivos no se comparten como "cualquiera con el enlace". |
+| `GOOGLE_DRIVE_FOLDER_ID` | Una de las dos | ID de la carpeta raíz donde se crean documentos y carpetas. |
 | `GOOGLE_CLIENT_ID` | Sí (OAuth) | Client ID de la consola de Google (OAuth). |
 | `GOOGLE_CLIENT_SECRET` | Sí (OAuth) | Client secret. |
 | `GOOGLE_REDIRECT_URI` | Sí (OAuth) | URI de callback; debe coincidir con la config en Google (p. ej. `https://tu-dominio/api/google/callback` o `http://localhost:3000/api/google/callback`). |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | Sí (server) | Email de la cuenta de servicio para acceso server-side. |
-| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | Sí (server) | Clave privada de la cuenta de servicio (incluir `\n` literales si hace falta). |
-| `GOOGLE_PROJECT_ID` | Opcional | ID del proyecto Google Cloud. |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_PROJECT_ID` | **No se usan** | El código no las lee: Drive y Sheets funcionan solo con OAuth por usuario (`lib/google/oauth.ts`). Se pueden eliminar de Vercel. |
 | `GOOGLE_DRIVE_TIMEOUT_MS` | Opcional | Timeout en ms para descargas de Drive. Default: 120000. Se usa en `lib/app-config.ts` → `getDriveRequestTimeoutMs()`. |
 
 ---
@@ -63,6 +61,8 @@ Los modelos y parámetros del asesor jurídico se leen desde `lib/ai-model-confi
 ## Límites de tiempo (opcionales)
 
 Todas son **opcionales**; si no se definen se usan los valores por defecto indicados. Se leen en `lib/app-config.ts`.
+
+> Ojo: el `maxDuration` que usa Vercel está fijo en cada `route.ts` (`export const maxDuration = 60`) y debe ser un literal, así que estas variables **no** cambian el límite real de la función.
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
@@ -80,9 +80,28 @@ Las **invitaciones de Auth** siguen por SMTP de Supabase (ver `docs/supabase-smt
 |----------|-----------|-------------|
 | `BREVO_API_KEY` | Para enviar | Clave API de Brevo (SMTP & API → API keys). **No** es la SMTP key. |
 | `BREVO_SENDER_EMAIL` | Para enviar | Remitente verificado en Brevo (Transactional → Senders). |
-| `BREVO_SENDER_NAME` | Opcional | Nombre visible. Default: `EVA Jurídico`. |
+| `BREVO_SENDER_NAME` | Opcional | Nombre visible. Default: nombre de la app. |
+| `BREVO_SMTP_USER` | Opcional | Si la clave empieza por `xsmtpsib-` (clave SMTP), el envío usa SMTP con este usuario en lugar de la API v3. |
+| `BREVO_SMTP_HOST`, `BREVO_SMTP_PORT` | Opcional | Default: `smtp-relay.sendinblue.com` y `587`. |
 
 Si faltan, la app no falla: omite el correo, deja la notificación in-app y registra `email_failed` en auditoría.
+
+---
+
+## Cron (Vercel)
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `CRON_SECRET` | Sí, para los cron | Vercel la envía como `Authorization: Bearer …` a `/api/cron/stage-alerts` y `/api/cron/reconcile-drive` (programados en `vercel.json`). Sin ella, los cron responden 401. |
+
+---
+
+## Canales externos (API MCP, SPEC-005)
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `EVA_MCP_API_KEY` | Si se usa el bot | Bearer que debe enviar OpenClaw a `/api/mcp/*`. Usa un valor largo y aleatorio; rótalo si se filtra. |
+| `EVA_MCP_INTEGRATION_USER_ID` | Si se usa `generate-smart` | ID del perfil cuyos tokens de Google se usan para generar documentos desde el bot. |
 
 ---
 
