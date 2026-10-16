@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import type { UserRole } from "@/lib/mock-data"
 import { homePathForRole } from "@/lib/auth/home-path"
+import { DEV_LOGIN_VISIBLE, DevLoginPanel } from "@/components/dev-login-panel"
 
 interface ProfileOption {
   role: UserRole
@@ -300,6 +301,12 @@ function LoginPageContent() {
                 <h2 className="text-2xl font-bold tracking-tight mb-2">Bienvenido de nuevo</h2>
                 <p className="text-muted-foreground">Ingresa tus credenciales para acceder</p>
               </div>
+
+              {DEV_LOGIN_VISIBLE && (
+                <div className="mb-6">
+                  <DevLoginPanel />
+                </div>
+              )}
 
               <form onSubmit={handleLogin} className="space-y-4">
                 <div className="space-y-2">
