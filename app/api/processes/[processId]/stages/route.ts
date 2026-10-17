@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { canAccessOrganization, canAccessProcess, canOperateProcesses } from "@/lib/auth/authorize"
 
 const STAGE_ORDER = ["publicacion", "observaciones", "adjudicacion", "firma", "garantias", "inicio"] as const
 type StageKey = (typeof STAGE_ORDER)[number]
@@ -77,7 +78,7 @@ export async function GET(
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role, organization_id")
+      .select("role, organization_id, entity_id")
       .eq("id", user.id)
       .single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
@@ -86,7 +87,7 @@ export async function GET(
     const proc = await getProcessWithOrg(service, processId)
     if (!proc) return NextResponse.json({ error: "Process not found" }, { status: 404 })
     const orgId = (proc.entity as any)?.organization_id
-    if (profile.role !== "superadmin" && profile.organization_id !== orgId) {
+    if (!canAccessProcess(profile, { organization_id: orgId, entity_id: proc.entity_id })) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
@@ -150,7 +151,7 @@ export async function PUT(
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role, organization_id")
+      .select("role, organization_id, entity_id")
       .eq("id", user.id)
       .single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
@@ -172,7 +173,7 @@ export async function PUT(
     const proc = await getProcessWithOrg(service, processId)
     if (!proc) return NextResponse.json({ error: "Process not found" }, { status: 404 })
     const orgId = (proc.entity as any)?.organization_id
-    if (profile.role !== "superadmin" && profile.organization_id !== orgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, orgId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 

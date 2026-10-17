@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 export async function GET(
   request: NextRequest,
@@ -45,7 +46,7 @@ export async function GET(
       .eq("id", entityId)
       .single()
     if (entErr || !entity) return NextResponse.json({ error: "Entity not found" }, { status: 404 })
-    if (profile.role === "admin" && profile.organization_id !== entity.organization_id) {
+    if (!canManageOrganization(profile, entity.organization_id)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 

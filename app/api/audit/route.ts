@@ -81,10 +81,7 @@ export async function GET(request: NextRequest) {
 
     // Organización: admin/org-SA usa la suya; plataforma puede pasar orgId o ver todas
     const isPlatformSa = profile.role === "superadmin" && !profile.organization_id
-    const orgId =
-      profile.role === "superadmin"
-        ? url.searchParams.get("orgId") || profile.organization_id
-        : profile.organization_id
+    const orgId = isPlatformSa ? url.searchParams.get("orgId") || profile.organization_id : profile.organization_id
     if (!orgId && !isPlatformSa) {
       return NextResponse.json({ error: "orgId is required" }, { status: 400 })
     }

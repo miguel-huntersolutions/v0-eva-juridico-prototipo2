@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 /**
  * GET /api/get-member-entities
@@ -89,7 +90,7 @@ export async function GET(request: NextRequest) {
     }
 
     // If user is admin (not superadmin), verify they can only view assignments for members in their own organization
-    if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
+    if (profile.role !== "member" && !canManageOrganization(profile, memberProfile.organization_id)) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only view assignments for members in their own organization" },
         { status: 403 },
