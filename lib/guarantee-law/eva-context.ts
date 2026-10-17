@@ -69,6 +69,11 @@ export async function buildGuaranteeLawEvaContext(
     }
 
     const procOrgId = (proc.entity as { organization_id?: string } | null)?.organization_id ?? null
+    // Un usuario con organización solo ve procesos de la suya (el de otra se trata como inexistente).
+    if (organizationId && procOrgId !== organizationId) {
+      processBlock += `\nNo hay un proceso con código ${code} en ${APP_NAME}.`
+      continue
+    }
     if (procOrgId && !orgId) {
       orgId = procOrgId
       const { data, error } = await service
@@ -129,5 +134,5 @@ Periodos de restricción cargados en ${APP_NAME} (vigentes o por iniciar):
 ${periodLines}
 ${processBlock}
 
-Si el usuario pregunta por un proceso o por ley de garantías / periodos de restricción, responde con ESTOS datos. No inventes periodos de elecciones si contradicen esta lista. Indica nombre y fechas del periodo de EVA.`
+Si el usuario pregunta por un proceso o por ley de garantías / periodos de restricción, responde con ESTOS datos. No inventes periodos de elecciones si contradicen esta lista. Indica nombre y fechas del periodo cargado en ${APP_NAME}.`
 }

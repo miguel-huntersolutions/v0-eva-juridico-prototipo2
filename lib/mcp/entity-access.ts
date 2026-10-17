@@ -10,12 +10,13 @@ export type EntityOption = {
 export async function getEntitiesForMcpUser(user: ResolvedMcpUser): Promise<EntityOption[]> {
   const supabase = getMcpServiceClient()
 
-  if (user.role === "superadmin") {
+  // Solo el superadmin de plataforma (sin organización) ve todas las entidades
+  if (user.role === "superadmin" && !user.organizationId) {
     const { data } = await supabase.from("entities").select("id, name").eq("status", "active").order("name")
     return (data || []).map((e) => ({ id: e.id, name: e.name }))
   }
 
-  if (user.role === "admin" && user.organizationId) {
+  if ((user.role === "admin" || user.role === "superadmin") && user.organizationId) {
     const { data } = await supabase
       .from("entities")
       .select("id, name")

@@ -12,6 +12,7 @@ import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
 import { sendEmailToUserIds, wrapEmailHtml, processesUrl } from "@/lib/email/brevo"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 export async function POST(
   request: NextRequest,
@@ -57,7 +58,7 @@ export async function POST(
       .eq("id", entityId)
       .single()
     if (!entity) return NextResponse.json({ error: "Entity not found" }, { status: 404 })
-    if (profile.role === "admin" && profile.organization_id !== entity.organization_id) {
+    if (!canManageOrganization(profile, entity.organization_id)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
     if (entity.status !== "pending") {

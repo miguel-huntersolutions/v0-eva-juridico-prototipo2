@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { getAppUrl } from "@/lib/app-config"
+import { canManageOrganization } from "@/lib/auth/authorize"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 /**
  * POST /api/send-invitation
@@ -33,12 +35,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { memberId, organizationId } = body
 
-    const isSuperadmin = profile.role === "superadmin"
-    const isOrgAdmin =
-      profile.role === "admin" &&
-      profile.organization_id != null &&
-      profile.organization_id === organizationId
-    if (!isSuperadmin && !isOrgAdmin) {
+    const isPlatformSa = isPlatformSuperadmin(profile)
+    if (!canManageOrganization(profile, organizationId)) {
       return NextResponse.json(
         { error: "Forbidden: Only superadmins or organization admins can send invitations" },
         { status: 403 },
@@ -78,7 +76,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 })
     }
 
-    if (isOrgAdmin && member.organization_id !== organizationId) {
+    if (!isPlatformSa && member.organization_id !== organizationId) {
       return NextResponse.json({ error: "Forbidden: Member does not belong to your organization" }, { status: 403 })
     }
 

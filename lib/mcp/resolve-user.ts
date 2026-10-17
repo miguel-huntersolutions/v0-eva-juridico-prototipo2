@@ -117,7 +117,7 @@ export async function resolveChannelUser(params: {
     })
   }
 
-  return { ok: false, error: "Usuario no vinculado. Comparta su teléfono registrado en EVA." }
+  return { ok: false, error: `Usuario no vinculado. Comparta su teléfono registrado en ${APP_NAME}.` }
 }
 
 async function loadProfile(profileId: string): Promise<ResolvedMcpUser | null> {

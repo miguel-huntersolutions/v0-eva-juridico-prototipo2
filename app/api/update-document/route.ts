@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp, type AuditAction } from "@/lib/audit/log"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 /**
  * PUT /api/update-document
@@ -112,7 +113,7 @@ export async function PUT(request: NextRequest) {
 
     // Verify document belongs to user's organization (if admin or member, not superadmin)
     const documentOrgId = (document.process as any)?.entity?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== documentOrgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, documentOrgId)) {
       return NextResponse.json(
         { error: "Forbidden: You can only update documents in your own organization" },
         { status: 403 },
