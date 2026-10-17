@@ -26,6 +26,8 @@ export type {
 }
 
 // Client-side Entity type (with camelCase fields matching the mapped return values)
+export type EntityStatus = "active" | "inactive" | "pending" | "rejected"
+
 export interface EntityMapped {
   id: string
   name: string
@@ -33,10 +35,15 @@ export interface EntityMapped {
   representativeName: string
   organizationId: string
   logoUrl?: string | null
-  status: "active" | "inactive"
+  status: EntityStatus
   processesCount: number
   documentsCount?: number
   createdAt?: string
+  /** CAP-10: quien propuso la entidad (si está pendiente) */
+  proposedBy?: string | null
+  /** CAP-10: entidad destino si esta fue fusionada (queda inactiva) */
+  mergedInto?: string | null
+  rejectionReason?: string | null
 }
 
 // Client-side Template type (with camelCase fields matching the mapped return values)
@@ -47,6 +54,63 @@ export interface Template {
   fileUrl: string
   variables?: string[]
   createdAt: string
+  /** Entidad cliente; null = aplica a cualquier entidad (plantillas legadas). */
+  entityId?: string | null
+  entityName?: string | null
+  /** Organización dueña; null = legado/global. */
+  organizationId?: string | null
+}
+
+/** Entidades activas para asignar plantillas (superadmin). */
+export interface TemplateEntityOption {
+  id: string
+  name: string
+  nit: string
+  organizationId: string
+  organizationName: string
+}
+
+export async function getTemplateEntityOptions(organizationId?: string | null): Promise<TemplateEntityOption[]> {
+  const supabase = createBrowserClient()
+  let query = supabase
+    .from("entities")
+    .select("id, name, nit, organization_id, organization:organizations(name)")
+    .eq("status", "active")
+    .order("name")
+
+  if (organizationId?.trim()) {
+    query = query.eq("organization_id", organizationId.trim())
+  }
+
+  const { data, error } = await query
+
+  if (error) throw error
+
+  return (data || []).map((e: Record<string, unknown>) => {
+    const org = e.organization as { name?: string } | null | undefined
+    return {
+      id: e.id as string,
+      name: e.name as string,
+      nit: (e.nit as string) || "",
+      organizationId: e.organization_id as string,
+      organizationName: org?.name || "Organización",
+    }
+  })
+}
+
+function mapDbTemplateRow(t: Record<string, unknown>): Template {
+  const ent = t.entity as { name?: string } | null | undefined
+  return {
+    id: t.id as string,
+    name: t.name as string,
+    processTypeId: (t.process_type_id as string) || "",
+    fileUrl: (t.file_url as string) || "",
+    variables: (t.variables as string[]) || [],
+    createdAt: typeof t.created_at === "string" ? t.created_at.split("T")[0] : "",
+    entityId: (t.entity_id as string | null) ?? null,
+    entityName: ent?.name ?? null,
+    organizationId: (t.organization_id as string | null) ?? null,
+  }
 }
 
 // Client-side Process type (with camelCase fields matching the mapped return values from getProcessesMapped)
@@ -70,6 +134,10 @@ export interface ProcessMapped {
   spreadsheetUrl?: string | null
   driveFolderId?: string | null
   driveFolderUrl?: string | null
+  // CAP-08 (RF-028): abogado responsable asignado
+  assignedToId?: string | null
+  assignedToName?: string | null
+  assignedAt?: string | null
 }
 
 // Client-side Organization type with camelCase fields
@@ -216,60 +284,153 @@ export async function impersonateOrganization(organizationId: string) {
 }
 
 // Entities
+const DOCUMENTS_PROCESS_IDS_CHUNK = 30
+
+/** Fetch document count for many process_ids in chunks to avoid 500/URL length limits. */
+async function documentsCountByProcessIds(
+  supabase: ReturnType<typeof createBrowserClient>,
+  processIds: string[],
+): Promise<number> {
+  if (processIds.length === 0) return 0
+  if (processIds.length <= DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const { count } = await supabase
+      .from("documents")
+      .select("*", { count: "exact", head: true })
+      .in("process_id", processIds)
+    return count ?? 0
+  }
+  let total = 0
+  for (let i = 0; i < processIds.length; i += DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const chunk = processIds.slice(i, i + DOCUMENTS_PROCESS_IDS_CHUNK)
+    const { count } = await supabase
+      .from("documents")
+      .select("*", { count: "exact", head: true })
+      .in("process_id", chunk)
+    total += count ?? 0
+  }
+  return total
+}
+
+/** Fetch process_id list for many process_ids in chunks (for document counts per process). */
+async function documentsProcessIdsInChunks(
+  supabase: ReturnType<typeof createBrowserClient>,
+  processIds: string[],
+): Promise<{ process_id: string }[]> {
+  if (processIds.length === 0) return []
+  if (processIds.length <= DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const { data } = await supabase.from("documents").select("process_id").in("process_id", processIds)
+    return (data ?? []) as { process_id: string }[]
+  }
+  const out: { process_id: string }[] = []
+  for (let i = 0; i < processIds.length; i += DOCUMENTS_PROCESS_IDS_CHUNK) {
+    const chunk = processIds.slice(i, i + DOCUMENTS_PROCESS_IDS_CHUNK)
+    const { data } = await supabase.from("documents").select("process_id").in("process_id", chunk)
+    out.push(...((data ?? []) as { process_id: string }[]))
+  }
+  return out
+}
+
 export async function getEntities(organizationId?: string): Promise<EntityMapped[]> {
   const supabase = createBrowserClient()
-  let query = supabase.from("entities").select("*").order("name")
- 
-  console.log("organization_id", organizationId)
-  
+  if (!organizationId) return []
+  const { data: entities, error } = await supabase
+    .from("entities")
+    .select("*")
+    .eq("organization_id", organizationId)
+    .order("name")
+  if (error) throw error
+  if (!entities?.length) return []
 
-  if (organizationId) {
-    query = query.eq("organization_id", organizationId)
+  const entityIds = entities.map((e) => e.id)
+  const { data: processes, error: procErr } = await supabase
+    .from("processes")
+    .select("id, entity_id")
+    .in("entity_id", entityIds)
+  if (procErr) throw procErr
+
+  const processIds = (processes || []).map((p) => p.id)
+  const processIdsByEntityId: Record<string, string[]> = {}
+  for (const e of entities) {
+    processIdsByEntityId[e.id] = []
+  }
+  for (const p of processes || []) {
+    const eid = (p as { id: string; entity_id: string }).entity_id
+    if (!processIdsByEntityId[eid]) processIdsByEntityId[eid] = []
+    processIdsByEntityId[eid].push(p.id)
   }
 
-  const { data, error } = await query
-  if (error) throw error
+  let documentCountByProcessId: Record<string, number> = {}
+  if (processIds.length > 0) {
+    const docs = await documentsProcessIdsInChunks(supabase, processIds)
+    for (const d of docs) {
+      documentCountByProcessId[d.process_id] = (documentCountByProcessId[d.process_id] || 0) + 1
+    }
+  }
 
-  // Calculate processes and documents count for each entity
-  const entitiesWithCounts = await Promise.all(
-    (data || []).map(async (e) => {
-      // Get processes count
-      const { count: processesCount } = await supabase
-        .from("processes")
-        .select("*", { count: "exact", head: true })
-        .eq("entity_id", e.id)
+  return entities.map((e) => {
+    const pIds = processIdsByEntityId[e.id] || []
+    const documentsCount = pIds.reduce((sum, pid) => sum + (documentCountByProcessId[pid] || 0), 0)
+    return {
+      id: e.id,
+      name: e.name,
+      nit: e.nit,
+      representativeName: e.representative_name,
+      organizationId: e.organization_id,
+      logoUrl: e.logo_url,
+      status: e.status,
+      processesCount: pIds.length,
+      documentsCount,
+      proposedBy: e.proposed_by ?? null,
+      mergedInto: e.merged_into ?? null,
+      rejectionReason: e.rejection_reason ?? null,
+    }
+  })
+}
 
-      // Get documents count (through processes)
-      const { data: processes } = await supabase
-        .from("processes")
-        .select("id")
-        .eq("entity_id", e.id)
+/**
+ * Fetch entities for an organization via API (service role). Use when impersonating
+ * so the admin sees the same entities as the member (RLS would otherwise block).
+ */
+export async function getEntitiesForImpersonation(organizationId: string): Promise<EntityMapped[]> {
+  const res = await fetch(`/api/entities?organizationId=${encodeURIComponent(organizationId)}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch entities")
+  }
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
 
-      const processIds = processes?.map((p) => p.id) || []
-      let documentsCount = 0
-      if (processIds.length > 0) {
-        const { count } = await supabase
-          .from("documents")
-          .select("*", { count: "exact", head: true })
-          .in("process_id", processIds)
-        documentsCount = count || 0
-      }
+export async function getProcessesForImpersonation(organizationId: string): Promise<ProcessMapped[]> {
+  const res = await fetch(`/api/processes?organizationId=${encodeURIComponent(organizationId)}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch processes")
+  }
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
+}
 
-      return {
-        id: e.id,
-        name: e.name,
-        nit: e.nit,
-        representativeName: e.representative_name,
-        organizationId: e.organization_id,
-        logoUrl: e.logo_url,
-        status: e.status,
-        processesCount: processesCount || 0,
-        documentsCount: documentsCount,
-      }
-    })
-  )
+export async function getProcessMappedForImpersonation(processId: string): Promise<ProcessMapped | null> {
+  const res = await fetch(`/api/processes/${encodeURIComponent(processId)}`)
+  if (!res.ok) {
+    if (res.status === 404) return null
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch process")
+  }
+  const data = await res.json()
+  return data
+}
 
-  return entitiesWithCounts
+/** Same shape as API response: id, processId, processCode, ... (ready for member docs list) */
+export async function getDocumentsForImpersonation(organizationId: string): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`/api/documents?organizationId=${encodeURIComponent(organizationId)}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || res.statusText || "Failed to fetch documents")
+  }
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
 }
 
 export async function createEntity(data: {
@@ -313,6 +474,9 @@ export async function createEntity(data: {
     status: newEntity.status,
     processesCount: processesCount || 0,
     documentsCount: 0,
+    proposedBy: newEntity.proposed_by ?? null,
+    mergedInto: newEntity.merged_into ?? null,
+    rejectionReason: newEntity.rejection_reason ?? null,
   }
 }
 
@@ -360,6 +524,9 @@ export async function updateEntity(
     status: updatedEntity.status,
     processesCount: processesCount || 0,
     documentsCount: 0,
+    proposedBy: updatedEntity.proposed_by ?? null,
+    mergedInto: updatedEntity.merged_into ?? null,
+    rejectionReason: updatedEntity.rejection_reason ?? null,
   }
 }
 
@@ -448,15 +615,70 @@ export async function deleteSecretary(id: string) {
 }
 
 // Process Types
-export async function getProcessTypes() {
+/** @param organizationId si se pasa, solo tipos compartidos (null) + de esa org */
+export async function getProcessTypes(organizationId?: string | null) {
   const supabase = createBrowserClient()
-  const { data, error } = await supabase.from("process_types").select("*").order("name")
+  let query = supabase.from("process_types").select("*").order("name")
+
+  const orgId = typeof organizationId === "string" ? organizationId.trim() : ""
+  if (orgId) {
+    // Compartidos de plataforma + exclusivos del tenant (no los de otras orgs)
+    query = query.or(`organization_id.is.null,organization_id.eq.${orgId}`)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
-  return data as ProcessType[]
+
+  const rows = (data || []) as Array<ProcessType & { organization_id?: string | null }>
+  if (!orgId) return rows as ProcessType[]
+
+  // Defensa client-side por si el filtro OR falla
+  return rows.filter(
+    (pt) => pt.organization_id == null || pt.organization_id === orgId,
+  ) as ProcessType[]
 }
 
-export async function createProcessType(data: { name: string; description: string }) {
+/**
+ * Tipos de proceso con al menos una plantilla aplicable a la entidad
+ * (plantilla sin `entity_id` o con `entity_id` igual a la entidad).
+ * Incluye asociaciones vía `template_process_types` y `templates.process_type_id`.
+ */
+export async function getProcessTypesForEntity(entityId: string): Promise<ProcessType[]> {
+  const id = typeof entityId === "string" ? entityId.trim() : ""
+  if (!id) return []
+
+  const templates = await getTemplates(undefined, id)
+  if (templates.length === 0) return []
+
+  const supabase = createBrowserClient()
+  const templateIds = [...new Set(templates.map((t) => t.id))]
+
+  const { data: relRows, error: relErr } = await supabase
+    .from("template_process_types")
+    .select("process_type_id")
+    .in("template_id", templateIds)
+
+  if (relErr) throw relErr
+
+  const typeIdSet = new Set<string>()
+  for (const t of templates) {
+    if (t.processTypeId) typeIdSet.add(t.processTypeId)
+  }
+  for (const row of relRows || []) {
+    const pid = row.process_type_id as string | undefined
+    if (pid) typeIdSet.add(pid)
+  }
+
+  const allTypes = await getProcessTypes()
+  return allTypes.filter((pt) => typeIdSet.has(pt.id))
+}
+
+export async function createProcessType(data: {
+  name: string
+  description: string
+  organizationId?: string | null
+}) {
   const supabase = createBrowserClient()
 
   const { data: newProcessType, error } = await supabase
@@ -464,6 +686,7 @@ export async function createProcessType(data: { name: string; description: strin
     .insert({
       name: data.name,
       description: data.description,
+      organization_id: data.organizationId?.trim() || null,
     })
     .select()
     .single()
@@ -495,162 +718,173 @@ export async function deleteProcessType(id: string) {
 }
 
 // Templates
-export async function getTemplates(processTypeId?: string) {
+const TEMPLATE_LIST_SELECT = "*, entity:entities(name)"
+
+function filterTemplatesByEntityScope(templates: Template[], entityId?: string | null): Template[] {
+  const id = typeof entityId === "string" ? entityId.trim() : ""
+  if (!id) return templates
+  return templates.filter((t) => !t.entityId || t.entityId === id)
+}
+
+function filterTemplatesByOrganization(templates: Template[], organizationId?: string | null): Template[] {
+  const orgId = typeof organizationId === "string" ? organizationId.trim() : ""
+  if (!orgId) return templates
+  // Solo plantillas del tenant (no legados globales de otras orgs)
+  return templates.filter((t) => t.organizationId === orgId)
+}
+
+export async function getTemplates(
+  processTypeId?: string,
+  entityId?: string | null,
+  organizationId?: string | null,
+) {
   const supabase = createBrowserClient()
 
-  console.log("[getTemplates] Called with processTypeId:", processTypeId)
+  const shouldFilterEntity = typeof entityId === "string" && entityId.trim().length > 0
+  const entityScope = shouldFilterEntity ? entityId!.trim() : ""
+  const orgScope = typeof organizationId === "string" ? organizationId.trim() : ""
+
+  console.log("[getTemplates] Called with", { processTypeId, entityId, organizationId: orgScope || null, shouldFilterEntity })
 
   if (processTypeId) {
-    // Use the many-to-many relationship table to get templates
-    // This allows templates to be associated with multiple process types
-    console.log("[getTemplates] Querying template_process_types for processTypeId:", processTypeId)
     const { data: relationData, error: relationError } = await supabase
       .from("template_process_types")
-      .select("template_id")
+      .select("template_id, created_at")
       .eq("process_type_id", processTypeId)
+      .order("created_at", { ascending: true })
 
     if (relationError) {
       console.error("[getTemplates] Error querying template_process_types:", relationError)
       throw relationError
     }
 
-    console.log("[getTemplates] Found relations:", relationData?.length || 0, relationData)
+    const templateIds: string[] = []
+    const seenIds = new Set<string>()
+    for (const row of relationData || []) {
+      if (row.template_id && !seenIds.has(row.template_id)) {
+        seenIds.add(row.template_id)
+        templateIds.push(row.template_id)
+      }
+    }
 
-    const templateIds = (relationData || []).map((row) => row.template_id)
-
-    // If no relations found, fallback to direct process_type_id lookup
-    // This handles templates that were created before the many-to-many relationship was implemented
     if (templateIds.length === 0) {
       console.log("[getTemplates] No relations found, falling back to direct process_type_id lookup")
-      const { data: fallbackData, error: fallbackError } = await supabase
+      let fallbackQuery = supabase
         .from("templates")
-        .select("*")
+        .select(TEMPLATE_LIST_SELECT)
         .eq("process_type_id", processTypeId)
-        .order("name")
+        .order("created_at", { ascending: true })
+      if (orgScope) {
+        fallbackQuery = fallbackQuery.eq("organization_id", orgScope)
+      }
+      const { data: fallbackData, error: fallbackError } = await fallbackQuery
 
       if (fallbackError) {
         console.error("[getTemplates] Error in fallback query:", fallbackError)
         throw fallbackError
       }
 
-      console.log("[getTemplates] Fallback found templates:", fallbackData?.length || 0, fallbackData?.map(t => ({ id: t.id, name: t.name })))
-
-      // If we found templates via fallback, create the relations for future use
       if (fallbackData && fallbackData.length > 0) {
-        console.log("[getTemplates] Creating missing relations for", fallbackData.length, "templates")
         const relationsToCreate = fallbackData.map((t) => ({
           template_id: t.id,
           process_type_id: processTypeId,
         }))
 
-        // Insert relations (ignore conflicts if they already exist)
         const { error: insertError } = await supabase
           .from("template_process_types")
           .upsert(relationsToCreate, { onConflict: "template_id,process_type_id", ignoreDuplicates: true })
 
         if (insertError) {
           console.error("[getTemplates] Error creating relations (non-critical):", insertError)
-          // Don't throw, just log - the templates are still valid
-        } else {
-          console.log("[getTemplates] Relations created successfully")
         }
       }
 
-      return (fallbackData || []).map((t) => ({
-        id: t.id,
-        name: t.name,
-        processTypeId: t.process_type_id,
-        fileUrl: t.file_url,
-        variables: t.variables || [],
-        createdAt: t.created_at?.split("T")[0] || "",
-      })) as Template[]
+      let mapped = (fallbackData || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+      mapped = filterTemplatesByOrganization(mapped, orgScope || null)
+      return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
     }
 
-    console.log("[getTemplates] Template IDs to fetch:", templateIds)
-
-    // Get templates by IDs
-    const { data, error } = await supabase
-      .from("templates")
-      .select("*")
-      .in("id", templateIds)
-      .order("name")
+    let templatesQuery = supabase.from("templates").select(TEMPLATE_LIST_SELECT).in("id", templateIds)
+    if (orgScope) {
+      templatesQuery = templatesQuery.eq("organization_id", orgScope)
+    }
+    const { data, error } = await templatesQuery
 
     if (error) {
       console.error("[getTemplates] Error fetching templates:", error)
       throw error
     }
 
-    console.log("[getTemplates] Fetched templates:", data?.length || 0, data?.map(t => ({ id: t.id, name: t.name })))
+    const orderIndex = new Map(templateIds.map((id, i) => [id, i]))
+    const sorted = [...(data || [])].sort((a, b) => {
+      const ia = orderIndex.get(a.id) ?? 999999
+      const ib = orderIndex.get(b.id) ?? 999999
+      return ia - ib
+    })
 
-    return (data || []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      processTypeId: t.process_type_id,
-      fileUrl: t.file_url,
-      variables: t.variables || [],
-      createdAt: t.created_at?.split("T")[0] || "",
-    })) as Template[]
+    let mapped = sorted.map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+    mapped = filterTemplatesByOrganization(mapped, orgScope || null)
+    return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
   }
 
-  // If no processTypeId, get all templates
-  const { data, error } = await supabase.from("templates").select("*").order("name")
+  let query = supabase.from("templates").select(TEMPLATE_LIST_SELECT).order("created_at", { ascending: true })
+  if (orgScope) {
+    query = query.eq("organization_id", orgScope)
+  }
+  const { data, error } = await query
   if (error) throw error
 
-  return (data || []).map((t) => ({
-    id: t.id,
-    name: t.name,
-    processTypeId: t.process_type_id,
-    fileUrl: t.file_url,
-    variables: t.variables || [],
-    createdAt: t.created_at?.split("T")[0] || "",
-  })) as Template[]
+  let mapped = (data || []).map((t) => mapDbTemplateRow(t as Record<string, unknown>))
+  mapped = filterTemplatesByOrganization(mapped, orgScope || null)
+  return filterTemplatesByEntityScope(mapped, shouldFilterEntity ? entityScope : undefined)
 }
 
 export async function createTemplate(data: {
   name: string
   processTypeId: string
+  entityId: string
+  organizationId: string
   fileUrl: string
   description?: string
   variables?: string[]
 }) {
   const supabase = createBrowserClient()
 
+  if (!data.entityId?.trim()) {
+    throw new Error("Debe seleccionar una entidad para la plantilla")
+  }
+  if (!data.organizationId?.trim()) {
+    throw new Error("Debe indicar la organización de la plantilla")
+  }
+
   const { data: newTemplate, error } = await supabase
     .from("templates")
     .insert({
       name: data.name,
       process_type_id: data.processTypeId,
+      entity_id: data.entityId.trim(),
+      organization_id: data.organizationId.trim(),
       file_url: data.fileUrl,
+      // CAP-10 (RF-033): variables detectadas al cargar (incluye minúsculas)
+      detected_variables: data.variables || [],
+      variables_validated_at: new Date().toISOString(),
       variables: data.variables || [],
     })
-    .select()
+    .select(TEMPLATE_LIST_SELECT)
     .single()
 
   if (error) throw error
 
-  // Create the relationship in template_process_types table
-  // This ensures the many-to-many relationship is maintained
-  const { error: relationError } = await supabase
-    .from("template_process_types")
-    .insert({
-      template_id: newTemplate.id,
-      process_type_id: data.processTypeId,
-    })
+  const { error: relationError } = await supabase.from("template_process_types").insert({
+    template_id: newTemplate.id,
+    process_type_id: data.processTypeId,
+  })
 
   if (relationError) {
-    // Log but don't throw - the template was created successfully
-    // The relation might already exist or there might be a constraint issue
     console.error("[createTemplate] Error creating relation (non-critical):", relationError)
   }
 
-  return {
-    id: newTemplate.id,
-    name: newTemplate.name,
-    processTypeId: newTemplate.process_type_id,
-    fileUrl: newTemplate.file_url,
-    variables: newTemplate.variables || [],
-    createdAt: newTemplate.created_at?.split("T")[0] || "",
-  } as Template
+  return mapDbTemplateRow(newTemplate as Record<string, unknown>)
 }
 
 export async function updateTemplate(
@@ -658,6 +892,7 @@ export async function updateTemplate(
   data: Partial<{
     name: string
     processTypeId: string
+    entityId: string | null
     fileUrl: string
     variables?: string[]
   }>,
@@ -669,24 +904,20 @@ export async function updateTemplate(
   if (data.processTypeId) updateData.process_type_id = data.processTypeId
   if (data.fileUrl) updateData.file_url = data.fileUrl
   if (data.variables !== undefined) updateData.variables = data.variables
+  if (data.entityId !== undefined) {
+    updateData.entity_id = data.entityId === null || data.entityId === "" ? null : data.entityId.trim()
+  }
 
   const { data: updatedTemplate, error } = await supabase
     .from("templates")
     .update(updateData)
     .eq("id", id)
-    .select()
+    .select(TEMPLATE_LIST_SELECT)
     .single()
 
   if (error) throw error
 
-  return {
-    id: updatedTemplate.id,
-    name: updatedTemplate.name,
-    processTypeId: updatedTemplate.process_type_id,
-    fileUrl: updatedTemplate.file_url,
-    variables: updatedTemplate.variables || [],
-    createdAt: updatedTemplate.created_at?.split("T")[0] || "",
-  } as Template
+  return mapDbTemplateRow(updatedTemplate as Record<string, unknown>)
 }
 
 /**
@@ -803,7 +1034,8 @@ export async function getProcessesMapped(filters?: {
       *,
       entity:entities(id, name),
       secretary:secretaries(id, name),
-      process_type:process_types(id, name)
+      process_type:process_types(id, name),
+      assigned:profiles!processes_assigned_to_fkey(id, name, email)
     `)
     .order("updated_at", { ascending: false })
 
@@ -825,9 +1057,8 @@ export async function getProcessesMapped(filters?: {
   let documentCounts: Record<string, number> = {}
 
   if (processIds.length > 0) {
-    const { data: docs } = await supabase.from("documents").select("process_id").in("process_id", processIds)
-
-    documentCounts = (docs || []).reduce(
+    const docs = await documentsProcessIdsInChunks(supabase, processIds)
+    documentCounts = docs.reduce(
       (acc, d) => {
         acc[d.process_id] = (acc[d.process_id] || 0) + 1
         return acc
@@ -856,6 +1087,9 @@ export async function getProcessesMapped(filters?: {
     spreadsheetUrl: (p as any).spreadsheet_url || null,
     driveFolderId: (p as any).drive_folder_id || null,
     driveFolderUrl: (p as any).drive_folder_url || null,
+    assignedToId: (p as any).assigned_to ?? null,
+    assignedToName: (p as any).assigned?.name || (p as any).assigned?.email || null,
+    assignedAt: (p as any).assigned_at ?? null,
   }))
 }
 
@@ -893,6 +1127,17 @@ export async function createProcess(data: {
     .single()
 
   if (error) throw error
+
+  // CAP-09 (RF-031): auditar creación del proceso (fire-and-forget, no bloquea)
+  fetch("/api/audit/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "process_created",
+      processId: newProcess.id,
+      details: { code: newProcess.code, entity: newProcess.entity?.name },
+    }),
+  }).catch(() => {})
 
   return {
     id: newProcess.id,
@@ -1001,13 +1246,13 @@ export async function generateProcessCode(processTypeId: string): Promise<string
     const sequenceStr = String(sequence).padStart(3, "0")
     code = `${abbrev}-${year}-${sequenceStr}`
     
-    // Check if this code already exists
+    // Check if this code already exists (.maybeSingle() avoids 406 when no row)
     const { data: existing } = await supabase
       .from("processes")
       .select("id")
       .eq("code", code)
-      .single()
-    
+      .maybeSingle()
+
     // If code doesn't exist, we can use it
     if (!existing) {
       return code
@@ -1038,6 +1283,44 @@ export async function getProcess(id: string) {
 
   if (error) throw error
   return data as ProcessWithRelations
+}
+
+export async function getProcessMapped(id: string): Promise<ProcessMapped | null> {
+  const supabase = createBrowserClient()
+  const { data: p, error } = await supabase
+    .from("processes")
+    .select(`
+      *,
+      entity:entities(id, name),
+      secretary:secretaries(id, name),
+      process_type:process_types(id, name)
+    `)
+    .eq("id", id)
+    .single()
+
+  if (error || !p) return null
+  const { count } = await supabase.from("documents").select("*", { count: "exact", head: true }).eq("process_id", id)
+  return {
+    id: p.id,
+    code: p.code || "",
+    object: p.object || "",
+    description: p.description || "",
+    status: p.status as ProcessMapped["status"],
+    entityId: p.entity_id,
+    entityName: (p as any).entity?.name || "",
+    secretaryId: p.secretary_id,
+    secretaryName: (p as any).secretary?.name || "",
+    processTypeId: p.process_type_id,
+    processTypeName: (p as any).process_type?.name || "",
+    createdAt: p.created_at?.split("T")[0] || "",
+    updatedAt: p.updated_at?.split("T")[0] || "",
+    documentsCount: count ?? 0,
+    currentVersion: p.current_version || 1,
+    spreadsheetId: (p as any).spreadsheet_id ?? null,
+    spreadsheetUrl: (p as any).spreadsheet_url ?? null,
+    driveFolderId: (p as any).drive_folder_id ?? null,
+    driveFolderUrl: (p as any).drive_folder_url ?? null,
+  }
 }
 
 // Documents
@@ -1149,7 +1432,7 @@ export async function getOrganizationMembers(organizationId: string) {
 export async function createMember(data: {
   email: string
   name: string
-  role: "admin" | "member"
+  role: "superadmin" | "admin" | "member"
   organizationId: string
   avatarUrl?: string
   isInvitation?: boolean
@@ -1170,7 +1453,12 @@ export async function createMember(data: {
   }
 
   const result = await response.json()
-  return result.profile as Profile
+  return {
+    ...(result.profile as Profile),
+    emailSent: result.emailSent as boolean | undefined,
+    inviteLink: result.inviteLink as string | null | undefined,
+    message: result.message as string | undefined,
+  }
 }
 
 export async function updateMember(
@@ -1179,6 +1467,7 @@ export async function updateMember(
     name: string
     role: string
     avatarUrl: string
+    entityId: string | null
   }>,
 ) {
   // Use API route to update member (bypasses RLS using service role)
@@ -1219,23 +1508,27 @@ export async function deleteMember(id: string) {
 
 export async function assignExistingMember(data: {
   userId: string
-  role: "admin" | "member"
+  role: "superadmin" | "admin" | "member"
   organizationId: string
 }) {
-  const supabase = createBrowserClient()
-
-  const { data: updatedProfile, error } = await supabase
-    .from("profiles")
-    .update({
+  // Via API para aplicar reglas de plataforma vs org-superadmin
+  const response = await fetch("/api/update-member", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      memberId: data.userId,
       role: data.role,
-      organization_id: data.organizationId,
-    })
-    .eq("id", data.userId)
-    .select()
-    .single()
+      organizationId: data.organizationId,
+    }),
+  })
 
-  if (error) throw error
-  return updatedProfile as Profile
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.message || errorData.error || "Failed to assign member")
+  }
+
+  const result = await response.json()
+  return result.profile as Profile
 }
 
 export async function searchUserByEmail(email: string) {
@@ -1251,7 +1544,7 @@ export async function searchUserByEmail(email: string) {
 export async function getUsersWithoutOrganization() {
   const supabase = createBrowserClient()
 
-  const { data, error } = await supabase.from("profiles").select("*").is("organization_id", null).order("full_name")
+  const { data, error } = await supabase.from("profiles").select("*").is("organization_id", null).order("name")
 
   if (error) throw error
   return data as Profile[]

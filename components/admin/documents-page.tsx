@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   FileText,
   Download,
@@ -22,6 +23,7 @@ import {
   Loader2,
   Check,
   XCircle,
+  Send,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -50,13 +52,15 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { documentTypes } from "@/lib/mock-data"
-import { getEntities, getDocuments, type EntityMapped } from "@/lib/supabase/client-data-access"
+import { ProcessAttachments } from "@/components/member/process-attachments"
+import { getEntities, type EntityMapped } from "@/lib/supabase/client-data-access"
+import { DocumentAuditLog } from "@/components/document-audit-log"
 import { useProfile } from "@/hooks/use-profile"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { cn } from "@/lib/utils"
 
-type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
+type DocumentStatus = "all" | "draft" | "pending" | "in_review" | "approved" | "rejected"
 
 const statusConfig: Record<
   string,
@@ -64,6 +68,11 @@ const statusConfig: Record<
 > = {
   draft: { label: "Borrador", variant: "secondary", className: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" },
   pending: { label: "Pendiente", variant: "outline", className: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+  in_review: {
+    label: "En revisión",
+    variant: "outline",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  },
   approved: {
     label: "Aprobado",
     variant: "default",
@@ -90,7 +99,7 @@ interface MappedDocument {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   entityId: string
   entityName: string
   fileUrl: string
@@ -102,15 +111,18 @@ interface MappedDocument {
 }
 
 export function DocumentsPage() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   const { profile } = useProfile()
-  const { actualRole } = useRoleSwitcher(profile?.role)
-  const isSuperadmin = actualRole === "superadmin"
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole } = useRoleSwitcher(profile?.role, platformSa)
   const {
     effectiveOrganizationId,
     isLoaded: orgLoaded,
   } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin,
+    isSuperadmin: platformSa,
     isSimulatingAdmin: false,
   })
 
@@ -127,6 +139,18 @@ export function DocumentsPage() {
   const [typeFilter, setTypeFilter] = React.useState<string>("all")
   const [activeTab, setActiveTab] = React.useState("pending")
 
+  // Vista de un proceso: filtrar por él y mostrar todos los estados (no solo pendientes)
+  React.useEffect(() => {
+    const processId = searchParams.get("processId")
+    if (processId) {
+      setProcessFilter(processId)
+      setActiveTab("all")
+      setStatusFilter("all")
+    } else {
+      setProcessFilter("all")
+    }
+  }, [searchParams])
+
   const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
   const [isLoadingDocs, setIsLoadingDocs] = React.useState(true)
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
@@ -137,62 +161,57 @@ export function DocumentsPage() {
         setIsLoadingDocs(false)
         return
       }
-      
+
       try {
-        // First, get entities for the organization
-        const orgEntities = await getEntities(effectiveOrganizationId)
-        const entityIds = orgEntities.map((e) => e.id)
-        
-        // Get all documents
-        const allDocs = await getDocuments()
-        console.log("[AdminDocumentsPage] Raw documents from DB:", allDocs.length)
-        console.log("[AdminDocumentsPage] Sample raw document:", allDocs[0])
-        console.log("[AdminDocumentsPage] Organization entity IDs:", entityIds)
-        
-        // Filter documents to only include those from processes belonging to organization entities
-        const filteredDocs = allDocs.filter((d: any) => {
-          if (!d.process) {
-            console.warn("[AdminDocumentsPage] Document without process:", d.id, d.name)
-            return false
-          }
-          if (!d.process.entity) {
-            console.warn("[AdminDocumentsPage] Document process without entity:", d.id, d.name, "process_id:", d.process_id)
-            return false
-          }
-          const processEntityId = d.process.entity.id
-          const isIncluded = processEntityId && entityIds.includes(processEntityId)
-          if (!isIncluded && allDocs.length < 20) {
-            console.log("[AdminDocumentsPage] Document filtered out:", d.name, "entity_id:", processEntityId, "not in", entityIds)
-          }
-          return isIncluded
-        })
-        
-        console.log("[AdminDocumentsPage] Filtered documents count:", filteredDocs.length)
-        
-        const mapped: MappedDocument[] = filteredDocs.map((d) => ({
-          id: d.id,
-          processId: d.process_id,
-          processCode: d.process?.code || "",
-          processObject: d.process?.object || "",
-          name: d.name,
-          type: d.type,
-          version: d.version || 1,
-          status: d.status as MappedDocument["status"],
-          entityId: d.process?.entity?.id || "",
-          entityName: d.process?.entity?.name || "",
-          fileUrl: d.file_url || "",
-          fileSize: d.file_size || 0,
-          createdBy: "",
-          createdAt: d.created_at?.split("T")[0] || "",
-          updatedAt: d.updated_at?.split("T")[0] || "",
-          driveFolderUrl: (d.process as any)?.drive_folder_url || null,
-        }))
-        setAllDocuments(mapped)
-        console.log("[AdminDocumentsPage] Total documents in DB:", allDocs.length, "Organization documents:", mapped.length)
-        console.log("[AdminDocumentsPage] Document statuses:", mapped.map(d => ({ name: d.name, status: d.status })))
-        if (mapped.length > 0) {
-          console.log("[AdminDocumentsPage] Sample mapped document:", mapped[0])
+        const res = await fetch(
+          `/api/documents?organizationId=${encodeURIComponent(effectiveOrganizationId)}`
+        )
+        if (!res.ok) {
+          throw new Error(await res.text())
         }
+        const list = (await res.json()) as Array<{
+          id: string
+          processId: string
+          processCode: string
+          processObject: string
+          name: string
+          type: string
+          version: number
+          status: string
+          entityId: string
+          entityName: string
+          fileUrl: string
+          fileSize: number
+          createdAt: string
+          updatedAt: string
+          driveFolderUrl?: string | null
+        }>
+
+        const mapped: MappedDocument[] = list.map((d) => {
+          const rawStatus = d.status == null ? "draft" : String(d.status).toLowerCase().trim()
+          const status = ["draft", "pending", "in_review", "approved", "rejected"].includes(rawStatus)
+            ? (rawStatus as MappedDocument["status"])
+            : "draft"
+          return {
+            id: d.id,
+            processId: d.processId,
+            processCode: d.processCode,
+            processObject: d.processObject,
+            name: d.name,
+            type: d.type,
+            version: d.version ?? 1,
+            status,
+            entityId: d.entityId,
+            entityName: d.entityName,
+            fileUrl: d.fileUrl ?? "",
+            fileSize: d.fileSize ?? 0,
+            createdBy: "",
+            createdAt: d.createdAt ?? "",
+            updatedAt: d.updatedAt ?? "",
+            driveFolderUrl: d.driveFolderUrl ?? null,
+          }
+        })
+        setAllDocuments(mapped)
       } catch (err) {
         console.error("Error loading documents:", err)
       } finally {
@@ -233,6 +252,7 @@ export function DocumentsPage() {
         activeTab === "all" ||
         (activeTab === "approved" && doc.status === "approved") ||
         (activeTab === "pending" && doc.status === "pending") ||
+        (activeTab === "in_review" && doc.status === "in_review") ||
         (activeTab === "draft" && doc.status === "draft") ||
         (activeTab === "rejected" && doc.status === "rejected")
 
@@ -259,13 +279,23 @@ export function DocumentsPage() {
     return filtered
   }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter])
 
-  // Stats
+  const isProcessScoped = processFilter !== "all"
+  const scopedDocuments = React.useMemo(
+    () => (isProcessScoped ? allDocuments.filter((d) => d.processId === processFilter) : allDocuments),
+    [allDocuments, isProcessScoped, processFilter],
+  )
+  const processCode =
+    scopedDocuments.find((d) => d.processCode)?.processCode ||
+    allDocuments.find((d) => d.processId === processFilter)?.processCode ||
+    null
+
   const stats = {
-    total: allDocuments.length,
-    approved: allDocuments.filter((d) => d.status === "approved").length,
-    pending: allDocuments.filter((d) => d.status === "pending").length,
-    draft: allDocuments.filter((d) => d.status === "draft").length,
-    rejected: allDocuments.filter((d) => d.status === "rejected").length,
+    total: scopedDocuments.length,
+    approved: scopedDocuments.filter((d) => d.status === "approved").length,
+    pending: scopedDocuments.filter((d) => d.status === "pending").length,
+    in_review: scopedDocuments.filter((d) => d.status === "in_review").length,
+    draft: scopedDocuments.filter((d) => d.status === "draft").length,
+    rejected: scopedDocuments.filter((d) => d.status === "rejected").length,
   }
 
   const handleViewDocument = (document: MappedDocument) => {
@@ -355,12 +385,45 @@ export function DocumentsPage() {
     }
   }
 
+  const handleMoveToInReview = async (doc: MappedDocument) => {
+    if (doc.status !== "pending") return
+    if (!confirm(`¿Pasar "${doc.name}" a estado "En revisión"? El miembro no podrá editarlo hasta que lo apruebes o rechaces.`)) return
+    try {
+      setIsUpdating(true)
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, status: "in_review" }),
+      })
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.message || err.error || "Error al pasar a revisión")
+      }
+      setAllDocuments((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "in_review" as const } : d))
+      )
+      setSelectedDocument((prev) => (prev?.id === doc.id ? { ...prev, status: "in_review" as const } : prev))
+    } catch (error) {
+      console.error("Error moving to in_review:", error)
+      alert(error instanceof Error ? error.message : "Error al pasar a revisión")
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
   const clearFilters = () => {
     setSearchQuery("")
     setStatusFilter("all")
     setEntityFilter("all")
     setProcessFilter("all")
     setTypeFilter("all")
+    setActiveTab("pending")
+    const processId = searchParams.get("processId")
+    if (processId) {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete("processId")
+      router.replace(params.toString() ? `${pathname}?${params}` : pathname)
+    }
   }
 
   const hasActiveFilters =
@@ -378,14 +441,40 @@ export function DocumentsPage() {
     <div className="flex flex-col gap-6 p-8">
       {/* Header */}
       <PageHeader
-        title="Revisión de Documentos"
-        description="Revisa y aprueba documentos generados por los miembros del equipo"
+        title={isProcessScoped ? `Documentos del proceso${processCode ? ` ${processCode}` : ""}` : "Revisión de Documentos"}
+        description={
+          isProcessScoped
+            ? "Documentos generados de este proceso, en cualquier estado"
+            : "Revisa y aprueba documentos generados por los miembros del equipo"
+        }
       />
 
-      {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatsCard title="Total" value={stats.total} description="Documentos" icon={Files} />
-        <StatsCard title="Pendientes" value={stats.pending} description="Por revisar" icon={Clock} />
+      {isProcessScoped && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm">
+              Mostrando documentos del proceso{" "}
+              <span className="font-mono font-medium">{processCode || processFilter}</span>
+            </p>
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              <X className="mr-1 h-4 w-4" />
+              Ver todos los documentos
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {isProcessScoped && <ProcessAttachments processId={processFilter} />}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        <StatsCard
+          title="Total"
+          value={stats.total}
+          description={isProcessScoped ? "De este proceso" : "Documentos"}
+          icon={Files}
+        />
+        <StatsCard title="Pendientes" value={stats.pending} description="Enviados por miembro" icon={Clock} />
+        <StatsCard title="En revisión" value={stats.in_review} description="Revisando" icon={Eye} />
         <StatsCard title="Aprobados" value={stats.approved} description="Aprobados" icon={CheckCircle2} />
         <StatsCard title="Borradores" value={stats.draft} description="En edición" icon={AlertCircle} />
         <StatsCard title="Rechazados" value={stats.rejected} description="Rechazados" icon={XCircle} />
@@ -396,7 +485,7 @@ export function DocumentsPage() {
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle>Documentos para Revisión</CardTitle>
+              <CardTitle>{isProcessScoped ? "Documentos del proceso" : "Documentos para Revisión"}</CardTitle>
               <CardDescription>{filteredDocuments.length} documentos encontrados</CardDescription>
             </div>
           </div>
@@ -407,6 +496,9 @@ export function DocumentsPage() {
             <TabsList>
               <TabsTrigger value="pending">
                 Pendientes <Badge variant="secondary" className="ml-2">{stats.pending}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="in_review">
+                En revisión <Badge variant="secondary" className="ml-2">{stats.in_review}</Badge>
               </TabsTrigger>
               <TabsTrigger value="all">
                 Todos <Badge variant="secondary" className="ml-2">{stats.total}</Badge>
@@ -437,25 +529,28 @@ export function DocumentsPage() {
                 <SelectContent>
                   <SelectItem value="all">Todos los estados</SelectItem>
                   <SelectItem value="pending">Pendiente</SelectItem>
+                  <SelectItem value="in_review">En revisión</SelectItem>
                   <SelectItem value="approved">Aprobado</SelectItem>
                   <SelectItem value="draft">Borrador</SelectItem>
                   <SelectItem value="rejected">Rechazado</SelectItem>
                 </SelectContent>
               </Select>
-              <Select value={entityFilter} onValueChange={setEntityFilter}>
-                <SelectTrigger className="w-[200px]">
-                  <Building className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Entidad" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las entidades</SelectItem>
-                  {entities.map((entity) => (
-                    <SelectItem key={entity.id} value={entity.id}>
-                      {entity.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {!isProcessScoped && (
+                <Select value={entityFilter} onValueChange={setEntityFilter}>
+                  <SelectTrigger className="w-[200px]">
+                    <Building className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Entidad" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las entidades</SelectItem>
+                    {entities.map((entity) => (
+                      <SelectItem key={entity.id} value={entity.id}>
+                        {entity.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               {hasActiveFilters && (
                 <Button variant="ghost" size="icon" onClick={clearFilters}>
                   <X className="h-4 w-4" />
@@ -481,8 +576,12 @@ export function DocumentsPage() {
               <TableBody>
                 {filteredDocuments.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
-                      No se encontraron documentos
+                    <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                      {isProcessScoped && scopedDocuments.length === 0
+                        ? "Este proceso no tiene documentos generados"
+                        : isProcessScoped
+                          ? "No hay documentos en este estado para este proceso"
+                          : "No se encontraron documentos"}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -490,17 +589,30 @@ export function DocumentsPage() {
                     const status = statusConfig[doc.status] || statusConfig.pending
                     return (
                       <TableRow key={doc.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <FileText className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-medium">{doc.name}</span>
-                            <Badge variant="outline" className="text-xs">
+                        <TableCell className="w-[420px] max-w-[420px] min-w-0" title={doc.name}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            {doc.fileUrl && doc.fileUrl.startsWith("http") ? (
+                              <a
+                                href={doc.fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="font-medium truncate min-w-0 flex-1 text-primary hover:underline block"
+                                title={doc.name}
+                              >
+                                {doc.name}
+                              </a>
+                            ) : (
+                              <span className="font-medium truncate min-w-0 flex-1" title={doc.name}>{doc.name}</span>
+                            )}
+                            <Badge variant="outline" className="text-xs shrink-0">
                               v{doc.version}
                             </Badge>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div>
+                          <div className="max-w-xs min-w-0">
                             <p className="text-sm font-medium">{doc.processCode}</p>
                             <p className="text-xs text-muted-foreground truncate max-w-[200px]">
                               {doc.processObject}
@@ -526,14 +638,14 @@ export function DocumentsPage() {
                             <p>{doc.createdAt}</p>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
                                 <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
+                            <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                               <DropdownMenuItem onSelect={() => handleViewDocument(doc)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 Ver Detalles
@@ -550,11 +662,24 @@ export function DocumentsPage() {
                                 <>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
+                                    onSelect={() => handleMoveToInReview(doc)}
+                                    disabled={isUpdating}
+                                  >
+                                    <Eye className="mr-2 h-4 w-4" />
+                                    Pasar a revisión
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              {doc.status === "in_review" && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
                                     onSelect={() => {
                                       setSelectedDocument(doc)
                                       setIsApproveDialogOpen(true)
                                     }}
                                     className="text-emerald-600"
+                                    disabled={isUpdating}
                                   >
                                     <Check className="mr-2 h-4 w-4" />
                                     Aprobar
@@ -565,6 +690,7 @@ export function DocumentsPage() {
                                       setIsRejectDialogOpen(true)
                                     }}
                                     className="text-destructive"
+                                    disabled={isUpdating}
                                   >
                                     <XCircle className="mr-2 h-4 w-4" />
                                     Rechazar
@@ -628,6 +754,7 @@ export function DocumentsPage() {
                 <Label className="text-xs text-muted-foreground">Objeto del Proceso</Label>
                 <p className="mt-1 text-sm">{selectedDocument.processObject}</p>
               </div>
+              <DocumentAuditLog documentId={selectedDocument.id} className="mt-2" />
               {selectedDocument.fileUrl && (
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => window.open(selectedDocument.fileUrl, "_blank")}>
@@ -643,11 +770,28 @@ export function DocumentsPage() {
               {selectedDocument.status === "pending" && (
                 <div className="flex gap-2 pt-4">
                   <Button
+                    onClick={() => handleMoveToInReview(selectedDocument)}
+                    disabled={isUpdating}
+                    className="flex-1"
+                  >
+                    {isUpdating ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Eye className="mr-2 h-4 w-4" />
+                    )}
+                    Pasar a revisión
+                  </Button>
+                </div>
+              )}
+              {selectedDocument.status === "in_review" && (
+                <div className="flex gap-2 pt-4">
+                  <Button
                     onClick={() => {
                       setIsDetailOpen(false)
                       setIsApproveDialogOpen(true)
                     }}
                     className="flex-1"
+                    disabled={isUpdating}
                   >
                     <Check className="mr-2 h-4 w-4" />
                     Aprobar
@@ -659,6 +803,7 @@ export function DocumentsPage() {
                       setIsRejectDialogOpen(true)
                     }}
                     className="flex-1"
+                    disabled={isUpdating}
                   >
                     <XCircle className="mr-2 h-4 w-4" />
                     Rechazar

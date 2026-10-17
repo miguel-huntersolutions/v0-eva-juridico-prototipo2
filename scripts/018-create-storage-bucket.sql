@@ -12,6 +12,11 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
+DROP POLICY IF EXISTS "Allow authenticated users to upload logos" ON storage.objects;
+DROP POLICY IF EXISTS "Allow authenticated users to update logos" ON storage.objects;
+DROP POLICY IF EXISTS "Allow authenticated users to delete logos" ON storage.objects;
+DROP POLICY IF EXISTS "Allow public read access to logos" ON storage.objects;
+
 -- Create storage policy to allow authenticated users to upload
 CREATE POLICY "Allow authenticated users to upload logos"
 ON storage.objects

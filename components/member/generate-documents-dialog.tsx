@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import {
   Loader2,
   FileText,
@@ -10,6 +11,13 @@ import {
   ChevronLeft,
   Sparkles,
   Upload,
+  ExternalLink,
+  MessageCircleQuestion,
+  BookOpen,
+  Plus,
+  Trash2,
+  Save,
+  AlertTriangle,
 } from "lucide-react"
 import {
   Dialog,
@@ -26,12 +34,26 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
 import { getTemplates, createProcess, type Template, type ProcessMapped, type Entity } from "@/lib/supabase/client-data-access"
+import { ProcessAttachments } from "@/components/member/process-attachments"
 import { getAllUniqueTags } from "@/lib/utils/document-generator"
+import { parseDynamicTableTagToken, isImageTag } from "@/lib/utils/template-helpers"
 import { useProfile } from "@/hooks/use-profile"
 
-interface ProcessData {
+/** Converts template fileUrl (fileId:xxx|path:yyy or full Drive URL) to a viewable Google Drive link. */
+function getTemplateDriveViewUrl(fileUrl: string | null | undefined): string | null {
+  if (!fileUrl || typeof fileUrl !== "string") return null
+  if (fileUrl.startsWith("https://drive.google.com")) return fileUrl
+  if (fileUrl.startsWith("fileId:")) {
+    const m = fileUrl.match(/fileId:([^|]+)/)
+    if (m?.[1]) return `https://drive.google.com/file/d/${m[1]}/view`
+  }
+  return null
+}
+
+export interface ProcessData {
   code: string
   object: string
   description: string
@@ -52,7 +74,45 @@ interface GenerateDocumentsDialogProps {
   processTypeName?: string
   onProcessCreated?: (process: ProcessMapped) => void
   onDocumentsGenerated?: () => void // Callback to refresh processes list
+  /** When true, render content inline (no modal); use on generate page */
+  embedded?: boolean
+  /** Pre-filled scalar tag values (smart fill flow). Merged over defaults when templates load. */
+  prefilledFormData?: Record<string, string> | null
+  /** Pre-filled dynamic table rows (smart fill flow). Merged over defaults when templates load. */
+  prefilledTableData?: Record<string, Array<Record<string, string>>> | null
+  /** RF-013 (CAP-03): origen por tag ('reuse' = viene del proceso original). */
+  fieldOrigins?: Record<string, string> | null
+  /** RF-013 (CAP-03): true si el proceso fue reutilizado y exige confirmación antes de generar. */
+  requiresReuseConfirmation?: boolean
+  /** CAP-03: origen con que se guardan los campos al generar ('form' manual, 'smart_fill' con IA). */
+  saveOrigin?: "form" | "smart_fill"
+  /** CAP-02: plantillas que ya tienen documento generado en el proceso (continuar proceso parcial). */
+  generatedTemplateIds?: string[]
 }
+
+type DynamicTableDef = {
+  token: string
+  loopName: string
+  family: string
+  variant: string
+  fields: string[]
+}
+
+type DynamicTableFamilyDef = {
+  family: string
+  fields: string[]
+  variants: DynamicTableDef[]
+  requiredFields: string[]
+}
+
+/** RF-034: un campo vacío listado al intentar avanzar o generar. */
+type EmptyFieldItem = {
+  key: string
+  label: string
+  templateName?: string
+}
+
+type EmptyGateAction = "next" | "generate" | "generateAll"
 
 export function GenerateDocumentsDialog({
   open,
@@ -64,12 +124,22 @@ export function GenerateDocumentsDialog({
   processTypeName,
   onProcessCreated,
   onDocumentsGenerated,
+  embedded = false,
+  prefilledFormData = null,
+  prefilledTableData = null,
+  fieldOrigins = null,
+  requiresReuseConfirmation = false,
+  saveOrigin = "form",
+  generatedTemplateIds = [],
 }: GenerateDocumentsDialogProps) {
+  const router = useRouter()
   const { profile } = useProfile()
   
   // Determine if this is a new process (not yet created) or existing
-  const isNewProcess = !!processData && !process
   const [currentProcessState, setCurrentProcessState] = React.useState<ProcessMapped | null>(process)
+  // Es "nuevo" mientras no se haya persistido: una vez creado (primer doc o
+  // guardar borrador) los textos dejan de decir "Crear Proceso y Generar..."
+  const isNewProcess = !!processData && !process && !currentProcessState?.id
   const currentProcess = currentProcessState || process || (processData ? {
     id: "", // Will be set after creation
     code: processData.code,
@@ -91,15 +161,79 @@ export function GenerateDocumentsDialog({
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [isLoadingTemplates, setIsLoadingTemplates] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState(0) // Step index (0-based)
+  // Plantillas generadas en ESTA sesión del wizard (se suman a las que venían del servidor)
+  const [sessionGeneratedIds, setSessionGeneratedIds] = React.useState<string[]>([])
+  const isTemplateGenerated = (templateId: string) =>
+    generatedTemplateIds.includes(templateId) || sessionGeneratedIds.includes(templateId)
+  // Plantillas generadas cuyos campos se EDITARON después de generar (doc desactualizado)
+  const [staleTemplateIds, setStaleTemplateIds] = React.useState<string[]>([])
+  // Guardar borrador (persistir campos sin generar documento)
+  const [isSavingDraft, setIsSavingDraft] = React.useState(false)
+  const [draftSavedAt, setDraftSavedAt] = React.useState<number | null>(null)
+
+  /** Marca como "modificadas" las plantillas YA generadas que usan este tag:
+      el documento en Drive ya no refleja el valor actual y habría que regenerarlo. */
+  const markStaleByTag = (tag: string) => {
+    setDraftSavedAt(null) // cualquier edición invalida el feedback de "guardado"
+    setStaleTemplateIds((prev) => {
+      const next = new Set(prev)
+      for (const t of templates) {
+        if (!isTemplateGenerated(t.id) || next.has(t.id) || !t.variables) continue
+        const usesTag = t.variables.some((v) => {
+          if (v === tag) return true
+          const def = parseDynamicTableTagToken(v)
+          if (def) {
+            const [family] = def.loopName.split("@")
+            return (family || def.loopName) === tag
+          }
+          return false
+        })
+        if (usesTag) next.add(t.id)
+      }
+      return next.size === prev.length ? prev : Array.from(next)
+    })
+  }
+  // CAP-02: si el proceso ya tiene documentos generados (continuación parcial), el wizard
+  // arranca en el primer paso PENDIENTE para continuar donde quedó (una vez cargadas las plantillas).
+  const didInitStepRef = React.useRef(false)
+  React.useEffect(() => {
+    if (didInitStepRef.current || templates.length === 0 || generatedTemplateIds.length === 0) return
+    didInitStepRef.current = true
+    const firstPending = templates.findIndex((t) => !generatedTemplateIds.includes(t.id))
+    if (firstPending > 0) setCurrentStep(firstPending)
+  }, [templates, generatedTemplateIds])
   const [formData, setFormData] = React.useState<Record<string, string>>({})
+  const [tableData, setTableData] = React.useState<Record<string, Array<Record<string, string>>>>({})
+  /** Mapa por tag (IMAGE / IMAGE_*) -> imagen seleccionada por el usuario en el formulario. */
+  const [imageData, setImageData] = React.useState<
+    Record<string, { dataUrl: string; mime: string; fileName: string }>
+  >({})
   const [isGenerating, setIsGenerating] = React.useState(false)
   const [isSaving, setIsSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [improvingField, setImprovingField] = React.useState<string | null>(null)
   const [improvedFields, setImprovedFields] = React.useState<Set<string>>(new Set())
+  // "Preguntar a la IA" (sin contexto) y "Consultar en documentos" (RAG)
+  const [aiHelpTag, setAiHelpTag] = React.useState<string | null>(null)
+  const [aiHelpMode, setAiHelpMode] = React.useState<"ask" | "rag" | null>(null)
+  const [aiHelpQuestion, setAiHelpQuestion] = React.useState("")
+  const [aiHelpResponse, setAiHelpResponse] = React.useState("")
+  const [aiHelpLoading, setAiHelpLoading] = React.useState(false)
   const [generatedDocuments, setGeneratedDocuments] = React.useState<
     Array<{ templateId: string; documentName: string; drivePath: string }>
   >([])
+  // RF-013 (CAP-03): campos editados por el usuario (para distinguir "del original" vs modificados)
+  const [editedFields, setEditedFields] = React.useState<Set<string>>(new Set())
+  // RF-013: diálogo de confirmación de campos clave antes de generar (proceso reutilizado)
+  const [reuseConfirmOpen, setReuseConfirmOpen] = React.useState(false)
+  const [pendingGenerateAction, setPendingGenerateAction] = React.useState<(() => void) | null>(null)
+  // RF-034: campos que el asesor marcó explícitamente como "van vacíos"
+  const [allowEmptyKeys, setAllowEmptyKeys] = React.useState<Set<string>>(new Set())
+  const [emptyGate, setEmptyGate] = React.useState<{ action: EmptyGateAction; fields: EmptyFieldItem[] } | null>(null)
+  const [emptyChecked, setEmptyChecked] = React.useState<Set<string>>(new Set())
+  // RF-037 (CAP-02): paso final de adjuntos, justo después de generar todos los documentos
+  // (la generación crea la estructura Entidad/Secretaría/Proceso en Drive donde caen los adjuntos)
+  const [showAttachmentsStep, setShowAttachmentsStep] = React.useState(false)
   const [generatingStep, setGeneratingStep] = React.useState<{
     current: number
     total: number
@@ -116,10 +250,12 @@ export function GenerateDocumentsDialog({
   React.useEffect(() => {
     async function loadTemplates() {
       const processTypeId = process?.processTypeId || processData?.processTypeId
-      
+      const entityId = process?.entityId || processData?.entityId
+
       console.log("[GenerateDocumentsDialog] Loading templates:", {
         open,
         processTypeId,
+        entityId,
         hasProcess: !!process,
         hasProcessData: !!processData,
         processProcessTypeId: process?.processTypeId,
@@ -135,7 +271,7 @@ export function GenerateDocumentsDialog({
       try {
         setIsLoadingTemplates(true)
         console.log("[GenerateDocumentsDialog] Calling getTemplates with processTypeId:", processTypeId)
-        const data = await getTemplates(processTypeId)
+        const data = await getTemplates(processTypeId, entityId || undefined)
         console.log("[GenerateDocumentsDialog] Templates loaded:", {
           count: data.length,
           templates: data.map(t => ({ id: t.id, name: t.name, processTypeId: t.processTypeId })),
@@ -144,9 +280,23 @@ export function GenerateDocumentsDialog({
         
         // Initialize form data with empty values for all tags
         const initialData: Record<string, string> = {}
+        const initialTableData: Record<string, Array<Record<string, string>>> = {}
+        const tableFamilyFields: Record<string, string[]> = {}
         const tags = getAllUniqueTags(data)
         tags.forEach((tag) => {
-          initialData[tag] = ""
+          const tableDef = parseDynamicTableTagToken(tag)
+          if (tableDef) {
+            const family = tableDef.loopName.split("@")[0] || tableDef.loopName
+            if (!tableFamilyFields[family]) tableFamilyFields[family] = []
+            tableDef.fields.forEach((field) => {
+              if (!tableFamilyFields[family].includes(field)) tableFamilyFields[family].push(field)
+            })
+          } else {
+            initialData[tag] = ""
+          }
+        })
+        Object.entries(tableFamilyFields).forEach(([family, fields]) => {
+          initialTableData[family] = [Object.fromEntries(fields.map((f) => [f, ""]))]
         })
         
         // Auto-fill ENTIDAD and SECRETARIA if they exist
@@ -156,8 +306,24 @@ export function GenerateDocumentsDialog({
         if (tags.includes("SECRETARIA") && secretaryName) {
           initialData.SECRETARIA = secretaryName
         }
+
+        if (prefilledFormData) {
+          Object.entries(prefilledFormData).forEach(([tag, value]) => {
+            if (value != null && String(value).trim() !== "" && tag in initialData) {
+              initialData[tag] = String(value).trim()
+            }
+          })
+        }
+        if (prefilledTableData) {
+          Object.entries(prefilledTableData).forEach(([family, rows]) => {
+            if (Array.isArray(rows) && rows.length > 0 && family in initialTableData) {
+              initialTableData[family] = rows
+            }
+          })
+        }
         
         setFormData(initialData)
+        setTableData(initialTableData)
         setCurrentStep(0)
         setGeneratedDocuments([])
         setError(null)
@@ -170,17 +336,35 @@ export function GenerateDocumentsDialog({
     }
 
     loadTemplates()
-  }, [open, process?.processTypeId, processData?.processTypeId, entity?.name, secretaryName])
+  }, [open, process?.processTypeId, processData?.processTypeId, process?.entityId, processData?.entityId, entity?.name, secretaryName, prefilledFormData, prefilledTableData])
 
   const handleClose = () => {
     setFormData({})
+    setTableData({})
+    setImageData({})
     setCurrentStep(0)
     setGeneratedDocuments([])
     setError(null)
     setImprovedFields(new Set())
     setImprovingField(null)
     setGeneratingStep(null)
+    setShowAttachmentsStep(false)
+    setAllowEmptyKeys(new Set())
+    setEmptyGate(null)
+    setEmptyChecked(new Set())
     onOpenChange(false)
+  }
+
+  /** RF-037: al terminar de generar todos los documentos, pasar al paso de adjuntos. */
+  const finishToAttachments = () => {
+    if (onDocumentsGenerated) onDocumentsGenerated()
+    setShowAttachmentsStep(true)
+  }
+
+  /** Cierra el flujo y vuelve al listado de procesos. */
+  const finishAndExit = () => {
+    handleClose()
+    router.push("/member/processes")
   }
 
   const isBusy = isGenerating || isSaving
@@ -191,8 +375,36 @@ export function GenerateDocumentsDialog({
     else onOpenChange(newOpen)
   }
 
+  const clearAllowEmptyKey = (key: string) => {
+    setAllowEmptyKeys((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }
+
+  const clearAllowEmptyPrefix = (prefix: string) => {
+    setAllowEmptyKeys((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const k of prev) {
+        if (k.startsWith(prefix)) {
+          changed = true
+          continue
+        }
+        next.add(k)
+      }
+      return changed ? next : prev
+    })
+  }
+
   const handleFieldChange = (tag: string, value: string) => {
     setFormData((prev) => ({ ...prev, [tag]: value }))
+    markStaleByTag(tag)
+    if (value.trim()) clearAllowEmptyKey(`scalar:${tag}`)
+    // RF-013: marcar como editado (ya no "viene del original" sin tocar)
+    setEditedFields((prev) => new Set(prev).add(tag))
     // Remove from improved fields if user edits after improvement
     if (improvedFields.has(tag)) {
       setImprovedFields((prev) => {
@@ -201,6 +413,42 @@ export function GenerateDocumentsDialog({
         return newSet
       })
     }
+  }
+
+  const handleTableCellChange = (tableFamily: string, rowIndex: number, field: string, value: string) => {
+    markStaleByTag(tableFamily)
+    if (value.trim()) {
+      clearAllowEmptyKey(`table:${tableFamily}:${rowIndex}:${field}`)
+      clearAllowEmptyKey(`table:${tableFamily}:empty`)
+    }
+    setTableData((prev) => {
+      const rows = [...(prev[tableFamily] || [])]
+      const currentRow = rows[rowIndex] || {}
+      rows[rowIndex] = { ...currentRow, [field]: value }
+      return { ...prev, [tableFamily]: rows }
+    })
+  }
+
+  const addTableRow = (tableFamily: string, fields: string[]) => {
+    markStaleByTag(tableFamily)
+    setTableData((prev) => {
+      const rows = [...(prev[tableFamily] || [])]
+      rows.push(Object.fromEntries(fields.map((f) => [f, ""])))
+      return { ...prev, [tableFamily]: rows }
+    })
+  }
+
+  const removeTableRow = (tableFamily: string, rowIndex: number, fields: string[]) => {
+    markStaleByTag(tableFamily)
+    clearAllowEmptyPrefix(`table:${tableFamily}:`)
+    setTableData((prev) => {
+      const rows = [...(prev[tableFamily] || [])]
+      rows.splice(rowIndex, 1)
+      if (rows.length === 0) {
+        rows.push(Object.fromEntries(fields.map((f) => [f, ""])))
+      }
+      return { ...prev, [tableFamily]: rows }
+    })
   }
 
   const handleAIImprove = async (tag: string) => {
@@ -238,6 +486,7 @@ export function GenerateDocumentsDialog({
         ...prev,
         [tag]: improvedText,
       }))
+      markStaleByTag(tag)
 
       setImprovedFields((prev) => new Set(prev).add(tag))
     } catch (error) {
@@ -246,6 +495,79 @@ export function GenerateDocumentsDialog({
     } finally {
       setImprovingField(null)
     }
+  }
+
+  const openAskSimple = (tag: string) => {
+    setAiHelpTag(tag)
+    setAiHelpMode("ask")
+    setAiHelpQuestion("")
+    setAiHelpResponse("")
+    setError(null)
+  }
+  const openRagQuery = (tag: string) => {
+    setAiHelpTag(tag)
+    setAiHelpMode("rag")
+    setAiHelpQuestion("")
+    setAiHelpResponse("")
+    setError(null)
+  }
+  const closeAiHelp = () => {
+    setAiHelpTag(null)
+    setAiHelpMode(null)
+    setAiHelpQuestion("")
+    setAiHelpResponse("")
+    setAiHelpLoading(false)
+    setError(null)
+  }
+
+  const handleAiHelpSubmit = async () => {
+    if (!aiHelpTag || !aiHelpMode || !aiHelpQuestion.trim()) return
+    setAiHelpLoading(true)
+    setError(null)
+    try {
+      if (aiHelpMode === "ask") {
+        const res = await fetch("/api/ask-simple", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: aiHelpQuestion.trim(),
+            fieldLabel: aiHelpTag.replace(/_/g, " "),
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || "Error al preguntar")
+        }
+        const data = await res.json()
+        setAiHelpResponse(data.text ?? "")
+      } else {
+        const res = await fetch("/api/rag/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: aiHelpQuestion.trim(),
+            entityId: entity?.id,
+            entityName: entity?.name,
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || "Error al consultar documentos")
+        }
+        const data = await res.json()
+        setAiHelpResponse(data.text ?? "")
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error en la solicitud")
+    } finally {
+      setAiHelpLoading(false)
+    }
+  }
+
+  const handleAiHelpApply = () => {
+    if (!aiHelpTag || !aiHelpResponse.trim()) return
+    setFormData((prev) => ({ ...prev, [aiHelpTag]: aiHelpResponse.trim() }))
+    closeAiHelp()
   }
 
   // Helper function to handle Google OAuth2 authentication
@@ -368,6 +690,70 @@ export function GenerateDocumentsDialog({
     }
   }
 
+  // RF-013 (CAP-03): campos clave que exigen revisión explícita en un proceso reutilizado
+  const KEY_FIELD_PATTERN = /FECHA|CUANTIA|VALOR|MONTO|PRECIO|PLAZO|ENTIDAD/i
+  const keyFields = React.useMemo(
+    () => Object.keys(formData).filter((tag) => KEY_FIELD_PATTERN.test(tag)),
+    [formData],
+  )
+  // Campos clave que vienen del original y el usuario NO ha tocado
+  const unreviewedKeyFields = React.useMemo(
+    () =>
+      requiresReuseConfirmation
+        ? keyFields.filter((tag) => fieldOrigins?.[tag] === "reuse" && !editedFields.has(tag))
+        : [],
+    [requiresReuseConfirmation, keyFields, fieldOrigins, editedFields],
+  )
+
+  /** RF-013: si el proceso es reutilizado y hay campos clave sin revisar, pide confirmación antes de generar. */
+  const withReuseConfirmation = (action: () => void) => {
+    if (requiresReuseConfirmation && unreviewedKeyFields.length > 0) {
+      setPendingGenerateAction(() => action)
+      setReuseConfirmOpen(true)
+      return
+    }
+    action()
+  }
+
+  const handleConfirmReuseFields = async () => {
+    const processIdToConfirm = currentProcessState?.id || process?.id
+    if (processIdToConfirm) {
+      try {
+        await fetch(`/api/processes/${processIdToConfirm}/fields/confirm`, { method: "POST" })
+      } catch {
+        // no bloquear la generación si falla el registro de confirmación
+      }
+    }
+    setReuseConfirmOpen(false)
+    const action = pendingGenerateAction
+    setPendingGenerateAction(null)
+    action?.()
+  }
+
+  /** Crea el proceso en BD si es nuevo (flujo processData) y aún no existe.
+      Devuelve el processId a usar, o null si falló (error ya mostrado). */
+  const ensureProcessCreated = async (): Promise<string | null> => {
+    if (!isNewProcess || !processData) return currentProcessState?.id || process?.id || null
+    if (currentProcessState?.id) return currentProcessState.id
+    try {
+      const created = await createProcess(processData)
+      const createdAsMapped = {
+        ...created,
+        spreadsheetId: null,
+        spreadsheetUrl: null,
+        driveFolderId: null,
+        driveFolderUrl: null,
+      } as unknown as ProcessMapped
+      setCurrentProcessState(createdAsMapped)
+      if (onProcessCreated) onProcessCreated(createdAsMapped)
+      return created.id
+    } catch (createError) {
+      console.error("Error creating process:", createError)
+      setError("Error al crear el proceso. Por favor intente de nuevo.")
+      return null
+    }
+  }
+
   const handleGenerateDocument = async (
     template: Template,
     retryCount = 0,
@@ -399,19 +785,69 @@ export function GenerateDocumentsDialog({
       setError(null)
 
       // Prepare replacements (remove {{}} from tag names if present)
-      const replacements: Record<string, string> = {}
+      const replacements: Record<string, any> = {}
       Object.entries(formData).forEach(([tag, value]) => {
         const cleanTag = tag.replace(/[{}]/g, "")
+        // Las imágenes se envían aparte (campo `images`); no van como texto.
+        if (isImageTag(cleanTag)) return
         replacements[cleanTag] = value || ""
+      })
+      // RF-034: todo tag escalar de esta plantilla debe ir al docxtemplater,
+      // aunque esté vacío a propósito (queda en blanco, no como {{TAG}}).
+      for (const tag of template.variables || []) {
+        if (parseDynamicTableTagToken(tag) || isImageTag(tag)) continue
+        const cleanTag = tag.replace(/[{}]/g, "")
+        if (!(cleanTag in replacements)) replacements[cleanTag] = ""
+      }
+      // Imágenes subidas por el usuario para los tags IMAGE / IMAGE_*
+      const imagesPayload: Record<string, { dataUrl: string }> = {}
+      Object.entries(imageData).forEach(([tag, img]) => {
+        if (img?.dataUrl) imagesPayload[tag] = { dataUrl: img.dataUrl }
+      })
+      const allDynamicTableDefs: DynamicTableDef[] = allTags
+        .map((tag) => {
+          const parsed = parseDynamicTableTagToken(tag)
+          if (!parsed) return null
+          const [family, variant = "base"] = parsed.loopName.split("@")
+          return {
+            token: tag,
+            loopName: parsed.loopName,
+            family: family || parsed.loopName,
+            variant,
+            fields: parsed.fields,
+          }
+        })
+        .filter((x): x is DynamicTableDef => x !== null)
+
+      allDynamicTableDefs.forEach((tableDef) => {
+        const rows = tableData[tableDef.family] || []
+        replacements[tableDef.loopName] = rows.map((row) => {
+          const mappedRow: Record<string, string> = {}
+          tableDef.fields.forEach((field) => {
+            mappedRow[field] = (row?.[field] || "").trim()
+          })
+          return mappedRow
+        })
       })
 
       // Generate document name
       const documentName = `${template.name}_${processCode}_${new Date().toISOString().split("T")[0]}.docx`
 
-      // Use overrideProcessId if provided, otherwise use currentProcessState or process
-      const processIdToUse = overrideProcessId !== undefined 
-        ? overrideProcessId 
+      // Use overrideProcessId if provided, otherwise use currentProcessState or process.
+      // Si es un proceso nuevo (processData) y aún no existe en BD, crearlo ahora:
+      // el proceso solo se persiste cuando se genera el primer documento.
+      let processIdToUse = overrideProcessId !== undefined
+        ? overrideProcessId
         : (currentProcessState?.id || process?.id || "")
+      if (!processIdToUse && isNewProcess) {
+        const createdId = await ensureProcessCreated()
+        if (!createdId) {
+          setIsGenerating(false)
+          setGeneratingStep(null)
+          return
+        }
+        processIdToUse = createdId
+      }
       
       console.log("[handleGenerateDocument] Using processId:", processIdToUse, {
         overrideProcessId,
@@ -431,7 +867,9 @@ export function GenerateDocumentsDialog({
         },
         body: JSON.stringify({
           templatePath: template.fileUrl, // This should be the Drive path
+          templateId: template.id,
           replacements,
+          images: imagesPayload,
           processCode: processCode,
           processId: processIdToUse,
           documentName,
@@ -439,6 +877,8 @@ export function GenerateDocumentsDialog({
           entityId: entity?.id || processData?.entityId || process?.entityId,
           secretaryName: secretaryName,
           createdBy: profile?.id,
+          tableData, // CAP-03: persistir tablas dinámicas
+          fieldOrigin: saveOrigin, // CAP-03
         }),
       })
 
@@ -486,6 +926,10 @@ export function GenerateDocumentsDialog({
         },
       ]
       setGeneratedDocuments(updatedGeneratedDocuments)
+      // CAP-02: marcar la plantilla como generada en esta sesión (stepper en caliente)
+      setSessionGeneratedIds((prev) => (prev.includes(template.id) ? prev : [...prev, template.id]))
+      // La regeneración deja el documento al día: quitar la marca de "modificado"
+      setStaleTemplateIds((prev) => prev.filter((id) => id !== template.id))
 
       // No quitar indicador ni cerrar si estamos en "Generar todos"
       if (!fromGenerateAll) {
@@ -493,16 +937,17 @@ export function GenerateDocumentsDialog({
         setGeneratingStep(null)
       }
 
-      // Cerrar y refrescar solo cuando es "Generar Este" y ya están todos
+      // Cuando es "Generar Este" y ya están todos: paso final de adjuntos (RF-037)
       if (!fromGenerateAll) {
         const allGenerated =
           templates.length > 0 &&
-          templates.every((t) =>
-            updatedGeneratedDocuments.some((doc) => doc.templateId === t.id),
+          templates.every(
+            (t) =>
+              updatedGeneratedDocuments.some((doc) => doc.templateId === t.id) ||
+              generatedTemplateIds.includes(t.id),
           )
         if (allGenerated) {
-          if (onDocumentsGenerated) onDocumentsGenerated()
-          setTimeout(() => handleClose(), 1500)
+          setTimeout(() => finishToAttachments(), 1200)
         }
       }
 
@@ -532,44 +977,43 @@ export function GenerateDocumentsDialog({
       setIsSaving(true)
       setError(null)
 
-      // If this is a new process, create it first and use the returned process id
+      // Si es un proceso nuevo, crearlo primero (solo se persiste al generar)
       let currentProcessId = process?.id || ""
 
       if (isNewProcess && processData) {
-        try {
-          const created = await createProcess(processData)
-          currentProcessId = created.id
-          const createdAsMapped = { ...created, spreadsheetId: null, spreadsheetUrl: null, driveFolderId: null, driveFolderUrl: null } as unknown as ProcessMapped
-          setCurrentProcessState(createdAsMapped)
-          if (onProcessCreated) {
-            onProcessCreated(createdAsMapped)
-          }
-        } catch (createError) {
-          console.error("Error creating process:", createError)
-          setError("Error al crear el proceso. Por favor intente de nuevo.")
+        const createdId = await ensureProcessCreated()
+        if (!createdId) {
+          setIsSaving(false)
           return
         }
+        currentProcessId = createdId
       }
 
       // Generate all documents with the correct processId (necesario para asociar docs y actualizar drive en BD)
       const processIdToUse = currentProcessId || process?.id || ""
       console.log("[handleGenerateAll] Using processId:", processIdToUse)
 
-      // Generar en secuencia para poder mostrar progreso "documento X de Y"
-      for (let i = 0; i < templates.length; i++) {
-        setGeneratingStep({
-          current: i + 1,
-          total: templates.length,
-          templateName: templates[i].name,
-        })
-        await handleGenerateDocument(templates[i], 0, processIdToUse, true)
+      // CAP-02: solo generar las plantillas PENDIENTES (las ya generadas se pueden
+      // regenerar individualmente con "Generar Este" si se desea una nueva versión).
+      const pendingTemplates = templates.filter((t) => !isTemplateGenerated(t.id))
+      if (pendingTemplates.length === 0) {
+        // Todo ya estaba generado: ir directo al paso final de adjuntos
+        setTimeout(() => finishToAttachments(), 400)
+        return
       }
 
-      // Todos los documentos generados: refrescar lista y cerrar tras un breve delay
-      if (onDocumentsGenerated) {
-        onDocumentsGenerated()
+      // Generar en secuencia para poder mostrar progreso "documento X de Y"
+      for (let i = 0; i < pendingTemplates.length; i++) {
+        setGeneratingStep({
+          current: i + 1,
+          total: pendingTemplates.length,
+          templateName: pendingTemplates[i].name,
+        })
+        await handleGenerateDocument(pendingTemplates[i], 0, processIdToUse, true)
       }
-      setTimeout(() => handleClose(), 1500)
+
+      // Todos los documentos generados: paso final de adjuntos (RF-037)
+      setTimeout(() => finishToAttachments(), 1200)
     } catch (error) {
       console.error("Error generating documents:", error)
       setError(error instanceof Error ? error.message : "Error al generar los documentos. Por favor intente de nuevo.")
@@ -580,52 +1024,411 @@ export function GenerateDocumentsDialog({
     }
   }
 
-  const canProceedToNext = () => {
-    // Check if all required tags for current template are filled
-    if (currentStep >= templates.length) return false
-    const currentTemplate = templates[currentStep]
-    if (!currentTemplate.variables || currentTemplate.variables.length === 0) return true
-    
-    return currentTemplate.variables.every((tag) => {
+  /** RF-034: campos de una plantilla que siguen vacíos y no están marcados "va vacío". */
+  const collectEmptyFields = (template: Template): EmptyFieldItem[] => {
+    const fields: EmptyFieldItem[] = []
+    if (!template.variables) return fields
+
+    for (const tag of template.variables) {
+      const tableDef = parseDynamicTableTagToken(tag)
+      if (tableDef) {
+        const family = tableDef.loopName.split("@")[0] || tableDef.loopName
+        const requiredFields = tableDef.loopName.endsWith("@base") ? tableDef.fields : []
+        if (requiredFields.length === 0) continue
+        const rows = tableData[family] || []
+        if (rows.length === 0) {
+          const key = `table:${family}:empty`
+          if (!allowEmptyKeys.has(key)) {
+            fields.push({
+              key,
+              label: `Tabla ${family.replace(/_/g, " ")} (sin filas)`,
+              templateName: template.name,
+            })
+          }
+          continue
+        }
+        rows.forEach((row, i) => {
+          requiredFields.forEach((field) => {
+            if ((row?.[field] || "").trim()) return
+            const key = `table:${family}:${i}:${field}`
+            if (allowEmptyKeys.has(key)) return
+            fields.push({
+              key,
+              label: `${family.replace(/_/g, " ")} · ${field} (fila ${i + 1})`,
+              templateName: template.name,
+            })
+          })
+        })
+        continue
+      }
+      if (isImageTag(tag)) {
+        if (imageData[tag]?.dataUrl) continue
+        const key = `image:${tag}`
+        if (!allowEmptyKeys.has(key)) {
+          fields.push({ key, label: tag.replace(/_/g, " "), templateName: template.name })
+        }
+        continue
+      }
       const value = formData[tag] || ""
-      return value.trim().length > 0
+      if (tag === "ENTIDAD" && (value.trim() || entity?.name)) continue
+      if (tag === "SECRETARIA" && (value.trim() || secretaryName)) continue
+      if (tag === "LOGO_ENTIDAD" && entity?.logoUrl) continue
+      if (value.trim()) continue
+      const key = `scalar:${tag}`
+      if (!allowEmptyKeys.has(key)) {
+        fields.push({ key, label: tag.replace(/_/g, " "), templateName: template.name })
+      }
+    }
+    return fields
+  }
+
+  const collectPendingEmptyFields = (): EmptyFieldItem[] => {
+    const seen = new Set<string>()
+    const out: EmptyFieldItem[] = []
+    for (const t of templates) {
+      if (isTemplateGenerated(t.id)) continue
+      for (const f of collectEmptyFields(t)) {
+        if (seen.has(f.key)) continue
+        seen.add(f.key)
+        out.push(f)
+      }
+    }
+    return out
+  }
+
+  const openEmptyGate = (action: EmptyGateAction, fields: EmptyFieldItem[], proceed: () => void) => {
+    if (fields.length === 0) {
+      proceed()
+      return
+    }
+    setEmptyChecked(new Set())
+    setEmptyGate({ action, fields })
+  }
+
+  /** Valida si una plantilla (por índice) tiene todos sus campos diligenciados o marcados vacíos. */
+  const isStepComplete = (index: number): boolean => {
+    if (index >= templates.length) return false
+    const template = templates[index]
+    if (!template.variables || template.variables.length === 0) return true
+
+    return template.variables.every((tag) => {
+      const tableDef = parseDynamicTableTagToken(tag)
+      if (tableDef) {
+        const family = tableDef.loopName.split("@")[0] || tableDef.loopName
+        const rows = tableData[family] || []
+        // Only base fields are required; detail-only extra fields can remain empty.
+        const requiredFields = tableDef.loopName.endsWith("@base") ? tableDef.fields : []
+        if (requiredFields.length === 0) return true
+        if (rows.length === 0) return allowEmptyKeys.has(`table:${family}:empty`)
+        return rows.every((row, i) =>
+          requiredFields.every(
+            (field) =>
+              (row?.[field] || "").trim().length > 0 || allowEmptyKeys.has(`table:${family}:${i}:${field}`),
+          ),
+        )
+      }
+      if (isImageTag(tag)) {
+        return !!imageData[tag]?.dataUrl || allowEmptyKeys.has(`image:${tag}`)
+      }
+      if (tag === "ENTIDAD" && (formData[tag]?.trim() || entity?.name)) return true
+      if (tag === "SECRETARIA" && (formData[tag]?.trim() || secretaryName)) return true
+      if (tag === "LOGO_ENTIDAD" && entity?.logoUrl) return true
+      const value = formData[tag] || ""
+      return value.trim().length > 0 || allowEmptyKeys.has(`scalar:${tag}`)
     })
   }
 
-  const canGenerateCurrent = () => {
-    if (currentStep >= templates.length) return false
-    return canProceedToNext()
-  }
+  /** Paso máximo alcanzable: todos los pasos completos consecutivos + 1.
+      El stepper permite saltar solo hasta ahí (no se puede avanzar dejando huecos).
+      Un paso ya GENERADO cuenta como completo para la navegación (sus campos se
+      guardaron al generarlo y se precargan). */
+  const maxReachableStep = React.useMemo(() => {
+    let max = 0
+    for (let i = 0; i < templates.length; i++) {
+      if (isStepComplete(i) || isTemplateGenerated(templates[i]?.id)) max = i + 1
+      else break
+    }
+    return Math.min(max, Math.max(templates.length - 1, 0))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates, formData, tableData, imageData, generatedTemplateIds, allowEmptyKeys])
+
+  // CAP-02: cuántas plantillas faltan por generar (continuación parcial)
+  const pendingCount = templates.filter((t) => !isTemplateGenerated(t.id)).length
+  const generateAllLabel = (() => {
+    if (isNewProcess) return "Crear Proceso y Generar Documentos"
+    if (pendingCount === 0) return "Todos Generados — Ir a Adjuntos"
+    if (pendingCount < templates.length) return `Generar Pendientes (${pendingCount})`
+    return "Generar Todos y Guardar"
+  })()
 
   const currentTemplate = templates[currentStep] || null
-  const currentTemplateTags = currentTemplate?.variables || []
+  const currentGenerated = currentTemplate ? isTemplateGenerated(currentTemplate.id) : false
+  const currentStale = currentTemplate ? staleTemplateIds.includes(currentTemplate.id) : false
 
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent
-        className="max-w-4xl max-h-[90vh] flex flex-col"
-        showCloseButton={!isBusy}
-        onPointerDownOutside={(e) => {
-          if (isBusy) e.preventDefault()
-        }}
-        onEscapeKeyDown={(e) => {
-          if (isBusy) e.preventDefault()
-        }}
-      >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Generar Documentos del Proceso
-          </DialogTitle>
-          <DialogDescription>
-            {currentProcess && (
-              <>
-                {isNewProcess ? "Nuevo " : ""}Proceso: <span className="font-mono text-sm">{currentProcess.code}</span> - Completa los campos para cada
-                plantilla
-              </>
-            )}
-          </DialogDescription>
-        </DialogHeader>
+  const requestNext = () => {
+    if (!currentTemplate) return
+    openEmptyGate("next", collectEmptyFields(currentTemplate), () => setCurrentStep(currentStep + 1))
+  }
+
+  const requestGenerateCurrent = () => {
+    if (!currentTemplate) return
+    withReuseConfirmation(() => {
+      openEmptyGate("generate", collectEmptyFields(currentTemplate), () => {
+        void handleGenerateDocument(currentTemplate)
+      })
+    })
+  }
+
+  const requestGenerateAll = () => {
+    withReuseConfirmation(() => {
+      openEmptyGate("generateAll", collectPendingEmptyFields(), () => {
+        void handleGenerateAll()
+      })
+    })
+  }
+
+  const confirmEmptyFields = () => {
+    if (!emptyGate) return
+    if (emptyChecked.size !== emptyGate.fields.length) return
+    const nextAllow = new Set(allowEmptyKeys)
+    emptyGate.fields.forEach((f) => nextAllow.add(f.key))
+    setAllowEmptyKeys(nextAllow)
+    const action = emptyGate.action
+    setEmptyGate(null)
+    setEmptyChecked(new Set())
+    if (action === "next") setCurrentStep(currentStep + 1)
+    else if (action === "generate" && currentTemplate) void handleGenerateDocument(currentTemplate)
+    else if (action === "generateAll") void handleGenerateAll()
+  }
+
+  /** Guardar borrador: persiste los campos actuales en BD SIN generar documento.
+      Si el proceso es nuevo, lo crea primero (queda como borrador con campos). */
+  const handleSaveDraft = async () => {
+    try {
+      setIsSavingDraft(true)
+      setError(null)
+      const processIdToUse = await ensureProcessCreated()
+      if (!processIdToUse) return
+      const res = await fetch(`/api/processes/${processIdToUse}/fields`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ formData, tableData, origin: saveOrigin }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "No se pudo guardar el borrador")
+      }
+      setDraftSavedAt(Date.now())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al guardar el borrador")
+    } finally {
+      setIsSavingDraft(false)
+    }
+  }
+
+  const currentTemplateTags = currentTemplate?.variables || []
+  const currentTemplateTableDefs = React.useMemo<DynamicTableDef[]>(
+    () =>
+      currentTemplateTags
+        .map((tag) => {
+          const parsed = parseDynamicTableTagToken(tag)
+          if (!parsed) return null
+          const [family, variant = "base"] = parsed.loopName.split("@")
+          return { token: tag, loopName: parsed.loopName, family: family || parsed.loopName, variant, fields: parsed.fields }
+        })
+        .filter((x): x is DynamicTableDef => x !== null),
+    [currentTemplateTags]
+  )
+  const currentTemplateTableFamilies = React.useMemo<DynamicTableFamilyDef[]>(() => {
+    const grouped = new Map<string, DynamicTableFamilyDef>()
+    currentTemplateTableDefs.forEach((def) => {
+      if (!grouped.has(def.family)) {
+        grouped.set(def.family, {
+          family: def.family,
+          fields: [],
+          variants: [],
+          requiredFields: [],
+        })
+      }
+      const g = grouped.get(def.family)!
+      g.variants.push(def)
+      def.fields.forEach((f) => {
+        if (!g.fields.includes(f)) g.fields.push(f)
+      })
+      if (def.variant === "base") {
+        def.fields.forEach((f) => {
+          if (!g.requiredFields.includes(f)) g.requiredFields.push(f)
+        })
+      }
+    })
+    // if no @base variant exists, require first variant fields
+    grouped.forEach((g) => {
+      if (g.requiredFields.length === 0 && g.variants.length > 0) {
+        g.requiredFields = [...g.variants[0].fields]
+      }
+    })
+    return Array.from(grouped.values())
+  }, [currentTemplateTableDefs])
+  const currentTemplateScalarTags = React.useMemo(
+    () => currentTemplateTags.filter((tag) => !parseDynamicTableTagToken(tag) && !isImageTag(tag)),
+    [currentTemplateTags]
+  )
+  const currentTemplateImageTags = React.useMemo(
+    () => currentTemplateTags.filter((tag) => isImageTag(tag)),
+    [currentTemplateTags]
+  )
+
+  // RF-014 (CAP-03): variables escalares que aparecen en más de una plantilla del proceso
+  // ("el mismo nombre en dos plantillas del mismo proceso se considera el mismo dato").
+  const sharedScalarTags = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    templates.forEach((t) =>
+      (t.variables || []).forEach((tag) => {
+        if (!parseDynamicTableTagToken(tag) && !isImageTag(tag)) {
+          counts.set(tag, (counts.get(tag) || 0) + 1)
+        }
+      }),
+    )
+    return new Set([...counts.entries()].filter(([, c]) => c > 1).map(([tag]) => tag))
+  }, [templates])
+
+  // RF-014: del paso actual, cuáles ya están diligenciados (compartidos con otra minuta)
+  // y cuáles quedan pendientes.
+  const copiedFromOtherMinutes = React.useMemo(
+    () =>
+      currentTemplateScalarTags.filter(
+        (tag) =>
+          tag !== "ENTIDAD" &&
+          tag !== "SECRETARIA" &&
+          sharedScalarTags.has(tag) &&
+          (formData[tag] || "").trim().length > 0,
+      ),
+    [currentTemplateScalarTags, sharedScalarTags, formData],
+  )
+  const pendingInCurrentMinute = React.useMemo(
+    () =>
+      currentTemplateScalarTags.filter(
+        (tag) =>
+          tag !== "ENTIDAD" &&
+          tag !== "SECRETARIA" &&
+          (formData[tag] || "").trim().length === 0 &&
+          !allowEmptyKeys.has(`scalar:${tag}`),
+      ),
+    [currentTemplateScalarTags, formData, allowEmptyKeys],
+  )
+
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024 // 4 MB
+  const ACCEPTED_IMAGE_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]
+
+  const handleImageChange = (tag: string, file: File | null) => {
+    markStaleByTag(tag)
+    if (!file) {
+      setImageData((prev) => {
+        const next = { ...prev }
+        delete next[tag]
+        return next
+      })
+      return
+    }
+    if (!ACCEPTED_IMAGE_MIME.includes(file.type)) {
+      setError("Formato no soportado. Usa PNG, JPG, WEBP o GIF.")
+      return
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError("La imagen excede 4 MB.")
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : ""
+      if (!result.startsWith("data:")) return
+      clearAllowEmptyKey(`image:${tag}`)
+      setImageData((prev) => ({
+        ...prev,
+        [tag]: { dataUrl: result, mime: file.type, fileName: file.name },
+      }))
+      setError(null)
+    }
+    reader.onerror = () => setError("No se pudo leer la imagen seleccionada.")
+    reader.readAsDataURL(file)
+  }
+
+  const effectiveOpen = embedded ? true : open
+
+  const headerBlock = embedded ? (
+    <div className="space-y-1.5 pb-4">
+      <h2 className="text-lg font-semibold flex items-center gap-2">
+        <FileText className="h-5 w-5" />
+        Generar Documentos del Proceso
+      </h2>
+      <p className="text-sm text-muted-foreground">
+        {currentProcess && (
+          <>
+            {isNewProcess ? "Nuevo " : ""}Proceso: <span className="font-mono text-sm">{currentProcess.code}</span> - Completa los campos para cada
+            plantilla
+          </>
+        )}
+      </p>
+    </div>
+  ) : (
+    <DialogHeader>
+      <DialogTitle className="flex items-center gap-2">
+        <FileText className="h-5 w-5" />
+        Generar Documentos del Proceso
+      </DialogTitle>
+      <DialogDescription>
+        {currentProcess && (
+          <>
+            {isNewProcess ? "Nuevo " : ""}Proceso: <span className="font-mono text-sm">{currentProcess.code}</span> - Completa los campos para cada
+            plantilla
+          </>
+        )}
+      </DialogDescription>
+    </DialogHeader>
+  )
+
+  const attachmentsProcessId = currentProcessState?.id || process?.id || ""
+
+  // RF-037 (CAP-02): paso final — adjuntos del proceso, justo tras generar todos los documentos.
+  const attachmentsStepContent = (
+    <>
+      <div className="space-y-1.5 pb-4">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <Upload className="h-5 w-5" />
+          Paso final · Adjuntos del proceso
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Los documentos ya están generados y la carpeta del proceso quedó creada en Drive
+          {currentProcess?.code ? (
+            <>
+              {" "}(<span className="font-mono">{currentProcess.code}</span>)
+            </>
+          ) : null}
+          . Adjunta aquí los archivos de soporte (opcional); quedarán en esa misma carpeta.
+        </p>
+      </div>
+
+      {attachmentsProcessId && <ProcessAttachments processId={attachmentsProcessId} />}
+
+      <div className="border-t pt-4 flex items-center justify-end gap-2">
+        <Button variant="outline" onClick={finishAndExit}>
+          Omitir y finalizar
+        </Button>
+        <Button onClick={finishAndExit}>
+          <Check className="mr-2 h-4 w-4" />
+          Finalizar
+        </Button>
+      </div>
+    </>
+  )
+
+  const content = (
+    <>
+        {showAttachmentsStep ? (
+          attachmentsStepContent
+        ) : (
+          <>
+        {headerBlock}
 
         {error && <div className="bg-destructive/10 text-destructive px-4 py-2 rounded-md text-sm">{error}</div>}
 
@@ -666,32 +1469,53 @@ export function GenerateDocumentsDialog({
           </div>
         ) : (
           <>
-            {/* Steps Indicator */}
-            <div className="flex items-center gap-2 py-4 overflow-x-auto">
-              {templates.map((template, index) => (
+            {/* Steps Indicator - px-3 so ring-offset on current step isn't clipped by container.
+                Clicables: permite saltar a cualquier plantilla sin completar las anteriores. */}
+            <div className="flex items-center gap-2 py-4 px-3 overflow-x-auto">
+              {templates.map((template, index) => {
+                const generated = isTemplateGenerated(template.id)
+                const stale = staleTemplateIds.includes(template.id)
+                return (
                 <React.Fragment key={template.id}>
-                  <div
+                  <button
+                    type="button"
+                    onClick={() => !isGenerating && !isSaving && index <= maxReachableStep && setCurrentStep(index)}
+                    title={
+                      stale
+                        ? `${template.name} (modificado — regenera para aplicar los cambios)`
+                        : generated
+                          ? `${template.name} (ya generado)`
+                          : template.name
+                    }
                     className={cn(
-                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0",
-                      index < currentStep
-                        ? "bg-primary text-primary-foreground"
-                        : index === currentStep
-                          ? "bg-primary text-primary-foreground ring-2 ring-primary ring-offset-2"
-                          : "bg-muted text-muted-foreground",
+                      "flex h-10 w-10 items-center justify-center rounded-full text-sm font-medium shrink-0 transition-opacity",
+                      index <= maxReachableStep && !isGenerating && !isSaving
+                        ? "cursor-pointer hover:opacity-80"
+                        : "cursor-not-allowed opacity-50",
+                      stale
+                        ? "bg-amber-500 text-white"
+                        : generated
+                          ? "bg-green-600 text-white"
+                          : index <= currentStep
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground",
+                      index === currentStep && "ring-2 ring-primary ring-offset-2",
                     )}
+                    disabled={isGenerating || isSaving || index > maxReachableStep}
                   >
-                    {index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
-                  </div>
+                    {stale ? <AlertTriangle className="h-4 w-4" /> : generated || index < currentStep ? <Check className="h-4 w-4" /> : index + 1}
+                  </button>
                   {index < templates.length - 1 && (
                     <div
                       className={cn(
                         "h-1 w-12 rounded-full shrink-0",
-                        index < currentStep ? "bg-primary" : "bg-muted",
+                        generated || index < currentStep ? "bg-primary" : "bg-muted",
                       )}
                     />
                   )}
                 </React.Fragment>
-              ))}
+                )
+              })}
             </div>
 
             {/* Current Step Content */}
@@ -701,20 +1525,134 @@ export function GenerateDocumentsDialog({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-lg">{currentTemplate.name}</CardTitle>
-                      <CardDescription>
-                        Completa los siguientes campos para generar este documento
+                      <CardDescription className="flex flex-col gap-1.5">
+                        {currentGenerated ? (
+                          currentStale ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                              Editaste campos después de generar este documento. El de Drive tiene los valores anteriores — pulsa "Regenerar" para crear una nueva versión con los cambios.
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+                              <Check className="h-3.5 w-3.5 shrink-0" />
+                              Este documento ya fue generado. Puedes regenerarlo (creará una nueva versión) o continuar con el siguiente pendiente.
+                            </span>
+                          )
+                        ) : (
+                          <span>Completa los siguientes campos para generar este documento.</span>
+                        )}
+                        {(() => {
+                          const viewUrl = getTemplateDriveViewUrl(currentTemplate.fileUrl)
+                          if (!viewUrl) return null
+                          return (
+                            <a
+                              href={viewUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-primary hover:underline text-sm mt-1"
+                            >
+                              <FileText className="h-3.5 w-3.5 shrink-0" />
+                              Ver plantilla a diligenciar
+                              <ExternalLink className="h-3 w-3 shrink-0" />
+                            </a>
+                          )
+                        })()}
                       </CardDescription>
                     </CardHeader>
                   </Card>
 
                   <div className="space-y-4">
+                    {/* RF-014 (CAP-03): aviso de campos copiados entre minutas / pendientes */}
+                    {currentTemplateTags.length > 0 && templates.length > 1 && (
+                      <div className="rounded-md border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm">
+                        {copiedFromOtherMinutes.length > 0 ? (
+                          <p>
+                            <span className="font-medium">Campos copiados desde otras minutas:</span>{" "}
+                            {copiedFromOtherMinutes.map((t) => t.replace(/_/g, " ")).join(", ")}.
+                            {pendingInCurrentMinute.length > 0 && (
+                              <span className="text-muted-foreground">
+                                {" "}
+                                Pendientes en esta minuta: {pendingInCurrentMinute.map((t) => t.replace(/_/g, " ")).join(", ")}.
+                              </span>
+                            )}
+                          </p>
+                        ) : currentTemplateScalarTags.every((t) => !sharedScalarTags.has(t) || t === "ENTIDAD" || t === "SECRETARIA") ? (
+                          <p className="text-muted-foreground">
+                            Esta minuta no comparte campos con las demás; diligénciala por completo.
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
                     {currentTemplateTags.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
                         <p>Esta plantilla no requiere campos adicionales.</p>
                         <p className="text-sm mt-2">Los valores de Entidad y Secretaría se asignarán automáticamente.</p>
                       </div>
                     ) : (
-                      currentTemplateTags.map((tag) => (
+                      <>
+                      {currentTemplateImageTags.map((tag) => {
+                        const current = imageData[tag]
+                        const inputId = `field-${tag}`
+                        return (
+                          <div key={tag} className="space-y-2">
+                            <Label htmlFor={inputId} className="flex items-center gap-2">
+                              {tag.replace(/_/g, " ")} *
+                              {allowEmptyKeys.has(`image:${tag}`) && (
+                                <Badge variant="secondary" className="h-5 text-xs">
+                                  Va vacío
+                                </Badge>
+                              )}
+                            </Label>
+                            <div className="flex items-start gap-3">
+                              <label
+                                htmlFor={inputId}
+                                className="flex h-28 w-40 cursor-pointer items-center justify-center rounded-md border border-dashed bg-muted/30 text-xs text-muted-foreground hover:bg-muted/50"
+                              >
+                                {current?.dataUrl ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={current.dataUrl}
+                                    alt={tag}
+                                    className="max-h-full max-w-full rounded object-contain"
+                                  />
+                                ) : (
+                                  <span className="flex flex-col items-center gap-1 px-2 text-center">
+                                    <Upload className="h-5 w-5" />
+                                    Seleccionar imagen
+                                  </span>
+                                )}
+                              </label>
+                              <div className="flex-1 space-y-2">
+                                <Input
+                                  id={inputId}
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/webp,image/gif"
+                                  onChange={(e) => handleImageChange(tag, e.target.files?.[0] || null)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  PNG, JPG, WEBP o GIF. Máx 4 MB. Se insertará en tamaño mediano; puedes ajustarla en Word.
+                                </p>
+                                {current && (
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <span className="truncate">{current.fileName}</span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 gap-1 text-xs"
+                                      onClick={() => handleImageChange(tag, null)}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      Quitar
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      {currentTemplateScalarTags.map((tag) => (
                         <div key={tag} className="space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
@@ -730,42 +1668,96 @@ export function GenerateDocumentsDialog({
                                   Mejorado
                                 </Badge>
                               )}
+                              {/* RF-013 (CAP-03): señalar campos que vienen del proceso original */}
+                              {fieldOrigins?.[tag] === "reuse" && !editedFields.has(tag) && (
+                                <Badge
+                                  variant="secondary"
+                                  className="h-5 gap-1 text-xs bg-amber-500/10 text-amber-500 border-amber-500/20"
+                                >
+                                  Del original
+                                </Badge>
+                              )}
+                              {allowEmptyKeys.has(`scalar:${tag}`) && (
+                                <Badge variant="secondary" className="h-5 text-xs">
+                                  Va vacío
+                                </Badge>
+                              )}
                             </div>
                             {tag !== "ENTIDAD" && tag !== "SECRETARIA" && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className={cn(
-                                        "h-7 gap-1.5 text-xs transition-all",
-                                        formData[tag]?.trim().length > 0 && !improvedFields.has(tag)
-                                          ? "text-primary hover:text-primary hover:bg-primary/10"
-                                          : "text-muted-foreground",
-                                      )}
-                                      disabled={!formData[tag]?.trim() || improvingField === tag}
-                                      onClick={() => handleAIImprove(tag)}
-                                    >
-                                      {improvingField === tag ? (
-                                        <>
-                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                          Mejorando...
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Wand2 className="h-3 w-3" />
-                                          Mejorar con IA
-                                        </>
-                                      )}
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="left">
-                                    <p className="text-xs">La IA mejorará la redacción jurídica de este campo</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
+                              <div className="flex items-center gap-1">
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className={cn(
+                                          "h-7 gap-1.5 text-xs transition-all",
+                                          formData[tag]?.trim().length > 0 && !improvedFields.has(tag)
+                                            ? "text-primary hover:text-primary hover:bg-primary/10"
+                                            : "text-muted-foreground",
+                                        )}
+                                        disabled={!formData[tag]?.trim() || improvingField === tag}
+                                        onClick={() => handleAIImprove(tag)}
+                                      >
+                                        {improvingField === tag ? (
+                                          <>
+                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                            Mejorando...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Wand2 className="h-3 w-3" />
+                                            Mejorar con IA
+                                          </>
+                                        )}
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      <p className="text-xs">Mejora la redacción jurídica (usa contexto del proceso)</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={() => openAskSimple(tag)}
+                                      >
+                                        <MessageCircleQuestion className="h-3 w-3" />
+                                        Preguntar
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      <p className="text-xs">Pregunta sin contexto jurídico (ej. convertir número a letras, formatear)</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-primary hover:bg-primary/10"
+                                        onClick={() => openRagQuery(tag)}
+                                      >
+                                        <BookOpen className="h-3 w-3" />
+                                        Consultar docs
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left">
+                                      <p className="text-xs">Buscar en documentos de la entidad (ej. nombre del alcalde, cédula)</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
                             )}
                           </div>
                           {(tag === "ENTIDAD" || tag === "SECRETARIA") ? (
@@ -788,7 +1780,71 @@ export function GenerateDocumentsDialog({
                             />
                           )}
                         </div>
-                      ))
+                      ))}
+
+                      {currentTemplateTableFamilies.map((tableFamily) => {
+                        const rows = tableData[tableFamily.family] || []
+                        const label = tableFamily.family.replace(/_/g, " ")
+                        return (
+                          <div key={tableFamily.family} className="space-y-3 rounded-lg border p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <Label>{label} *</Label>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Tabla dinámica ({tableFamily.fields.join(", ")}).
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => addTableRow(tableFamily.family, tableFamily.fields)}
+                              >
+                                <Plus className="h-4 w-4 mr-1" />
+                                Agregar fila
+                              </Button>
+                            </div>
+
+                            <div className="space-y-2">
+                              {rows.map((row, rowIndex) => (
+                                <div key={`${tableFamily.family}-${rowIndex}`} className="grid gap-2 md:grid-cols-12 items-end">
+                                  {tableFamily.fields.map((field) => (
+                                    <div key={`${tableFamily.family}-${rowIndex}-${field}`} className="space-y-1 md:col-span-3">
+                                      <Label className="text-xs flex items-center gap-1">
+                                        {field}
+                                        {allowEmptyKeys.has(`table:${tableFamily.family}:${rowIndex}:${field}`) && (
+                                          <Badge variant="secondary" className="h-4 px-1 text-[10px]">
+                                            Va vacío
+                                          </Badge>
+                                        )}
+                                      </Label>
+                                      <Input
+                                        value={row?.[field] || ""}
+                                        onChange={(e) =>
+                                          handleTableCellChange(tableFamily.family, rowIndex, field, e.target.value)
+                                        }
+                                        placeholder={`Valor de ${field}`}
+                                      />
+                                    </div>
+                                  ))}
+                                  <div className="md:col-span-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => removeTableRow(tableFamily.family, rowIndex, tableFamily.fields)}
+                                      title="Eliminar fila"
+                                    >
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      </>
                     )}
                   </div>
 
@@ -807,69 +1863,279 @@ export function GenerateDocumentsDialog({
               )}
             </div>
 
-            <DialogFooter className="border-t pt-4">
-              <div className="flex items-center justify-between w-full">
-                <Button
-                  variant="outline"
-                  onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
-                  disabled={currentStep === 0 || isGenerating || isSaving}
-                >
-                  <ChevronLeft className="mr-2 h-4 w-4" />
-                  Anterior
-                </Button>
-
+            {embedded ? (
+              <div className="border-t pt-4 flex items-center justify-between w-full shrink-0">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                    disabled={currentStep === 0 || isGenerating || isSaving}
+                  >
+                    <ChevronLeft className="mr-2 h-4 w-4" />
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleSaveDraft}
+                    disabled={isGenerating || isSaving || isSavingDraft}
+                    title="Guarda los campos diligenciados sin generar documentos. Puedes salir y continuar después."
+                  >
+                    {isSavingDraft ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar borrador</>}
+                  </Button>
+                  {draftSavedAt && !isSavingDraft && (
+                    <span className="text-xs text-green-600 dark:text-green-400 self-center">Borrador guardado ✓</span>
+                  )}
+                </div>
                 <div className="flex gap-2">
+                  {/* "Generar Este" (o "Regenerar" si ya tiene doc): genera SOLO la plantilla
+                      actual. "Siguiente" solo navega, no genera nada. Al final, "Generar
+                      Todos" genera todo lo pendiente de una vez. */}
+                  <Button variant="outline" onClick={requestGenerateCurrent} disabled={!currentTemplate || isGenerating || isSaving}>
+                    {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> {currentGenerated ? "Regenerar" : "Generar Este"}</>}
+                  </Button>
                   {currentStep < templates.length - 1 ? (
-                    <Button
-                      onClick={() => setCurrentStep(currentStep + 1)}
-                      disabled={!canProceedToNext() || isGenerating || isSaving}
-                    >
-                      Siguiente
-                      <ChevronRight className="ml-2 h-4 w-4" />
+                    <Button onClick={requestNext} disabled={isGenerating || isSaving}>
+                      Siguiente <ChevronRight className="ml-2 h-4 w-4" />
                     </Button>
                   ) : (
-                    <>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleGenerateDocument(currentTemplate)}
-                        disabled={!canGenerateCurrent() || isGenerating || isSaving}
-                      >
-                        {isGenerating ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Generando... (documentos grandes pueden tardar 1-2 min)
-                          </>
-                        ) : (
-                          <>
-                            <FileText className="mr-2 h-4 w-4" />
-                            Generar Este
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        onClick={handleGenerateAll}
-                        disabled={isGenerating || isSaving}
-                        className="gap-2"
-                      >
-                        {isSaving ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="h-4 w-4" />
-                            {isNewProcess ? "Crear Proceso y Generar Documentos" : "Generar Todos y Guardar"}
-                          </>
-                        )}
-                      </Button>
-                    </>
+                    <Button onClick={requestGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
+                      {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {generateAllLabel}</>}
+                    </Button>
                   )}
                 </div>
               </div>
-            </DialogFooter>
+            ) : (
+              <DialogFooter className="border-t pt-4">
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" onClick={() => setCurrentStep(Math.max(0, currentStep - 1))} disabled={currentStep === 0 || isGenerating || isSaving}>
+                      <ChevronLeft className="mr-2 h-4 w-4" /> Anterior
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={handleSaveDraft}
+                      disabled={isGenerating || isSaving || isSavingDraft}
+                      title="Guarda los campos diligenciados sin generar documentos. Puedes salir y continuar después."
+                    >
+                      {isSavingDraft ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Guardando...</> : <><Save className="mr-2 h-4 w-4" /> Guardar borrador</>}
+                    </Button>
+                    {draftSavedAt && !isSavingDraft && (
+                      <span className="text-xs text-green-600 dark:text-green-400 self-center">Borrador guardado ✓</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={requestGenerateCurrent} disabled={!currentTemplate || isGenerating || isSaving}>
+                      {isGenerating ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generando...</> : <><FileText className="mr-2 h-4 w-4" /> {currentGenerated ? "Regenerar" : "Generar Este"}</>}
+                    </Button>
+                    {currentStep < templates.length - 1 ? (
+                      <Button onClick={requestNext} disabled={isGenerating || isSaving}>
+                        Siguiente <ChevronRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button onClick={requestGenerateAll} disabled={isGenerating || isSaving} className="gap-2">
+                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {isNewProcess ? "Creando Proceso y Generando..." : "Generando Todos..."}</> : <><Upload className="h-4 w-4" /> {generateAllLabel}</>}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </DialogFooter>
+            )}
           </>
         )}
+
+          </>
+        )}
+
+      {/* RF-034: listar vacíos y exigir marcar "va vacío" antes de avanzar o generar */}
+      <Dialog open={!!emptyGate} onOpenChange={(open) => !open && setEmptyGate(null)}>
+        <DialogContent className="sm:max-w-md max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Campos vacíos
+            </DialogTitle>
+            <DialogDescription>
+              {emptyGate?.action === "generateAll"
+                ? "Hay campos vacíos en las plantillas pendientes. Márcalos como vacíos a propósito o cancela y llénalos."
+                : "Hay campos vacíos en este documento. Márcalos como vacíos a propósito o cancela y llénalos."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
+            {emptyGate?.fields.map((field) => {
+              const id = `empty-${field.key}`
+              const checked = emptyChecked.has(field.key)
+              return (
+                <div key={field.key} className="flex items-start gap-3 rounded-md border p-3">
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={(value) => {
+                      setEmptyChecked((prev) => {
+                        const next = new Set(prev)
+                        if (value === true) next.add(field.key)
+                        else next.delete(field.key)
+                        return next
+                      })
+                    }}
+                  />
+                  <Label htmlFor={id} className="text-sm leading-snug cursor-pointer">
+                    <span className="font-medium">{field.label}</span>
+                    {emptyGate.action === "generateAll" && field.templateName && (
+                      <span className="block text-xs text-muted-foreground">{field.templateName}</span>
+                    )}
+                    <span className="block text-xs text-muted-foreground mt-0.5">Va vacío a propósito</span>
+                  </Label>
+                </div>
+              )
+            })}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmptyGate(null)}>
+              Cancelar y llenar
+            </Button>
+            <Button
+              onClick={confirmEmptyFields}
+              disabled={!emptyGate || emptyChecked.size !== emptyGate.fields.length}
+            >
+              {emptyGate?.action === "next"
+                ? "Continuar"
+                : emptyGate?.action === "generateAll"
+                  ? "Continuar y generar pendientes"
+                  : "Continuar y generar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* RF-013 (CAP-03): confirmación de campos clave antes de generar (proceso reutilizado) */}
+      <Dialog open={reuseConfirmOpen} onOpenChange={(open) => !open && setReuseConfirmOpen(false)}>
+        <DialogContent className="sm:max-w-md max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Confirmar campos del proceso reutilizado</DialogTitle>
+            <DialogDescription>
+              Este proceso fue reutilizado. Revisa y confirma los campos clave antes de generar;
+              no se generará hasta que los confirmes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
+            {entity?.name && (
+              <div className="rounded-md border p-3">
+                <p className="text-xs font-medium text-muted-foreground">Entidad</p>
+                <p className="text-sm font-medium">{entity.name}</p>
+              </div>
+            )}
+            <ul className="space-y-2">
+              {unreviewedKeyFields
+                .filter((tag) => tag !== "ENTIDAD" && tag !== "SECRETARIA")
+                .map((tag) => (
+                  <li key={tag} className="rounded-md border p-3">
+                    <p className="text-xs font-medium text-muted-foreground">{tag.replace(/_/g, " ")}</p>
+                    <p className="text-sm whitespace-pre-wrap line-clamp-3">{formData[tag] || "—"}</p>
+                  </li>
+                ))}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              Si algún valor no aplica, cancela, edítalo en el formulario y vuelve a generar.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReuseConfirmOpen(false)}>
+              Cancelar y revisar
+            </Button>
+            <Button onClick={handleConfirmReuseFields}>
+              Confirmar y generar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Preguntar a la IA (sin contexto) / Consultar en documentos (RAG) */}
+      <Dialog open={!!aiHelpTag && !!aiHelpMode} onOpenChange={(open) => !open && closeAiHelp()}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {aiHelpMode === "ask" ? "Preguntar a la IA" : "Consultar en documentos"}
+            </DialogTitle>
+            <DialogDescription>
+              {aiHelpMode === "ask"
+                ? "Sin contexto jurídico. Escribe tu pregunta; la respuesta aparecerá abajo. Si es correcta, aplica al campo; si no, puedes preguntar de nuevo."
+                : "Busca en los documentos de la entidad. La respuesta aparecerá abajo. Si es correcta, aplica al campo; si no, puedes preguntar de nuevo."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {aiHelpTag && (
+              <p className="text-sm text-muted-foreground">
+                Campo: <strong>{aiHelpTag.replace(/_/g, " ")}</strong>
+              </p>
+            )}
+            <div className="grid gap-2">
+              <Label htmlFor="ai-help-question">Pregunta o instrucción</Label>
+              <Textarea
+                id="ai-help-question"
+                placeholder={aiHelpMode === "ask" ? "Ej: convierte el número 5000 a letras en pesos colombianos" : "Ej: ¿cuál es el nombre del alcalde? ¿qué dice el contrato sobre...?"}
+                value={aiHelpQuestion}
+                onChange={(e) => setAiHelpQuestion(e.target.value)}
+                rows={4}
+                className="min-h-[100px] resize-y"
+              />
+            </div>
+            {aiHelpResponse !== "" && (
+              <div className="grid gap-2">
+                <Label>Respuesta</Label>
+                <Textarea
+                  className="min-h-[80px] resize-y bg-muted/50"
+                  value={aiHelpResponse}
+                  onChange={(e) => setAiHelpResponse(e.target.value)}
+                  placeholder="La respuesta aparecerá aquí. Puedes editarla antes de aplicar."
+                />
+              </div>
+            )}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAiHelp} disabled={aiHelpLoading}>
+              Cancelar
+            </Button>
+            <Button
+              variant={aiHelpResponse ? "outline" : "default"}
+              onClick={handleAiHelpSubmit}
+              disabled={!aiHelpQuestion.trim() || aiHelpLoading}
+            >
+              {aiHelpLoading ? <><Loader2 className="mr-2 h-3 w-3 animate-spin" /> Consultando...</> : "Preguntar"}
+            </Button>
+            <Button
+              onClick={handleAiHelpApply}
+              disabled={!aiHelpResponse.trim() || aiHelpLoading}
+            >
+              Aplicar al campo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col max-w-4xl w-full flex-1 min-h-0 overflow-hidden">
+        {content}
+      </div>
+    )
+  }
+
+  return (
+    <Dialog open={effectiveOpen} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-w-4xl max-h-[90vh] flex flex-col"
+        showCloseButton={!isBusy}
+        onPointerDownOutside={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+        onEscapeKeyDown={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+      >
+        {content}
       </DialogContent>
     </Dialog>
   )

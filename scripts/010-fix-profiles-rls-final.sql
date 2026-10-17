@@ -1,11 +1,10 @@
 -- FINAL FIX: Remove ALL recursion from profiles table RLS policies
 -- The key insight: profiles table policies must ONLY use auth.uid(), never query profiles
 
--- Step 1: Drop the recursive security definer functions
-DROP FUNCTION IF EXISTS auth.get_my_role() CASCADE;
-DROP FUNCTION IF EXISTS auth.get_my_organization_id() CASCADE;
-DROP FUNCTION IF EXISTS auth.role() CASCADE;
-DROP FUNCTION IF EXISTS auth.organization_id() CASCADE;
+-- Step 1: Drop legacy helper functions (public only).
+-- Do NOT drop auth.* — Supabase owns that schema (ERROR 42501).
+DROP FUNCTION IF EXISTS public.get_user_role(uuid) CASCADE;
+DROP FUNCTION IF EXISTS public.get_user_org(uuid) CASCADE;
 
 -- Step 2: Drop ALL existing policies on profiles
 DROP POLICY IF EXISTS "profiles_view_own" ON public.profiles;

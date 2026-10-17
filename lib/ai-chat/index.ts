@@ -12,7 +12,7 @@
  * // In your API route
  * export const POST = createChatRoute({
  *   systemPrompt: 'You are a helpful assistant',
- *   model: 'openai/gpt-4o'
+ *   model: getOpenAIChatModelString()  // or OPENAI_MODEL env
  * })
  * 
  * // In your component

@@ -1,6 +1,7 @@
 // Database types for EVA Jurídico
 
-export type UserRole = "superadmin" | "admin" | "member"
+// CAP-07: "entity_contact" = funcionario de la entidad (solo hilos de su entidad)
+export type UserRole = "superadmin" | "admin" | "member" | "entity_contact"
 
 export interface Profile {
   id: string
@@ -10,6 +11,8 @@ export interface Profile {
   status: "pending" | "approved" | "rejected"
   avatar_url?: string | null
   organization_id?: string | null
+  /** CAP-07: solo aplica a entity_contact — entidad cuyos hilos puede ver. */
+  entity_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -33,7 +36,7 @@ export interface Entity {
   representative_name: string
   organization_id: string
   logo_url?: string | null
-  status: "active" | "inactive"
+  status: "active" | "inactive" | "pending" | "rejected"
   created_at: string
   updated_at: string
   // Computed fields
@@ -55,6 +58,8 @@ export interface ProcessType {
   id: string
   name: string
   description?: string | null
+  /** NULL = compartido de plataforma; UUID = exclusivo del tenant */
+  organization_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -93,7 +98,7 @@ export interface Process {
   documents_count?: number
 }
 
-export type DocumentStatus = "draft" | "pending" | "approved" | "rejected"
+export type DocumentStatus = "draft" | "pending" | "in_review" | "approved" | "rejected"
 
 export interface Document {
   id: string

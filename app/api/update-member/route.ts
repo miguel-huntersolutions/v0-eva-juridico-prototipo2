@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 /**
  * PUT /api/update-member
@@ -29,7 +30,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { memberId, name, role, avatarUrl } = body
+    const { memberId, name, role, avatarUrl, entityId, organizationId } = body
 
     if (!memberId) {
       return NextResponse.json(
@@ -66,18 +67,58 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 })
     }
 
+    const isPlatformSuperadmin = profile.role === "superadmin" && !profile.organization_id
+    const isOrgSuperadmin = profile.role === "superadmin" && !!profile.organization_id
+
     // If user is admin (not superadmin), verify they can only update members in their own organization
-    if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
+    if (!canManageOrganization(profile, memberProfile.organization_id)) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only update members in their own organization" },
         { status: 403 },
       )
     }
 
-    // Verify that admins can only update members (not change roles to admin)
-    if (profile.role === "admin" && role && role === "admin") {
+    if (isOrgSuperadmin && profile.organization_id !== memberProfile.organization_id) {
       return NextResponse.json(
-        { error: "Forbidden: Admins can only update members, not change roles to admin" },
+        { error: "Forbidden: Solo puedes actualizar usuarios de tu organización" },
+        { status: 403 },
+      )
+    }
+
+    // Sobre el perfil objetivo: solo el superadmin de plataforma modifica a un superadmin,
+    // y un admin no modifica a otros admins.
+    if (memberProfile.role === "superadmin" && !isPlatformSuperadmin) {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede modificar a un superadmin" },
+        { status: 403 },
+      )
+    }
+    if (profile.role === "admin" && memberProfile.role === "admin" && memberProfile.id !== user.id) {
+      return NextResponse.json({ error: "Forbidden: Admins cannot modify other admins" }, { status: 403 })
+    }
+    if (role !== undefined && !["superadmin", "admin", "member", "entity_contact"].includes(role)) {
+      return NextResponse.json({ error: "Invalid role" }, { status: 400 })
+    }
+
+    // Verify that admins can only update members (not change roles to admin)
+    if (profile.role === "admin" && role && (role === "admin" || role === "superadmin")) {
+      return NextResponse.json(
+        { error: "Forbidden: Admins can only update members, not change roles to admin/superadmin" },
+        { status: 403 },
+      )
+    }
+
+    if (role === "superadmin" && !isPlatformSuperadmin) {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede asignar superadmin de organización" },
+        { status: 403 },
+      )
+    }
+
+    // Org superadmin cannot promote/demote other org superadmins
+    if (isOrgSuperadmin && role === "superadmin") {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede asignar superadmin de organización" },
         { status: 403 },
       )
     }
@@ -87,6 +128,28 @@ export async function PUT(request: NextRequest) {
     if (name !== undefined) updateData.name = name
     if (role !== undefined) updateData.role = role
     if (avatarUrl !== undefined) updateData.avatar_url = avatarUrl
+    // Platform may assign a user without org into this tenant
+    if (organizationId !== undefined && isPlatformSuperadmin) {
+      updateData.organization_id = organizationId
+    }
+    if (entityId !== undefined) {
+      if (entityId === null || entityId === "") {
+        updateData.entity_id = null
+      } else {
+        const { data: entityRow } = await serviceRoleClient
+          .from("entities")
+          .select("id, organization_id")
+          .eq("id", entityId)
+          .maybeSingle()
+        if (!entityRow || entityRow.organization_id !== memberProfile.organization_id) {
+          return NextResponse.json(
+            { error: "invalid_entity", message: "La entidad no pertenece a la organización del usuario." },
+            { status: 400 },
+          )
+        }
+        updateData.entity_id = entityRow.id
+      }
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(

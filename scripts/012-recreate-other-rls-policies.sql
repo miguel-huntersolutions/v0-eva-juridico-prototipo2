@@ -11,6 +11,17 @@ ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE secretaries ENABLE ROW LEVEL SECURITY;
 
 -- Drop existing policies
+DROP POLICY IF EXISTS "orgs_select" ON public.organizations;
+DROP POLICY IF EXISTS "orgs_manage" ON public.organizations;
+DROP POLICY IF EXISTS "entities_manage" ON public.entities;
+DROP POLICY IF EXISTS "secretaries_manage" ON public.secretaries;
+DROP POLICY IF EXISTS "process_types_manage" ON public.process_types;
+DROP POLICY IF EXISTS "templates_manage" ON public.templates;
+DROP POLICY IF EXISTS "processes_manage" ON public.processes;
+DROP POLICY IF EXISTS "documents_manage" ON public.documents;
+DROP POLICY IF EXISTS "chat_messages_select" ON public.chat_messages;
+DROP POLICY IF EXISTS "chat_messages_insert" ON public.chat_messages;
+
 DROP POLICY IF EXISTS "organizations_select" ON organizations;
 DROP POLICY IF EXISTS "organizations_insert" ON organizations;
 DROP POLICY IF EXISTS "organizations_update" ON organizations;

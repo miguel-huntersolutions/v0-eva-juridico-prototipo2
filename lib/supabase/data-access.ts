@@ -21,7 +21,7 @@ export interface Entity {
   representative_name: string
   organization_id: string
   logo_url: string | null
-  status: "active" | "inactive"
+  status: "active" | "inactive" | "pending" | "rejected"
   created_at: string
   updated_at: string
 }
@@ -41,6 +41,7 @@ export interface ProcessType {
   id: string
   name: string
   description: string
+  organization_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -50,6 +51,8 @@ export interface Template {
   name: string
   process_type_id: string
   file_url: string
+  /** Si está definida, la plantilla solo aplica a procesos de esta entidad; null = todas. */
+  entity_id?: string | null
   variables?: string[] | null
   created_at: string
   updated_at: string
@@ -80,7 +83,7 @@ export interface Document {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   file_url: string
   file_size: number
   created_by: string | null
@@ -92,10 +95,11 @@ export interface Profile {
   id: string
   name: string
   email: string
-  role: "superadmin" | "admin" | "member"
+  role: "superadmin" | "admin" | "member" | "entity_contact"
   status: "pending" | "approved" | "rejected"
   organization_id: string | null
   avatar_url: string | null
+  entity_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -234,7 +238,7 @@ export async function getProcessType(id: string) {
 // Templates
 export async function getTemplates(processTypeId?: string) {
   const supabase = await createServerClient()
-  let query = supabase.from("templates").select("*").order("name")
+  let query = supabase.from("templates").select("*").order("created_at", { ascending: true })
 
   if (processTypeId) {
     query = query.eq("process_type_id", processTypeId)
@@ -257,6 +261,17 @@ export async function getTemplatesWithProcessType() {
 
   if (error) throw error
   return data as (Template & { process_type: ProcessType })[]
+}
+
+export async function getTemplateById(templateId: string) {
+  const supabase = await createServerClient()
+  const { data, error } = await supabase
+    .from("templates")
+    .select("*")
+    .eq("id", templateId)
+    .single()
+  if (error) throw error
+  return data as Template
 }
 
 // Processes

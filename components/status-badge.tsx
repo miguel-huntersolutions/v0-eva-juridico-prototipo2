@@ -1,7 +1,16 @@
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-type Status = "draft" | "in_progress" | "review" | "completed" | "archived" | "active" | "inactive"
+type Status =
+  | "draft"
+  | "in_progress"
+  | "review"
+  | "completed"
+  | "archived"
+  | "active"
+  | "inactive"
+  | "pending"
+  | "rejected"
 
 interface StatusBadgeProps {
   status: Status
@@ -37,10 +46,18 @@ const statusConfig: Record<Status, { label: string; className: string }> = {
     label: "Inactivo",
     className: "bg-muted text-muted-foreground border-muted-foreground/20",
   },
+  pending: {
+    label: "Pendiente de aprobación",
+    className: "bg-warning/15 text-warning border-warning/30",
+  },
+  rejected: {
+    label: "Rechazada",
+    className: "bg-destructive/15 text-destructive border-destructive/30",
+  },
 }
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const config = statusConfig[status]
+  const config = statusConfig[status] ?? statusConfig.inactive
   return (
     <Badge variant="outline" className={cn(config.className, className)}>
       {config.label}

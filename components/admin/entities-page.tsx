@@ -21,8 +21,9 @@ import {
   Mail,
   Phone,
   Loader2,
-  ChevronDown,
-  ChevronUp,
+  GitMerge,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -49,6 +50,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
 import type { EntityMapped } from "@/lib/supabase/client-data-access"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -76,18 +78,17 @@ import { useProfile } from "@/hooks/use-profile"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
-interface SecretaryForm {
-  id?: string // ID of existing secretary (if editing)
-  name: string
-  secretaryName: string
-  email: string
-  phone: string
-}
+import {
+  SecretariesEditor,
+  emptySecretaryForm,
+  type SecretaryForm,
+} from "@/components/secretaries-editor"
 
 export function EntitiesPage() {
   const { profile, isLoading: profileLoading } = useProfile()
-  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role)
-  const isSuperadmin = actualRole === "superadmin"
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role, platformSa)
+  const isSuperadmin = platformSa
   const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
 
   const {
@@ -101,13 +102,13 @@ export function EntitiesPage() {
   })
 
   const [searchQuery, setSearchQuery] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive">("all")
+  const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive" | "pending" | "rejected">("all")
   const [isCreateOpen, setIsCreateOpen] = React.useState(false)
   const [isEditOpen, setIsEditOpen] = React.useState(false)
   // Added isDeleteOpen state
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
   const [isAssignMembersOpen, setIsAssignMembersOpen] = React.useState(false)
-  const [expandedEntityId, setExpandedEntityId] = React.useState<string | null>(null) // Track which entity has secretaries expanded
+  const [isSecretariesOpen, setIsSecretariesOpen] = React.useState(false)
   const [selectedEntity, setSelectedEntity] = React.useState<EntityMapped | null>(null)
   const [currentStep, setCurrentStep] = React.useState(1)
 
@@ -117,6 +118,19 @@ export function EntitiesPage() {
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false) // Added state for detail dialog
+
+  // CAP-10: aprobación de propuestas y fusión de entidades repetidas
+  const [reviewEntity, setReviewEntity] = React.useState<EntityMapped | null>(null)
+  const [reviewDecision, setReviewDecision] = React.useState<"approve" | "reject" | null>(null)
+  const [rejectReason, setRejectReason] = React.useState("")
+  const [isReviewing, setIsReviewing] = React.useState(false)
+  const [reviewError, setReviewError] = React.useState<string | null>(null)
+  const [isMergeOpen, setIsMergeOpen] = React.useState(false)
+  const [mergeSourceId, setMergeSourceId] = React.useState("")
+  const [mergeTargetId, setMergeTargetId] = React.useState("")
+  const [isMerging, setIsMerging] = React.useState(false)
+  const [mergeError, setMergeError] = React.useState<string | null>(null)
+  const [mergeReport, setMergeReport] = React.useState<Record<string, number | string> | null>(null)
 
   const [organizations, setOrganizations] = React.useState<OrganizationMapped[]>([])
   const [loadingOrgs, setLoadingOrgs] = React.useState(false)
@@ -139,7 +153,7 @@ export function EntitiesPage() {
     address: "",
     phone: "",
     status: "active" as "active" | "inactive",
-    secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }] as SecretaryForm[],
+    secretaries: [emptySecretaryForm()] as SecretaryForm[],
     logoFile: null as File | null,
     paaFile: null as File | null,
     planFile: null as File | null,
@@ -154,7 +168,8 @@ export function EntitiesPage() {
       setLoadingMembers(true)
       try {
         const data = await getOrganizationMembers(effectiveOrganizationId)
-        setMembers(data.filter((m) => m.role === "member"))
+        // Include both member and admin so "Asignar Miembros" has someone to assign
+        setMembers(data.filter((m) => m.role === "member" || m.role === "admin"))
       } catch (err) {
         console.error("Error loading members:", err)
       } finally {
@@ -219,10 +234,87 @@ export function EntitiesPage() {
   })
 
   const stats = {
-    total: entities.length,
+    total: entities.filter((e) => e.status !== "rejected").length,
     active: entities.filter((e) => e.status === "active").length,
     inactive: entities.filter((e) => e.status === "inactive").length,
+    pending: entities.filter((e) => e.status === "pending").length,
+    rejected: entities.filter((e) => e.status === "rejected").length,
     processes: entities.reduce((acc, e) => acc + e.processesCount, 0),
+  }
+
+  const handleReview = async () => {
+    if (!reviewEntity || !reviewDecision) return
+    if (reviewDecision === "reject" && !rejectReason.trim()) {
+      setReviewError("El motivo del rechazo es obligatorio")
+      return
+    }
+    try {
+      setIsReviewing(true)
+      setReviewError(null)
+      const res = await fetch(`/api/entities/${reviewEntity.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision: reviewDecision,
+          reason: reviewDecision === "reject" ? rejectReason.trim() : undefined,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo revisar la entidad")
+      setEntities((prev) =>
+        prev.map((e) =>
+          e.id === reviewEntity.id
+            ? {
+                ...e,
+                status: reviewDecision === "approve" ? "active" : "rejected",
+                rejectionReason: reviewDecision === "reject" ? rejectReason.trim() : null,
+              }
+            : e,
+        ),
+      )
+      setReviewEntity(null)
+      setReviewDecision(null)
+      setRejectReason("")
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Error al revisar")
+    } finally {
+      setIsReviewing(false)
+    }
+  }
+
+  const handleMerge = async () => {
+    if (!mergeSourceId || !mergeTargetId) {
+      setMergeError("Elige la entidad origen y la destino")
+      return
+    }
+    try {
+      setIsMerging(true)
+      setMergeError(null)
+      const res = await fetch("/api/entities/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId: mergeSourceId, targetId: mergeTargetId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo fusionar")
+      setMergeReport(data.report || {})
+      setEntities((prev) =>
+        prev.map((e) => {
+          if (e.id === mergeSourceId) {
+            return { ...e, status: "inactive" as const, mergedInto: mergeTargetId, processesCount: 0 }
+          }
+          if (e.id === mergeTargetId) {
+            const source = prev.find((x) => x.id === mergeSourceId)
+            return { ...e, processesCount: e.processesCount + (source?.processesCount || 0) }
+          }
+          return e
+        }),
+      )
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : "Error al fusionar")
+    } finally {
+      setIsMerging(false)
+    }
   }
 
   const handleCreate = () => {
@@ -382,28 +474,16 @@ export function EntitiesPage() {
         deleted: secretariesToDelete.length,
       })
 
-      // Reload secretaries after saving
       if (selectedEntity) {
         const updatedSecretaries = await getSecretaries(selectedEntity.id)
         setSecretaries(updatedSecretaries)
-        const secretaryForms = updatedSecretaries.map((s) => ({
-          id: s.id,
-          name: s.name || "",
-          secretaryName: s.secretary_name || "",
-          email: s.email || "",
-          phone: s.phone || "",
-        }))
-        setFormData({
-          ...formData,
-          secretaries:
-            secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }],
-        })
       }
-      // Reload entities to refresh any counts
       if (effectiveOrganizationId) {
         const entitiesData = await getEntities(effectiveOrganizationId)
         setEntities(entitiesData)
       }
+      setIsSecretariesOpen(false)
+      setError(null)
     } catch (err) {
       console.error("Error saving secretaries:", err)
       setError("Error al guardar las secretarías")
@@ -474,7 +554,7 @@ export function EntitiesPage() {
       address: "",
       phone: "",
       status: "active" as "active" | "inactive",
-      secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
+      secretaries: [emptySecretaryForm()],
       logoFile: null,
       paaFile: null,
       planFile: null,
@@ -496,7 +576,7 @@ export function EntitiesPage() {
       address: "",
       phone: "",
       status: entity.status as "active" | "inactive",
-      secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
+      secretaries: [emptySecretaryForm()],
       logoFile: null,
       paaFile: null,
       planFile: null,
@@ -504,19 +584,12 @@ export function EntitiesPage() {
     setIsEditOpen(true)
   }
 
-  const toggleSecretariesView = async (entity: EntityMapped) => {
-    // If clicking the same entity, toggle it closed
-    if (expandedEntityId === entity.id) {
-      setExpandedEntityId(null)
-      setSelectedEntity(null)
-      return
-    }
-
-    // Otherwise, expand this entity
+  const openSecretariesDialog = async (entity: EntityMapped) => {
     setSelectedEntity(entity)
-    setExpandedEntityId(entity.id)
-    
-    // Load secretaries from database
+    setIsSecretariesOpen(true)
+    setError(null)
+    setSaving(false)
+
     try {
       const entitySecretaries = await getSecretaries(entity.id)
       const secretaryForms = entitySecretaries.map((s) => ({
@@ -526,18 +599,18 @@ export function EntitiesPage() {
         email: s.email || "",
         phone: s.phone || "",
       }))
-      setFormData({
-        ...formData,
+      setFormData((prev) => ({
+        ...prev,
         secretaries:
-          secretaryForms.length > 0 ? secretaryForms : [{ name: "", secretaryName: "", email: "", phone: "" }],
-      })
+          secretaryForms.length > 0 ? secretaryForms : [emptySecretaryForm()],
+      }))
       setSecretaries(entitySecretaries)
     } catch (err) {
       console.error("Error loading secretaries:", err)
-      setFormData({
-        ...formData,
-        secretaries: [{ name: "", secretaryName: "", email: "", phone: "" }],
-      })
+      setFormData((prev) => ({
+        ...prev,
+        secretaries: [emptySecretaryForm()],
+      }))
       setSecretaries([])
     }
   }
@@ -615,7 +688,7 @@ export function EntitiesPage() {
   const addSecretaryField = () => {
     setFormData({
       ...formData,
-      secretaries: [...formData.secretaries, { name: "", secretaryName: "", email: "", phone: "" }],
+      secretaries: [...formData.secretaries, emptySecretaryForm()],
     })
   }
 
@@ -724,19 +797,29 @@ export function EntitiesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    <div className="flex flex-col gap-4 md:gap-8">
       <PageHeader
         title="Gestión de Entidades"
         description="Administra los clientes de tu organización"
       >
-        <Button onClick={() => setIsCreateOpen(true)}>
+        <Button variant="outline" className="w-full sm:w-auto" onClick={() => {
+          setMergeSourceId("")
+          setMergeTargetId("")
+          setMergeError(null)
+          setMergeReport(null)
+          setIsMergeOpen(true)
+        }}>
+          <GitMerge className="mr-2 h-4 w-4" />
+          Fusionar entidades
+        </Button>
+        <Button className="w-full sm:w-auto" onClick={() => setIsCreateOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Nueva Entidad
         </Button>
       </PageHeader>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatsCard title="Total Entidades" value={stats.total} description="Clientes registrados" icon={Building} />
         <StatsCard
           title="Activas"
@@ -745,12 +828,12 @@ export function EntitiesPage() {
           icon={Building}
           trend={{ value: 12, isPositive: true }}
         />
-        <StatsCard title="Inactivas" value={stats.inactive} description="Entidades pausadas" icon={Building} />
+        <StatsCard title="Inactivas" value={stats.inactive} description="Entidades pausadas o fusionadas" icon={Building} />
         <StatsCard
-          title="Procesos Totales"
-          value={stats.processes}
-          description="En todas las entidades"
-          icon={Briefcase}
+          title="Pendientes"
+          value={stats.pending}
+          description="Propuestas por asesores"
+          icon={Building}
         />
       </div>
 
@@ -762,45 +845,47 @@ export function EntitiesPage() {
               <CardTitle>Entidades</CardTitle>
               <CardDescription>Listado completo de clientes gestionados</CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar entidad..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 w-[200px] lg:w-[300px]"
-                />
-              </div>
+            <div className="relative w-full sm:w-auto">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Buscar entidad..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 sm:w-[220px] lg:w-[300px]"
+              />
             </div>
           </div>
         </CardHeader>
         <CardContent>
           <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)} className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="all">Todas ({stats.total})</TabsTrigger>
-              <TabsTrigger value="active">Activas ({stats.active})</TabsTrigger>
-              <TabsTrigger value="inactive">Inactivas ({stats.inactive})</TabsTrigger>
-            </TabsList>
+            <div className="-mx-1 overflow-x-auto px-1 pb-1">
+              <TabsList className="inline-flex h-auto min-w-max w-max">
+                <TabsTrigger value="all">Todas ({stats.total})</TabsTrigger>
+                <TabsTrigger value="active">Activas ({stats.active})</TabsTrigger>
+                <TabsTrigger value="pending">Pendientes ({stats.pending})</TabsTrigger>
+                <TabsTrigger value="inactive">Inactivas ({stats.inactive})</TabsTrigger>
+                <TabsTrigger value="rejected">Rechazadas ({stats.rejected})</TabsTrigger>
+              </TabsList>
+            </div>
 
             <TabsContent value={statusFilter} className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {filteredEntities.map((entity) => (
-                  <Card key={entity.id} className="hover:border-primary/50 transition-colors">
+                  <Card key={entity.id} className="transition-colors hover:border-primary/50">
                     <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
-                            <Building className="h-6 w-6 text-primary" />
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                            <Building className="h-5 w-5 text-primary" />
                           </div>
-                          <div>
-                            <CardTitle className="text-base">{entity.name}</CardTitle>
+                          <div className="min-w-0">
+                            <CardTitle className="truncate text-base">{entity.name}</CardTitle>
                             <CardDescription className="text-xs">NIT: {entity.nit}</CardDescription>
                           </div>
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -817,10 +902,37 @@ export function EntitiesPage() {
                               <Users className="mr-2 h-4 w-4" />
                               Asignar Miembros
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => toggleSecretariesView(entity)}>
+                            <DropdownMenuItem onClick={() => openSecretariesDialog(entity)}>
                               <FileText className="mr-2 h-4 w-4" />
-                              {expandedEntityId === entity.id ? "Ocultar Secretarías" : "Gestionar Secretarías"}
+                              Gestionar Secretarías
                             </DropdownMenuItem>
+                            {entity.status === "pending" && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReviewEntity(entity)
+                                    setReviewDecision("approve")
+                                    setRejectReason("")
+                                    setReviewError(null)
+                                  }}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  Aprobar
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setReviewEntity(entity)
+                                    setReviewDecision("reject")
+                                    setRejectReason("")
+                                    setReviewError(null)
+                                  }}
+                                >
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Rechazar
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={() => openDeleteDialog(entity)}>
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -832,147 +944,65 @@ export function EntitiesPage() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <User className="h-4 w-4" />
+                        <User className="h-4 w-4 shrink-0" />
                         <span className="line-clamp-1">{entity.representativeName}</span>
                       </div>
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <Badge variant="outline" className="gap-1">
                           <Briefcase className="h-3 w-3" />
                           {entity.processesCount} procesos
                         </Badge>
                         <StatusBadge status={entity.status} />
                       </div>
-                      
-                      {/* Secretaries Section - Inline */}
-                      {expandedEntityId === entity.id && (
-                        <div className="mt-4 border-t pt-4 space-y-4">
-                          <div className="flex items-center justify-between flex-shrink-0">
-                            <div>
-                              <h4 className="text-sm font-medium flex items-center gap-2">
-                                <FileText className="h-4 w-4" />
-                                Secretarías
-                              </h4>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Gestiona las secretarías de esta entidad
-                              </p>
-                            </div>
-                            <Button variant="outline" size="sm" onClick={addSecretaryField}>
-                              <Plus className="mr-2 h-3 w-3" />
-                              Agregar
-                            </Button>
-                          </div>
-
-                          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
-                            {formData.secretaries.map((secretary, index) => (
-                              <Card key={index} className="relative">
-                                <CardHeader className="pb-3">
-                                  <div className="flex items-center justify-between">
-                                    <CardTitle className="text-sm flex items-center gap-2">
-                                      <Building className="h-4 w-4 text-primary" />
-                                      Secretaría {index + 1}
-                                    </CardTitle>
-                                    {formData.secretaries.length > 1 && (
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 text-destructive hover:text-destructive"
-                                        onClick={() => removeSecretaryField(index)}
-                                      >
-                                        <X className="h-4 w-4" />
-                                      </Button>
-                                    )}
-                                  </div>
-                                </CardHeader>
-                                <CardContent className="space-y-3">
-                                  <div className="grid gap-2">
-                                    <Label htmlFor={`sec-name-${entity.id}-${index}`} className="text-xs">
-                                      Nombre de la Secretaría *
-                                    </Label>
-                                    <Input
-                                      id={`sec-name-${entity.id}-${index}`}
-                                      placeholder="Ej: Secretaría de Hacienda"
-                                      value={secretary.name}
-                                      onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
-                                      className="h-9"
-                                    />
-                                  </div>
-                                  <div className="grid gap-2">
-                                    <Label htmlFor={`sec-person-${entity.id}-${index}`} className="text-xs">
-                                      Nombre del Secretario *
-                                    </Label>
-                                    <Input
-                                      id={`sec-person-${entity.id}-${index}`}
-                                      placeholder="Ej: Juan Pérez"
-                                      value={secretary.secretaryName}
-                                      onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
-                                      className="h-9"
-                                    />
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-3">
-                                    <div className="grid gap-2">
-                                      <Label htmlFor={`sec-email-${entity.id}-${index}`} className="text-xs">
-                                        Correo *
-                                      </Label>
-                                      <Input
-                                        id={`sec-email-${entity.id}-${index}`}
-                                        type="email"
-                                        placeholder="secretario@entidad.gov.co"
-                                        value={secretary.email}
-                                        onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
-                                        className="h-9"
-                                      />
-                                    </div>
-                                    <div className="grid gap-2">
-                                      <Label htmlFor={`sec-phone-${entity.id}-${index}`} className="text-xs">
-                                        Teléfono
-                                      </Label>
-                                      <Input
-                                        id={`sec-phone-${entity.id}-${index}`}
-                                        placeholder="+57 1 234 5678"
-                                        value={secretary.phone}
-                                        onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
-                                        className="h-9"
-                                      />
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            ))}
-                          </div>
-
-                          {error && (
-                            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive flex-shrink-0">
-                              {error}
-                            </div>
-                          )}
-
-                          <div className="flex items-center justify-end gap-2 pt-2 flex-shrink-0 border-t bg-background pb-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setExpandedEntityId(null)
-                                setSelectedEntity(null)
-                              }}
-                            >
-                              Cancelar
-                            </Button>
-                            <Button size="sm" onClick={handleSaveSecretaries} disabled={saving}>
-                              {saving ? (
-                                <>
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Guardando...
-                                </>
-                              ) : (
-                                <>
-                                  <Check className="mr-2 h-4 w-4" />
-                                  Guardar
-                                </>
-                              )}
-                            </Button>
-                          </div>
+                      {entity.mergedInto && (
+                        <p className="text-xs text-muted-foreground">
+                          Fusionada en otra entidad — ya no aparece en los selectores.
+                        </p>
+                      )}
+                      {entity.status === "rejected" && entity.rejectionReason && (
+                        <p className="text-xs text-destructive">Motivo: {entity.rejectionReason}</p>
+                      )}
+                      {entity.status === "pending" && (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => {
+                              setReviewEntity(entity)
+                              setReviewDecision("approve")
+                              setRejectReason("")
+                              setReviewError(null)
+                            }}
+                          >
+                            <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                            Aprobar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1"
+                            onClick={() => {
+                              setReviewEntity(entity)
+                              setReviewDecision("reject")
+                              setRejectReason("")
+                              setReviewError(null)
+                            }}
+                          >
+                            <XCircle className="mr-1 h-3.5 w-3.5" />
+                            Rechazar
+                          </Button>
                         </div>
                       )}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="w-full gap-1.5"
+                        onClick={() => openSecretariesDialog(entity)}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        Secretarías
+                      </Button>
                     </CardContent>
                   </Card>
                 ))}
@@ -982,10 +1012,69 @@ export function EntitiesPage() {
         </CardContent>
       </Card>
 
+      {/* Manage Secretaries Dialog */}
+      <Dialog
+        open={isSecretariesOpen}
+        onOpenChange={(open) => {
+          setIsSecretariesOpen(open)
+          if (!open) setError(null)
+        }}
+      >
+        <DialogContent className="flex max-h-[90dvh] w-[calc(100%-1.5rem)] max-w-xl flex-col gap-0 overflow-hidden p-0 sm:w-full">
+          <DialogHeader className="shrink-0 border-b px-4 py-4 sm:px-6">
+            <DialogTitle>Secretarías</DialogTitle>
+            <DialogDescription>
+              {selectedEntity
+                ? `Gestiona las secretarías de ${selectedEntity.name}`
+                : "Gestiona las secretarías de la entidad"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+            <SecretariesEditor
+              secretaries={formData.secretaries}
+              onChange={updateSecretaryField}
+              onAdd={addSecretaryField}
+              onRemove={removeSecretaryField}
+            />
+            {error && (
+              <div className="mt-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+            )}
+          </div>
+
+          <DialogFooter className="shrink-0 gap-2 border-t px-4 py-4 sm:px-6">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => {
+                setIsSecretariesOpen(false)
+                setError(null)
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" className="w-full sm:w-auto" onClick={handleSaveSecretaries} disabled={saving}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                <>
+                  <Check className="mr-2 h-4 w-4" />
+                  Guardar secretarías
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Create Entity Dialog */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="h-[90vh] flex flex-col overflow-hidden max-w-2xl">
-          <DialogHeader className="flex-shrink-0">
+        <DialogContent className="flex h-[90dvh] max-w-2xl w-[calc(100%-1.5rem)] flex-col overflow-hidden sm:w-full">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Crear Nueva Entidad</DialogTitle>
             <DialogDescription>Registra un nuevo cliente para tu organización</DialogDescription>
           </DialogHeader>
@@ -1006,7 +1095,7 @@ export function EntitiesPage() {
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <div className="grid gap-2">
                       <Label htmlFor="nit">NIT *</Label>
                       <Input
@@ -1035,7 +1124,7 @@ export function EntitiesPage() {
                       onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <div className="grid gap-2">
                       <Label htmlFor="rep-name">Representante Legal *</Label>
                       <Input
@@ -1063,116 +1152,42 @@ export function EntitiesPage() {
             {/* Step 2: Secretaries */}
             {currentStep === 2 && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-base">Secretarías de la Entidad</Label>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Agrega las secretarías y la información de contacto de cada secretario
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={addSecretaryField}>
-                    <Plus className="mr-2 h-3 w-3" />
-                    Agregar
-                  </Button>
+                <div>
+                  <Label className="text-base">Secretarías de la entidad</Label>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Agrega las áreas y el contacto de cada secretario. Puedes editarlas después.
+                  </p>
                 </div>
-
-                <div className="space-y-4">
-                  {formData.secretaries.map((secretary, index) => (
-                    <Card key={index} className="relative">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <Building className="h-4 w-4 text-primary" />
-                            Secretaría {index + 1}
-                          </CardTitle>
-                          {formData.secretaries.length > 1 && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive"
-                              onClick={() => removeSecretaryField(index)}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-2">
-                          <Label htmlFor={`sec-name-${index}`}>Nombre de la Secretaría *</Label>
-                          <Input
-                            id={`sec-name-${index}`}
-                            placeholder="Ej: Secretaría de Hacienda"
-                            value={secretary.name}
-                            onChange={(e) => updateSecretaryField(index, "name", e.target.value)}
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label htmlFor={`sec-person-${index}`} className="flex items-center gap-2">
-                            <User className="h-3 w-3" />
-                            Nombre del Secretario *
-                          </Label>
-                          <Input
-                            id={`sec-person-${index}`}
-                            placeholder="Ej: Carlos Andrés Pérez"
-                            value={secretary.secretaryName}
-                            onChange={(e) => updateSecretaryField(index, "secretaryName", e.target.value)}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label htmlFor={`sec-email-${index}`} className="flex items-center gap-2">
-                              <Mail className="h-3 w-3" />
-                              Correo Electrónico
-                            </Label>
-                            <Input
-                              id={`sec-email-${index}`}
-                              type="email"
-                              placeholder="secretaria@entidad.gov.co"
-                              value={secretary.email}
-                              onChange={(e) => updateSecretaryField(index, "email", e.target.value)}
-                            />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor={`sec-phone-${index}`} className="flex items-center gap-2">
-                              <Phone className="h-3 w-3" />
-                              Teléfono
-                            </Label>
-                            <Input
-                              id={`sec-phone-${index}`}
-                              placeholder="+57 1 234 5678"
-                              value={secretary.phone}
-                              onChange={(e) => updateSecretaryField(index, "phone", e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-
-                <Card className="bg-muted/50">
-                  <CardContent className="pt-4 text-xs text-muted-foreground">
-                    <p>
-                      Las secretarías representan las áreas de la entidad que supervisan procesos contractuales. La
-                      información del secretario permite enviar notificaciones y coordinar los procesos.
-                    </p>
-                  </CardContent>
-                </Card>
+                <SecretariesEditor
+                  secretaries={formData.secretaries}
+                  onChange={updateSecretaryField}
+                  onAdd={addSecretaryField}
+                  onRemove={removeSecretaryField}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Las secretarías representan las áreas que supervisan procesos contractuales.
+                </p>
               </div>
             )}
           </div>
 
-          <DialogFooter className="flex-shrink-0 pt-4 border-t">
+          <DialogFooter className="shrink-0 flex-col gap-2 border-t pt-4 sm:flex-row">
             {currentStep > 1 && (
-              <Button variant="outline" onClick={() => setCurrentStep(currentStep - 1)} disabled={saving}>
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={() => setCurrentStep(currentStep - 1)}
+                disabled={saving}
+              >
                 Anterior
               </Button>
             )}
             {currentStep < 2 ? (
-              <Button onClick={() => setCurrentStep(currentStep + 1)}>Siguiente</Button>
+              <Button className="w-full sm:w-auto" onClick={() => setCurrentStep(currentStep + 1)}>
+                Siguiente
+              </Button>
             ) : (
-              <Button onClick={handleCreateDB} disabled={saving}>
+              <Button className="w-full sm:w-auto" onClick={handleCreateDB} disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {saving ? "Creando..." : "Crear Entidad"}
               </Button>
@@ -1445,23 +1460,40 @@ export function EntitiesPage() {
             <DialogDescription>Selecciona los miembros que tendrán acceso a {selectedEntity?.name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {/* {members.map((member) => ( */}
-            {members.map((member) => (
-              <div
-                key={member.id}
-                className="flex items-center space-x-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50"
-                onClick={() => toggleMember(member.id)}
-              >
-                <Checkbox checked={selectedMembers.includes(member.id)} />
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback>{member.name?.charAt(0)}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{member.name}</p>
-                  <p className="text-xs text-muted-foreground">{member.email}</p>
-                </div>
+            {loadingMembers ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-sm text-muted-foreground">Cargando miembros...</span>
               </div>
-            ))}
+            ) : members.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No hay miembros en esta organización. Invita miembros desde la pestaña Miembros para poder asignarlos a entidades.
+              </p>
+            ) : (
+              members.map((member) => (
+                <div
+                  key={member.id}
+                  className="flex items-center space-x-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50"
+                  onClick={() => toggleMember(member.id)}
+                >
+                  <Checkbox checked={selectedMembers.includes(member.id)} />
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                      {member.name
+                        ?.split(" ")
+                        .map((n) => n[0])
+                        .join("")
+                        .slice(0, 2)
+                        .toUpperCase() || "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{member.name}</p>
+                    <p className="text-xs text-muted-foreground">{member.email}</p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAssignMembersOpen(false)}>
@@ -1534,6 +1566,174 @@ export function EntitiesPage() {
                 </>
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-10 (RF-035): aprobar o rechazar una entidad propuesta */}
+      <Dialog
+        open={!!reviewEntity}
+        onOpenChange={(open) => {
+          if (!open) {
+            setReviewEntity(null)
+            setReviewDecision(null)
+            setRejectReason("")
+            setReviewError(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {reviewDecision === "reject" ? "Rechazar entidad" : "Aprobar entidad"}
+            </DialogTitle>
+            <DialogDescription>
+              {reviewEntity?.name} · NIT {reviewEntity?.nit}
+              {reviewDecision === "approve"
+                ? ". Quedará disponible para crear procesos."
+                : ". El asesor que la propuso recibirá el motivo."}
+            </DialogDescription>
+          </DialogHeader>
+          {reviewDecision === "reject" && (
+            <div className="space-y-1 py-2">
+              <Label htmlFor="reject-reason">Motivo del rechazo</Label>
+              <Textarea
+                id="reject-reason"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Explica por qué no se aprueba…"
+                rows={3}
+              />
+            </div>
+          )}
+          {reviewError && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {reviewError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReviewEntity(null)
+                setReviewDecision(null)
+              }}
+              disabled={isReviewing}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant={reviewDecision === "reject" ? "destructive" : "default"}
+              onClick={handleReview}
+              disabled={isReviewing}
+            >
+              {isReviewing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Guardando…
+                </>
+              ) : reviewDecision === "reject" ? (
+                "Rechazar"
+              ) : (
+                "Aprobar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-10 (RF-043): fusionar dos entidades repetidas */}
+      <Dialog
+        open={isMergeOpen}
+        onOpenChange={(open) => {
+          setIsMergeOpen(open)
+          if (!open) {
+            setMergeReport(null)
+            setMergeError(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Fusionar entidades</DialogTitle>
+            <DialogDescription>
+              Los procesos, secretarías, asignaciones y contactos de la origen pasan a la destino. La origen queda
+              inactiva y deja de aparecer en los selectores.
+            </DialogDescription>
+          </DialogHeader>
+          {mergeReport ? (
+            <div className="space-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <p className="font-medium">Fusión completada</p>
+              <ul className="list-inside list-disc text-muted-foreground">
+                {Object.entries(mergeReport).map(([k, v]) => (
+                  <li key={k}>
+                    {k}: {String(v)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="space-y-3 py-2">
+              <div className="space-y-1">
+                <Label>Entidad origen (se desactiva)</Label>
+                <Select value={mergeSourceId} onValueChange={setMergeSourceId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elige la duplicada…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {entities
+                      .filter((e) => e.status === "active" && e.id !== mergeTargetId)
+                      .map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.name} ({e.processesCount} procesos)
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Entidad destino (se queda)</Label>
+                <Select value={mergeTargetId} onValueChange={setMergeTargetId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elige la vigente…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {entities
+                      .filter((e) => e.status === "active" && e.id !== mergeSourceId)
+                      .map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.name} ({e.processesCount} procesos)
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {mergeError && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {mergeError}
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsMergeOpen(false)} disabled={isMerging}>
+              {mergeReport ? "Cerrar" : "Cancelar"}
+            </Button>
+            {!mergeReport && (
+              <Button onClick={handleMerge} disabled={isMerging || !mergeSourceId || !mergeTargetId}>
+                {isMerging ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Fusionando…
+                  </>
+                ) : (
+                  <>
+                    <GitMerge className="mr-2 h-4 w-4" />
+                    Fusionar
+                  </>
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

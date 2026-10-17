@@ -19,9 +19,13 @@ import {
   Trash2,
   Copy,
   ExternalLink,
+  Paperclip,
   FolderOpen,
   Loader2,
   Send,
+  Check,
+  XCircle,
+  Pencil,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -39,11 +43,21 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { documentTypes } from "@/lib/mock-data"
-import { getEntities, getDocuments, type EntityMapped } from "@/lib/supabase/client-data-access"
+import { DocumentAuditLog } from "@/components/document-audit-log"
+import { DocumentVersionsDialog } from "@/components/member/document-versions-dialog"
+import { getEntities, getEntitiesForImpersonation, getDocuments, getDocumentsForImpersonation, type EntityMapped } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
+import { ProcessAttachments } from "@/components/member/process-attachments"
 
-type DocumentStatus = "all" | "draft" | "pending" | "approved" | "rejected"
+type DocumentStatus = "all" | "draft" | "pending" | "in_review" | "approved" | "rejected"
 
 const statusConfig: Record<
   string,
@@ -51,6 +65,11 @@ const statusConfig: Record<
 > = {
   draft: { label: "Borrador", variant: "secondary", className: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20" },
   pending: { label: "Pendiente", variant: "outline", className: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+  in_review: {
+    label: "En revisión",
+    variant: "outline",
+    className: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+  },
   approved: {
     label: "Aprobado",
     variant: "default",
@@ -66,7 +85,33 @@ function formatFileSize(bytes: number): string {
 }
 
 function getDocumentTypeName(typeId: string): string {
+  if (typeId === "attachment") return "Adjunto"
   return documentTypes.find((t) => t.id === typeId)?.name || typeId
+}
+
+function mapDocumentRow(d: any): MappedDocument {
+  const rawStatus = d.status == null ? "draft" : String(d.status).toLowerCase().trim()
+  const status = ["draft", "pending", "in_review", "approved", "rejected"].includes(rawStatus)
+    ? (rawStatus as MappedDocument["status"])
+    : "draft"
+  return {
+    id: d.id,
+    processId: d.processId || d.process_id || d.process?.id || "",
+    processCode: d.processCode || d.process?.code || "",
+    processObject: d.processObject || d.process?.object || "",
+    name: d.name,
+    type: d.type,
+    version: d.version ?? 1,
+    status,
+    entityId: d.entityId || d.process?.entity?.id || "",
+    entityName: d.entityName || d.process?.entity?.name || "",
+    fileUrl: d.fileUrl || d.file_url || "",
+    fileSize: d.fileSize ?? d.file_size ?? 0,
+    createdBy: "",
+    createdAt: (d.createdAt || d.created_at || "").toString().split("T")[0],
+    updatedAt: (d.updatedAt || d.updated_at || "").toString().split("T")[0],
+    driveFolderUrl: d.driveFolderUrl ?? d.process?.drive_folder_url ?? null,
+  }
 }
 
 interface MappedDocument {
@@ -77,7 +122,7 @@ interface MappedDocument {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   entityId: string
   entityName: string
   fileUrl: string
@@ -86,12 +131,157 @@ interface MappedDocument {
   createdAt: string
   updatedAt: string
   driveFolderUrl?: string | null
+  /** RF-037: true si es un adjunto del proceso (no un documento generado; sin workflow de estados). */
+  isAttachment?: boolean
+}
+
+function getDocumentLink(document: MappedDocument) {
+  const isValidDriveUrl = Boolean(document.fileUrl && document.fileUrl.startsWith("http"))
+  return {
+    isValidDriveUrl,
+    linkUrl: isValidDriveUrl ? document.fileUrl : document.driveFolderUrl || null,
+  }
+}
+
+function DocumentActionsMenu({
+  document,
+  isUpdatingStatus,
+  onAudit,
+  onVersions,
+  onSendToReview,
+  onReopenAsDraft,
+}: {
+  document: MappedDocument
+  isUpdatingStatus: boolean
+  onAudit: () => void
+  onVersions: () => void
+  onSendToReview: () => void
+  onReopenAsDraft: () => void
+}) {
+  const { isValidDriveUrl, linkUrl } = getDocumentLink(document)
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">Acciones</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {/* RF-016 (CAP-04): historial de versiones */}
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onVersions()
+          }}
+        >
+          <History className="mr-2 h-4 w-4" />
+          Ver versiones
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onAudit()
+          }}
+        >
+          <History className="mr-2 h-4 w-4" />
+          Ver auditoría
+        </DropdownMenuItem>
+        {isValidDriveUrl ? (
+          <>
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                // CAP-09 (RF-031): auditar acceso al archivo en Drive
+                fetch("/api/audit/log", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    action: "document_opened",
+                    processId: document.processId,
+                    documentId: document.id,
+                    details: { name: document.name, via: "drive" },
+                  }),
+                }).catch(() => {})
+                window.open(document.fileUrl, "_blank")
+              }}
+            >
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Ver en Drive
+            </DropdownMenuItem>
+            {/* RF-038 (CAP-04): editar el documento vigente en Google Docs/Editor de Drive */}
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                window.open(document.fileUrl, "_blank")
+              }}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Editar en Google Docs
+            </DropdownMenuItem>
+          </>
+        ) : linkUrl ? (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(linkUrl, "_blank")
+            }}
+          >
+            <FolderOpen className="mr-2 h-4 w-4" />
+            Ver Carpeta en Drive
+          </DropdownMenuItem>
+        ) : null}
+        {document.status === "rejected" && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                onReopenAsDraft()
+              }}
+              disabled={isUpdatingStatus}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Volver a borrador (para corregir)
+            </DropdownMenuItem>
+          </>
+        )}
+        {(document.status === "draft" || document.status === "rejected") && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation()
+                onSendToReview()
+              }}
+              disabled={isUpdatingStatus}
+            >
+              <Send className="mr-2 h-4 w-4" />
+              Enviar a Revisión
+            </DropdownMenuItem>
+          </>
+        )}
+        {document.status === "in_review" && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled className="text-muted-foreground">
+              <Eye className="mr-2 h-4 w-4" />
+              En revisión (bloqueado)
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 export function DocumentsPage() {
   const searchParams = useSearchParams()
   const [selectedDocument, setSelectedDocument] = React.useState<MappedDocument | null>(null)
   const [isDetailOpen, setIsDetailOpen] = React.useState(false)
+  const [auditDocumentId, setAuditDocumentId] = React.useState<string | null>(null)
+  const [versionsDocumentId, setVersionsDocumentId] = React.useState<string | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<DocumentStatus>("all")
   const [entityFilter, setEntityFilter] = React.useState<string>("all")
@@ -102,87 +292,128 @@ export function DocumentsPage() {
   const [allDocuments, setAllDocuments] = React.useState<MappedDocument[]>([])
   const [isLoadingDocs, setIsLoadingDocs] = React.useState(true)
   const { profile } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
 
-  // Aplicar filtro por proceso cuando se llega con ?processId=xxx (ej. desde lista de procesos)
+  // Vista de un proceso: filtrar por él y mostrar todos los estados
   React.useEffect(() => {
     const processId = searchParams.get("processId")
     if (processId) {
       setProcessFilter(processId)
+      setActiveTab("all")
+      setStatusFilter("all")
+    } else {
+      setProcessFilter("all")
     }
   }, [searchParams])
 
   React.useEffect(() => {
     async function loadDocuments() {
-      if (!profile?.organization_id) {
+      if (!orgId) {
         setIsLoadingDocs(false)
         return
       }
-      
+      const urlProcessId = searchParams.get("processId")
       try {
-        // First, get entities for the organization
-        const orgEntities = await getEntities(profile.organization_id)
-        const entityIds = orgEntities.map((e) => e.id)
-        
-        // Get all documents
-        const allDocs = await getDocuments()
-        
-        // Filter documents to only include those from processes belonging to organization entities
-        const filteredDocs = allDocs.filter((d: any) => {
-          const processEntityId = d.process?.entity?.id
-          return processEntityId && entityIds.includes(processEntityId)
-        })
-        
-        const mapped: MappedDocument[] = filteredDocs.map((d) => ({
-          id: d.id,
-          processId: d.process_id,
-          processCode: d.process?.code || "",
-          processObject: d.process?.object || "",
-          name: d.name,
-          type: d.type,
-          version: d.version || 1,
-          status: d.status as MappedDocument["status"],
-          entityId: d.process?.entity?.id || "",
-          entityName: d.process?.entity?.name || "",
-          fileUrl: d.file_url || "",
-          fileSize: d.file_size || 0,
-          createdBy: "",
-          createdAt: d.created_at?.split("T")[0] || "",
-          updatedAt: d.updated_at?.split("T")[0] || "",
-          driveFolderUrl: (d.process as any)?.drive_folder_url || null,
-        }))
-        setAllDocuments(mapped)
-        console.log("[DocumentsPage] Total documents in DB:", allDocs.length, "Organization documents:", mapped.length)
+        setIsLoadingDocs(true)
+        if (isImpersonating) {
+          const mapped = (await getDocumentsForImpersonation(orgId)).map(mapDocumentRow)
+          setAllDocuments(mapped)
+        } else if (urlProcessId) {
+          const processDocs = await getDocuments({ processId: urlProcessId })
+          setAllDocuments((processDocs || []).map(mapDocumentRow))
+        } else {
+          const orgEntities = await getEntities(orgId)
+          const entityIds = orgEntities.map((e) => e.id)
+          const allDocs = await getDocuments()
+          const filteredDocs = (allDocs || []).filter((d: any) => {
+            const processEntityId = d.process?.entity?.id
+            return processEntityId && entityIds.includes(processEntityId)
+          })
+          setAllDocuments(filteredDocs.map(mapDocumentRow))
+        }
       } catch (err) {
         console.error("Error loading documents:", err)
       } finally {
         setIsLoadingDocs(false)
       }
     }
-    if (profile?.organization_id) {
-      loadDocuments()
-    }
-  }, [profile?.organization_id])
+    if (orgId) loadDocuments()
+  }, [orgId, isImpersonating, searchParams])
 
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id) return
+      if (!orgId) return
       try {
-        const data = await getEntities(profile.organization_id)
+        const data = isImpersonating ? await getEntitiesForImpersonation(orgId) : await getEntities(orgId)
         setEntities(data)
       } catch (err) {
         console.error("Error loading entities:", err)
       }
     }
-    if (profile?.organization_id) {
-      loadEntities()
+    if (orgId) loadEntities()
+  }, [orgId, isImpersonating])
+
+  // RF-037: adjuntos del proceso filtrado (se muestran integrados en el listado)
+  const [attachmentsRaw, setAttachmentsRaw] = React.useState<
+    Array<{ id: string; name: string; file_url: string | null; mime_type: string | null; file_size: number | null; created_at: string }>
+  >([])
+
+  const loadAttachments = React.useCallback(async (pid: string) => {
+    try {
+      const res = await fetch(`/api/process-attachments?processId=${pid}`)
+      const data = await res.json()
+      if (res.ok) setAttachmentsRaw(data.attachments || [])
+    } catch {
+      // silencioso
     }
-  }, [profile?.organization_id])
+  }, [])
+
+  React.useEffect(() => {
+    if (processFilter === "all") {
+      setAttachmentsRaw([])
+      return
+    }
+    loadAttachments(processFilter)
+  }, [processFilter, loadAttachments])
+
+  // RF-037: subir adjuntos desde la barra del proceso filtrado (selección múltiple)
+  const attachmentInputRef = React.useRef<HTMLInputElement>(null)
+  const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false)
+
+  const handleAttachmentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0 || processFilter === "all") return
+    setIsUploadingAttachments(true)
+    const failed: string[] = []
+    try {
+      for (const file of files) {
+        try {
+          const formData = new FormData()
+          formData.append("file", file)
+          formData.append("processId", processFilter)
+          const res = await fetch("/api/process-attachments", { method: "POST", body: formData })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || "Error al subir el archivo")
+        } catch (err) {
+          failed.push(`${file.name}: ${err instanceof Error ? err.message : "error"}`)
+        }
+      }
+      await loadAttachments(processFilter)
+      if (failed.length > 0) {
+        alert(`No se pudieron subir ${failed.length} de ${files.length} archivos:\n${failed.join("\n")}`)
+      }
+    } finally {
+      setIsUploadingAttachments(false)
+      if (attachmentInputRef.current) attachmentInputRef.current.value = ""
+    }
+  }
 
   // Filter documents
   const filteredDocuments = React.useMemo(() => {
-    return allDocuments.filter((doc) => {
+    const docs = allDocuments.filter((doc) => {
       const matchesSearch =
         searchQuery === "" ||
         doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -193,7 +424,9 @@ export function DocumentsPage() {
         activeTab === "all" ||
         (activeTab === "approved" && doc.status === "approved") ||
         (activeTab === "pending" && doc.status === "pending") ||
-        (activeTab === "draft" && doc.status === "draft")
+        (activeTab === "in_review" && doc.status === "in_review") ||
+        (activeTab === "draft" && doc.status === "draft") ||
+        (activeTab === "rejected" && doc.status === "rejected")
 
       const matchesStatus = statusFilter === "all" || doc.status === statusFilter
       const matchesEntity = entityFilter === "all" || doc.entityId === entityFilter
@@ -202,17 +435,76 @@ export function DocumentsPage() {
 
       return matchesSearch && matchesTab && matchesStatus && matchesEntity && matchesProcess && matchesType
     })
-  }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter])
 
-  // Stats
+    // RF-037: integrar adjuntos del proceso al listado (solo en vista por proceso,
+    // sin filtros de estado/tipo activos, ya que los adjuntos no tienen workflow).
+    if (
+      processFilter !== "all" &&
+      activeTab === "all" &&
+      statusFilter === "all" &&
+      (typeFilter === "all" || typeFilter === "attachment") &&
+      attachmentsRaw.length > 0
+    ) {
+      const sample = allDocuments.find((d) => d.processId === processFilter)
+      const attachmentDocs: MappedDocument[] = attachmentsRaw
+        .filter((a) => searchQuery === "" || a.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .map((a) => ({
+          id: `att-${a.id}`,
+          processId: processFilter,
+          processCode: sample?.processCode || "",
+          processObject: sample?.processObject || "",
+          name: a.name,
+          type: "attachment",
+          version: 0,
+          status: "approved" as const,
+          entityId: sample?.entityId || "",
+          entityName: sample?.entityName || "",
+          fileUrl: a.file_url || "",
+          fileSize: a.file_size || 0,
+          createdBy: "",
+          createdAt: a.created_at?.split("T")[0] || "",
+          updatedAt: a.created_at?.split("T")[0] || "",
+          driveFolderUrl: null,
+          isAttachment: true,
+        }))
+      return [...docs, ...attachmentDocs]
+    }
+
+    return docs
+  }, [allDocuments, searchQuery, activeTab, statusFilter, entityFilter, processFilter, typeFilter, attachmentsRaw])
+
+  const isProcessScoped = processFilter !== "all"
+  const scopedDocuments = React.useMemo(
+    () => (isProcessScoped ? allDocuments.filter((d) => d.processId === processFilter) : allDocuments),
+    [allDocuments, isProcessScoped, processFilter],
+  )
+
   const stats = {
-    total: allDocuments.length,
-    approved: allDocuments.filter((d) => d.status === "approved").length,
-    pending: allDocuments.filter((d) => d.status === "pending").length,
-    draft: allDocuments.filter((d) => d.status === "draft").length,
+    total: scopedDocuments.length,
+    approved: scopedDocuments.filter((d) => d.status === "approved").length,
+    pending: scopedDocuments.filter((d) => d.status === "pending").length,
+    in_review: scopedDocuments.filter((d) => d.status === "in_review").length,
+    draft: scopedDocuments.filter((d) => d.status === "draft").length,
+    rejected: scopedDocuments.filter((d) => d.status === "rejected").length,
   }
 
   const handleViewDocument = (document: MappedDocument) => {
+    // RF-037: los adjuntos no tienen detalle de workflow; abrir el archivo directo
+    if (document.isAttachment) {
+      if (document.fileUrl) window.open(document.fileUrl, "_blank", "noopener,noreferrer")
+      return
+    }
+    // CAP-09 (RF-031): auditar apertura del documento (fire-and-forget)
+    fetch("/api/audit/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "document_opened",
+        processId: document.processId,
+        documentId: document.id,
+        details: { name: document.name },
+      }),
+    }).catch(() => {})
     setSelectedDocument(document)
     setIsDetailOpen(true)
   }
@@ -257,9 +549,62 @@ export function DocumentsPage() {
 
       alert("Documento enviado a revisión exitosamente")
     } catch (err) {
-      console.error("Error sending document to review:", err)
       const errorMsg = err instanceof Error ? err.message : "Error al enviar el documento a revisión"
       alert(errorMsg)
+    } finally {
+      setIsUpdatingStatus(false)
+    }
+  }
+
+  const handleReopenAsDraft = async (doc: MappedDocument) => {
+    if (doc.status !== "rejected") return
+    if (!confirm(`¿Volver "${doc.name}" a borrador para corregirlo? Podrás editarlo y enviarlo de nuevo a revisión.`)) return
+    try {
+      setIsUpdatingStatus(true)
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, status: "draft" }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.error || data?.message || "Error al volver a borrador")
+      setAllDocuments((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: "draft" as const } : d))
+      )
+      alert("Documento en borrador. Puedes ir a Generar documentos del proceso para corregirlo y volver a enviar.")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al volver a borrador")
+    } finally {
+      setIsUpdatingStatus(false)
+    }
+  }
+
+  const handleUpdateDocumentStatus = async (doc: MappedDocument, newStatus: "approved" | "rejected") => {
+    const action = newStatus === "approved" ? "aprobar" : "rechazar"
+    if (!confirm(`¿Estás seguro de que deseas ${action} "${doc.name}"?`)) {
+      return
+    }
+
+    try {
+      setIsUpdatingStatus(true)
+      const response = await fetch("/api/update-document", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: doc.id, status: newStatus }),
+      })
+      const responseData = await response.json()
+
+      if (!response.ok) {
+        const errorMsg = responseData?.message || responseData?.error || `Error al ${action} el documento`
+        throw new Error(errorMsg)
+      }
+
+      setAllDocuments((prev) =>
+        prev.map((d) => (d.id === doc.id ? { ...d, status: newStatus } : d))
+      )
+      alert(newStatus === "approved" ? "Documento aprobado. Se indexará en el asistente." : "Documento rechazado.")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : `Error al ${action} el documento`)
     } finally {
       setIsUpdatingStatus(false)
     }
@@ -285,38 +630,118 @@ export function DocumentsPage() {
   const hasActiveFilters =
     statusFilter !== "all" || entityFilter !== "all" || processFilter !== "all" || typeFilter !== "all"
 
-  const filteredByProcessCode = processFilter !== "all"
-    ? allDocuments.find((d) => d.processId === processFilter)?.processCode || null
+  const filteredByProcessCode = isProcessScoped
+    ? scopedDocuments.find((d) => d.processCode)?.processCode || processFilter
     : null
 
+  const tabOptions = [
+    { value: "all", label: "Todos", count: stats.total },
+    { value: "approved", label: "Aprobados", count: stats.approved },
+    { value: "pending", label: "Pendientes", count: stats.pending },
+    { value: "in_review", label: "En revisión", count: stats.in_review },
+    { value: "draft", label: "Borradores", count: stats.draft },
+    { value: "rejected", label: "Rechazados", count: stats.rejected },
+  ] as const
+
+  const emptyState = (
+    <div className="flex flex-col items-center gap-2 py-12 text-center text-muted-foreground">
+      <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
+      <p>
+        {isProcessScoped && scopedDocuments.length === 0
+          ? "Este proceso no tiene documentos generados"
+          : isProcessScoped
+            ? "No hay documentos en este estado para este proceso"
+            : "No se encontraron documentos"}
+      </p>
+      {hasActiveFilters && (
+        <Button variant="link" size="sm" onClick={clearFilters}>
+          Limpiar filtros
+        </Button>
+      )}
+    </div>
+  )
+
   return (
-    <div className="flex flex-col gap-6 p-8">
+    <div className="flex flex-col gap-4 md:gap-6">
       {/* Header */}
       <PageHeader
-        title="Gestión de Documentos"
-        description="Visualiza y administra todos los documentos generados para tus procesos"
+        title={
+          isProcessScoped
+            ? `Documentos del proceso${filteredByProcessCode && filteredByProcessCode !== processFilter ? ` ${filteredByProcessCode}` : ""}`
+            : "Gestión de Documentos"
+        }
+        description={
+          isProcessScoped
+            ? "Documentos generados de este proceso, en cualquier estado"
+            : "Visualiza y administra todos los documentos generados para tus procesos"
+        }
       />
 
-      {filteredByProcessCode && (
+      {isProcessScoped && (
         <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="flex flex-row items-center justify-between py-3">
+          <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
               Mostrando documentos del proceso <span className="font-mono font-medium">{filteredByProcessCode}</span>
             </p>
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              <X className="mr-1 h-4 w-4" />
-              Ver todos los documentos
-            </Button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {/* RF-037: adjuntar archivos al proceso (aparecen integrados en el listado) */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={isUploadingAttachments}
+              >
+                {isUploadingAttachments ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="mr-1 h-4 w-4" />
+                )}
+                Adjuntar
+              </Button>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx"
+                onChange={handleAttachmentUpload}
+              />
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X className="mr-1 h-4 w-4" />
+                Ver todos los documentos
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {isProcessScoped && <ProcessAttachments processId={processFilter} />}
+
+      {stats.in_review > 0 && (
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardContent className="flex flex-row items-start gap-3 py-3 sm:items-center">
+            <Clock className="mt-0.5 h-5 w-5 shrink-0 text-blue-500 sm:mt-0" />
+            <p className="text-sm">
+              Tiene {stats.in_review} documento{stats.in_review !== 1 ? "s" : ""} en revisión. El administrador los está
+              revisando; no podrá editarlos ni enviarlos de nuevo hasta que se aprueben o rechacen.
+            </p>
           </CardContent>
         </Card>
       )}
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatsCard title="Total Documentos" value={stats.total} description="En todos los procesos" icon={Files} />
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
+        <StatsCard
+          title="Total Documentos"
+          value={stats.total}
+          description={isProcessScoped ? "De este proceso" : "En todos los procesos"}
+          icon={Files}
+        />
         <StatsCard title="Aprobados" value={stats.approved} description="Listos para uso" icon={CheckCircle2} />
         <StatsCard title="Pendientes" value={stats.pending} description="En espera de revisión" icon={Clock} />
+        <StatsCard title="En revisión" value={stats.in_review} description="Revisando el admin" icon={Eye} />
         <StatsCard title="Borradores" value={stats.draft} description="En edición" icon={AlertCircle} />
+        <StatsCard title="Rechazados" value={stats.rejected} description="Volver a borrador para corregir" icon={XCircle} />
       </div>
 
       {/* Main Content Card */}
@@ -330,65 +755,71 @@ export function DocumentsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <TabsList>
-                <TabsTrigger value="all" className="gap-2">
-                  Todos
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {allDocuments.length}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="approved" className="gap-2">
-                  Aprobados
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.approved}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="pending" className="gap-2">
-                  Pendientes
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.pending}
-                  </Badge>
-                </TabsTrigger>
-                <TabsTrigger value="draft" className="gap-2">
-                  Borradores
-                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                    {stats.draft}
-                  </Badge>
-                </TabsTrigger>
-              </TabsList>
+            <div className="flex flex-col gap-4">
+              {/* Mobile: status as select to avoid horizontal overflow */}
+              <div className="md:hidden">
+                <Select value={activeTab} onValueChange={setActiveTab}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tabOptions.map((tab) => (
+                      <SelectItem key={tab.value} value={tab.value}>
+                        {tab.label} ({tab.count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Desktop / tablet: scrollable tabs if needed */}
+              <div className="hidden md:block">
+                <div className="-mx-1 overflow-x-auto px-1 pb-1">
+                  <TabsList className="inline-flex h-auto min-w-max w-max">
+                    {tabOptions.map((tab) => (
+                      <TabsTrigger key={tab.value} value={tab.value} className="gap-2">
+                        {tab.label}
+                        <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                          {tab.count}
+                        </Badge>
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </div>
+              </div>
 
               {/* Search and Filters */}
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="relative w-full sm:w-64 sm:shrink-0">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder="Buscar documentos..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-64 pl-9"
+                    className="w-full pl-9"
                   />
                 </div>
 
-                <Select value={entityFilter} onValueChange={setEntityFilter}>
-                  <SelectTrigger className="w-44">
-                    <Building className="mr-2 h-4 w-4" />
-                    <SelectValue placeholder="Entidad" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas las entidades</SelectItem>
-                    {entities.map((entity) => (
-                      <SelectItem key={entity.id} value={entity.id}>
-                        {entity.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {!isProcessScoped && (
+                  <Select value={entityFilter} onValueChange={setEntityFilter}>
+                    <SelectTrigger className="w-full sm:w-44">
+                      <Building className="mr-2 h-4 w-4" />
+                      <SelectValue placeholder="Entidad" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las entidades</SelectItem>
+                      {entities.map((entity) => (
+                        <SelectItem key={entity.id} value={entity.id}>
+                          {entity.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
 
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger className="w-44">
+                  <SelectTrigger className="w-full sm:w-44">
                     <Filter className="mr-2 h-4 w-4" />
                     <SelectValue placeholder="Tipo" />
                   </SelectTrigger>
@@ -403,7 +834,7 @@ export function DocumentsPage() {
                 </Select>
 
                 {hasActiveFilters && (
-                  <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  <Button variant="ghost" size="sm" onClick={clearFilters} className="self-start">
                     <X className="mr-1 h-4 w-4" />
                     Limpiar
                   </Button>
@@ -411,177 +842,238 @@ export function DocumentsPage() {
               </div>
             </div>
 
-            {/* Table Content */}
             <TabsContent value={activeTab} className="mt-4">
               {isLoadingDocs ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
+              ) : filteredDocuments.length === 0 ? (
+                emptyState
               ) : (
-                <div className="rounded-lg border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="font-semibold">Documento</TableHead>
-                        <TableHead className="font-semibold">Proceso</TableHead>
-                        <TableHead className="font-semibold">Entidad</TableHead>
-                        <TableHead className="font-semibold">Versión</TableHead>
-                        <TableHead className="font-semibold">Estado</TableHead>
-                        <TableHead className="font-semibold">Tamaño</TableHead>
-                        <TableHead className="font-semibold">Actualizado</TableHead>
-                        <TableHead className="w-10"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredDocuments.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
-                            <div className="flex flex-col items-center gap-2">
-                              <FolderOpen className="h-8 w-8 text-muted-foreground/50" />
-                              <p>No se encontraron documentos</p>
-                              {hasActiveFilters && (
-                                <Button variant="link" size="sm" onClick={clearFilters}>
-                                  Limpiar filtros
-                                </Button>
-                              )}
+                <>
+                  {/* Mobile cards */}
+                  <div className="space-y-3 md:hidden">
+                    {filteredDocuments.map((document) => {
+                      const { linkUrl } = getDocumentLink(document)
+                      return (
+                        <div
+                          key={document.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => handleViewDocument(document)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault()
+                              handleViewDocument(document)
+                            }
+                          }}
+                          className="w-full cursor-pointer rounded-lg border bg-card p-3 text-left transition-colors hover:bg-muted/40"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                              <FileText className="h-4 w-4 text-primary" />
                             </div>
-                          </TableCell>
+                            <div className="min-w-0 flex-1 space-y-1">
+                              {linkUrl ? (
+                                <a
+                                  href={linkUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="block truncate font-medium text-primary hover:underline"
+                                  title={document.name}
+                                >
+                                  {document.name}
+                                </a>
+                              ) : (
+                                <p className="truncate font-medium" title={document.name}>
+                                  {document.name}
+                                </p>
+                              )}
+                              <p className="truncate text-xs text-muted-foreground">
+                                {getDocumentTypeName(document.type)} · {document.processCode}
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">{document.entityName}</p>
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                {document.isAttachment ? (
+                                  <Badge variant="secondary">Adjunto</Badge>
+                                ) : (
+                                  <>
+                                    <Badge className={statusConfig[document.status]?.className || ""}>
+                                      {statusConfig[document.status]?.label || document.status}
+                                    </Badge>
+                                    <Badge variant="outline" className="font-mono">
+                                      V{document.version}
+                                    </Badge>
+                                  </>
+                                )}
+                                <span className="text-xs text-muted-foreground">
+                                  {document.updatedAt
+                                    ? new Date(document.updatedAt).toLocaleDateString("es-CO")
+                                    : "-"}
+                                </span>
+                              </div>
+                            </div>
+                            {document.isAttachment ? (
+                              document.fileUrl && (
+                                <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                  <a
+                                    href={document.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                    <span className="sr-only">Abrir adjunto</span>
+                                  </a>
+                                </Button>
+                              )
+                            ) : (
+                              <DocumentActionsMenu
+                                document={document}
+                                isUpdatingStatus={isUpdatingStatus}
+                                onAudit={() => setAuditDocumentId(document.id)}
+                                onVersions={() => setVersionsDocumentId(document.id)}
+                                onSendToReview={() => handleSendToReview(document)}
+                                onReopenAsDraft={() => handleReopenAsDraft(document)}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Desktop table */}
+                  <div className="hidden overflow-x-auto rounded-lg border md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="font-semibold">Documento</TableHead>
+                          <TableHead className="font-semibold">Proceso</TableHead>
+                          <TableHead className="font-semibold">Entidad</TableHead>
+                          <TableHead className="font-semibold">Versión</TableHead>
+                          <TableHead className="font-semibold">Estado</TableHead>
+                          <TableHead className="font-semibold">Tamaño</TableHead>
+                          <TableHead className="font-semibold">Actualizado</TableHead>
+                          <TableHead className="w-10"></TableHead>
                         </TableRow>
-                      ) : (
-                        filteredDocuments.map((document) => (
-                          <TableRow
-                            key={document.id}
-                            className="cursor-pointer"
-                            onClick={() => handleViewDocument(document)}
-                          >
-                            <TableCell>
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                                  <FileText className="h-4 w-4 text-primary" />
-                                </div>
-                                <div>
-                                  {(() => {
-                                    // Check if fileUrl is a valid Google Drive URL (starts with http)
-                                    const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
-                                    const linkUrl = isValidDriveUrl 
-                                      ? document.fileUrl 
-                                      : (document.driveFolderUrl || null)
-                                    
-                                    return linkUrl ? (
+                      </TableHeader>
+                      <TableBody>
+                        {filteredDocuments.map((document) => {
+                          const { linkUrl } = getDocumentLink(document)
+                          return (
+                            <TableRow
+                              key={document.id}
+                              className="cursor-pointer"
+                              onClick={() => handleViewDocument(document)}
+                            >
+                              <TableCell className="min-w-0 max-w-[280px] lg:max-w-[420px]" title={document.name}>
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                                    {document.isAttachment ? (
+                                      <Paperclip className="h-4 w-4 text-primary" />
+                                    ) : (
+                                      <FileText className="h-4 w-4 text-primary" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1 overflow-hidden">
+                                    {linkUrl ? (
                                       <a
                                         href={linkUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={(e) => e.stopPropagation()}
-                                        className="font-medium text-primary hover:underline"
+                                        className="block truncate font-medium text-primary hover:underline"
+                                        title={document.name}
                                       >
                                         {document.name}
                                       </a>
                                     ) : (
-                                      <p className="font-medium">{document.name}</p>
-                                    )
-                                  })()}
-                                  <p className="text-xs text-muted-foreground">{getDocumentTypeName(document.type)}</p>
+                                      <p className="block truncate font-medium" title={document.name}>
+                                        {document.name}
+                                      </p>
+                                    )}
+                                    <p className="truncate text-xs text-muted-foreground">
+                                      {getDocumentTypeName(document.type)}
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="max-w-xs">
-                                <p className="font-mono text-sm font-medium">{document.processCode}</p>
-                                <p className="text-xs text-muted-foreground truncate">{document.processObject}</p>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm">{document.entityName}</span>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="font-mono">
-                                V{document.version}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <Badge className={statusConfig[document.status]?.className || ""}>
-                                {statusConfig[document.status]?.label || document.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm text-muted-foreground">{formatFileSize(document.fileSize)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-sm text-muted-foreground">
-                                {document.updatedAt ? new Date(document.updatedAt).toLocaleDateString("es-CO") : "-"}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  {(() => {
-                                    // Check if fileUrl is a valid Google Drive URL (starts with http)
-                                    const isValidDriveUrl = document.fileUrl && document.fileUrl.startsWith("http")
-                                    const linkUrl = isValidDriveUrl 
-                                      ? document.fileUrl 
-                                      : (document.driveFolderUrl || null)
-                                    
-                                    if (isValidDriveUrl) {
-                                      return (
-                                        <DropdownMenuItem
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            window.open(document.fileUrl, "_blank")
-                                          }}
-                                        >
-                                          <ExternalLink className="mr-2 h-4 w-4" />
-                                          Ver en Drive
-                                        </DropdownMenuItem>
-                                      )
-                                    } else if (document.driveFolderUrl) {
-                                      return (
-                                        <DropdownMenuItem
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            window.open(document.driveFolderUrl!, "_blank")
-                                          }}
-                                        >
-                                          <FolderOpen className="mr-2 h-4 w-4" />
-                                          Ver Carpeta en Drive
-                                        </DropdownMenuItem>
-                                      )
-                                    }
-                                    return null
-                                  })()}
-                                  {(document.status === "draft" || document.status === "rejected") && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          handleSendToReview(document)
-                                        }}
-                                        disabled={isUpdatingStatus}
+                              </TableCell>
+                              <TableCell>
+                                <div className="max-w-xs">
+                                  <p className="font-mono text-sm font-medium">{document.processCode}</p>
+                                  <p className="truncate text-xs text-muted-foreground">{document.processObject}</p>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm">{document.entityName}</span>
+                              </TableCell>
+                              <TableCell>
+                                {document.isAttachment ? (
+                                  <span className="text-sm text-muted-foreground">—</span>
+                                ) : (
+                                  <Badge variant="outline" className="font-mono">
+                                    V{document.version}
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {document.isAttachment ? (
+                                  <Badge variant="secondary">Adjunto</Badge>
+                                ) : (
+                                  <Badge className={statusConfig[document.status]?.className || ""}>
+                                    {statusConfig[document.status]?.label || document.status}
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm text-muted-foreground">
+                                  {formatFileSize(document.fileSize)}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-sm text-muted-foreground">
+                                  {document.updatedAt
+                                    ? new Date(document.updatedAt).toLocaleDateString("es-CO")
+                                    : "-"}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                {document.isAttachment ? (
+                                  document.fileUrl && (
+                                    <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+                                      <a
+                                        href={document.fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
                                       >
-                                        <Send className="mr-2 h-4 w-4" />
-                                        Enviar a Revisión
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                  <DropdownMenuSeparator />
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
+                                        <ExternalLink className="h-4 w-4" />
+                                        <span className="sr-only">Abrir adjunto</span>
+                                      </a>
+                                    </Button>
+                                  )
+                                ) : (
+                                  <DocumentActionsMenu
+                                    document={document}
+                                    isUpdatingStatus={isUpdatingStatus}
+                                    onAudit={() => setAuditDocumentId(document.id)}
+                                    onVersions={() => setVersionsDocumentId(document.id)}
+                                    onSendToReview={() => handleSendToReview(document)}
+                                    onReopenAsDraft={() => handleReopenAsDraft(document)}
+                                  />
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
               )}
 
-              {/* Pagination info */}
               {filteredDocuments.length > 0 && (
                 <div className="flex items-center justify-between pt-4">
                   <p className="text-sm text-muted-foreground">
@@ -593,6 +1085,25 @@ export function DocumentsPage() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Auditoría del documento */}
+      <Dialog open={!!auditDocumentId} onOpenChange={(open) => !open && setAuditDocumentId(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Auditoría del documento</DialogTitle>
+          </DialogHeader>
+          {auditDocumentId && (
+            <DocumentAuditLog documentId={auditDocumentId} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* RF-016 (CAP-04): historial de versiones */}
+      <DocumentVersionsDialog
+        documentId={versionsDocumentId}
+        open={!!versionsDocumentId}
+        onOpenChange={(open) => !open && setVersionsDocumentId(null)}
+      />
     </div>
   )
 }

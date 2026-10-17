@@ -8,10 +8,11 @@ import { useImpersonation } from "@/lib/impersonation-context"
 export interface Profile {
   id: string
   email: string
-  full_name: string
-  role: "superadmin" | "admin" | "member"
+  name: string
+  role: "superadmin" | "admin" | "member" | "entity_contact"
   organization_id: string | null
   avatar_url: string | null
+  entity_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -60,10 +61,11 @@ export function useProfile(redirectOnUnauthenticated = true) {
           const defaultProfile: Profile = {
             id: user.id,
             email: user.email || "",
-            full_name: user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
+            name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario",
             role: "member",
             organization_id: null,
             avatar_url: null,
+            entity_id: null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }

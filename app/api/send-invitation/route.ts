@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { getAppUrl } from "@/lib/app-config"
+import { canManageOrganization } from "@/lib/auth/authorize"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 /**
  * POST /api/send-invitation
@@ -18,15 +21,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Verify user is superadmin
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
+    // Verify user is superadmin or org admin (admin can only resend for their own org)
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, organization_id")
+      .eq("id", user.id)
+      .single()
 
-    if (!profile || profile.role !== "superadmin") {
-      return NextResponse.json({ error: "Forbidden: Only superadmins can send invitations" }, { status: 403 })
+    if (!profile) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
     const body = await request.json()
     const { memberId, organizationId } = body
+
+    const isPlatformSa = isPlatformSuperadmin(profile)
+    if (!canManageOrganization(profile, organizationId)) {
+      return NextResponse.json(
+        { error: "Forbidden: Only superadmins or organization admins can send invitations" },
+        { status: 403 },
+      )
+    }
 
     if (!memberId || !organizationId) {
       return NextResponse.json(
@@ -35,32 +50,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get member details
-    const { data: member, error: memberError } = await supabase
-      .from("profiles")
-      .select("id, email, name")
-      .eq("id", memberId)
-      .single()
-
-    if (memberError || !member) {
-      return NextResponse.json({ error: "Member not found" }, { status: 404 })
-    }
-
-    // Get organization details
-    const { data: organization, error: orgError } = await supabase
-      .from("organizations")
-      .select("id, name")
-      .eq("id", organizationId)
-      .single()
-
-    if (orgError || !organization) {
-      return NextResponse.json({ error: "Organization not found" }, { status: 404 })
-    }
-
-    // Use service role to send invitation email via Supabase Auth
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
-      console.error("[send-invitation] SUPABASE_SERVICE_ROLE_KEY is not configured")
       return NextResponse.json(
         { error: "Server configuration error: Service role key not configured" },
         { status: 500 },
@@ -74,17 +65,37 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // Get member and organization with service role so RLS does not block (admin may not have SELECT on other profiles)
+    const { data: member, error: memberError } = await serviceRoleClient
+      .from("profiles")
+      .select("id, email, name, organization_id")
+      .eq("id", memberId)
+      .single()
+
+    if (memberError || !member) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 })
+    }
+
+    if (!isPlatformSa && member.organization_id !== organizationId) {
+      return NextResponse.json({ error: "Forbidden: Member does not belong to your organization" }, { status: 403 })
+    }
+
+    const { data: organization, error: orgError } = await serviceRoleClient
+      .from("organizations")
+      .select("id, name")
+      .eq("id", organizationId)
+      .single()
+
+    if (orgError || !organization) {
+      return NextResponse.json({ error: "Organization not found" }, { status: 404 })
+    }
+
     // Generate invitation link - redirect to password setup page for new users
     // IMPORTANT: This URL must be in the Redirect URLs list in Supabase Dashboard
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    const { getAppUrl } = await import("@/lib/app-config")
+    const baseUrl = getAppUrl()
     const redirectTo = `${baseUrl}/auth/update-password?invite=true&org=${organizationId}`
-    
-    console.log("[send-invitation] Redirect URL configured:", {
-      baseUrl,
-      redirectTo,
-      hasNextPublicAppUrl: !!process.env.NEXT_PUBLIC_APP_URL,
-    })
-    
+
     // First, check if user already exists in auth
     let existingAuthUser
     try {
@@ -92,31 +103,18 @@ export async function POST(request: NextRequest) {
       if (!error && data?.user) {
         existingAuthUser = data.user
       }
-    } catch (err) {
-      console.log(`[send-invitation] Could not find user by ID, will check by email`)
+    } catch {
+      // Will check by email below
     }
-
-    // If not found by ID, try to find by email
     if (!existingAuthUser) {
       try {
         const { data: users } = await serviceRoleClient.auth.admin.listUsers()
         existingAuthUser = users.users.find((u) => u.email === member.email)
-      } catch (err) {
-        console.log(`[send-invitation] Could not list users, will try invitation`)
+      } catch {
+        // Will try invitation below
       }
     }
-    
     if (existingAuthUser) {
-      // User already exists in auth
-      // Try to generate invite link first (longer expiration) instead of recovery
-      console.log(`[send-invitation] User ${member.email} already exists, generating invite link`)
-      console.log("[send-invitation] Link generation params:", {
-        type: "invite",
-        email: member.email,
-        redirectTo,
-        timestamp: new Date().toISOString(),
-      })
-      
       const { data: linkData, error: linkError } = await serviceRoleClient.auth.admin.generateLink({
         type: "invite",
         email: member.email,
@@ -128,23 +126,8 @@ export async function POST(request: NextRequest) {
           },
         },
       })
-      
-      if (linkData?.properties?.action_link) {
-        const actionLink = linkData.properties.action_link
-        console.log("[send-invitation] Invite link generated successfully:", {
-          linkType: "invite",
-          linkUrl: actionLink,
-          hashedToken: new URL(actionLink).searchParams.get("token")?.substring(0, 20) + "...",
-          redirectTo,
-          timestamp: new Date().toISOString(),
-          properties: linkData?.properties ? Object.keys(linkData.properties) : [],
-        })
-      }
 
       if (linkError) {
-        console.error("[send-invitation] Error generating invite link:", linkError)
-        console.log("[send-invitation] Fallback: trying resetPasswordForEmail (recovery type)")
-        
         // Fallback: use resetPasswordForEmail (but this uses recovery type with shorter expiration)
         const regularClient = createClient(
           process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -170,8 +153,6 @@ export async function POST(request: NextRequest) {
             { status: 400 },
           )
         }
-        
-        console.log(`[send-invitation] Password reset email sent successfully to ${member.email} (using recovery type as fallback)`)
         return NextResponse.json({
           success: true,
           message: `Se envió un enlace de recuperación de contraseña a ${member.email}. El usuario puede usar este enlace para establecer su contraseña y acceder al sistema.`,
@@ -192,7 +173,7 @@ export async function POST(request: NextRequest) {
       // For now, return the link so it can be sent manually if needed
       return NextResponse.json({
         success: true,
-        message: `Se generó un enlace de invitación para ${member.email}. Nota: El email no se envió automáticamente. Configura SMTP personalizado en Supabase para habilitar el envío automático de emails.`,
+        message: `Enlace de invitación generado para ${member.email}. Si el correo no llegó, copia el enlace y envíalo manualmente.`,
         member: {
           id: member.id,
           email: member.email,
@@ -206,15 +187,6 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // User doesn't exist in auth, send invitation
-    console.log(`[send-invitation] User ${member.email} doesn't exist, sending invitation`)
-    console.log("[send-invitation] Invitation params:", {
-      email: member.email,
-      redirectTo,
-      organizationId,
-      timestamp: new Date().toISOString(),
-    })
-    
     const { data: inviteData, error: inviteError } = await serviceRoleClient.auth.admin.inviteUserByEmail(
       member.email,
       {
@@ -226,24 +198,9 @@ export async function POST(request: NextRequest) {
         redirectTo,
       },
     )
-    
-    if (inviteData?.user) {
-      console.log("[send-invitation] Invitation sent successfully:", {
-        userId: inviteData.user.id,
-        email: inviteData.user.email,
-        timestamp: new Date().toISOString(),
-        // Note: inviteUserByEmail doesn't return the link directly, it sends it via email
-      })
-    }
 
     if (inviteError) {
-      console.error("[send-invitation] Error sending invitation:", inviteError)
-      
-      // If user already exists (race condition), generate recovery link
       if (inviteError.message?.includes("already registered") || inviteError.message?.includes("already exists")) {
-        console.log(`[send-invitation] User exists (race condition), generating recovery link instead`)
-        
-        // Use invite instead of recovery for longer expiration time
         const { data: linkData, error: linkError } = await serviceRoleClient.auth.admin.generateLink({
           type: "invite",
           email: member.email,
@@ -291,8 +248,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`[send-invitation] Invitation sent successfully to: ${member.email} for organization: ${organization.name}`)
-
     return NextResponse.json({
       success: true,
       message: `Invitación enviada exitosamente a ${member.email}`,
@@ -307,7 +262,6 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("[send-invitation] Error:", error)
     return NextResponse.json(
       {
         error: "Failed to send invitation",

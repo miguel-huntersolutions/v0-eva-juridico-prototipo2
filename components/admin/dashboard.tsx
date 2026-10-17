@@ -46,6 +46,7 @@ import { getEntities, getMemberAssignedEntities, assignMemberEntities, createEnt
 import { cn } from "@/lib/utils"
 import { createBrowserClient } from "@/lib/supabase/client"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import Link from "next/link"
 import { useProfile } from "@/hooks/use-profile"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 
@@ -90,11 +91,12 @@ export function AdminDashboard() {
   const [isSavingEdit, setIsSavingEdit] = React.useState(false)
 
   const { profile } = useProfile()
-  const { actualRole, isSimulating } = useRoleSwitcher(profile?.role)
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole, isSimulating } = useRoleSwitcher(profile?.role, platformSa)
   const { effectiveOrganizationId, selectedOrganization } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin: actualRole === "superadmin",
-    isSimulatingAdmin: isSimulating && actualRole === "superadmin",
+    isSuperadmin: platformSa,
+    isSimulatingAdmin: isSimulating && platformSa,
   })
 
   React.useEffect(() => {
@@ -494,7 +496,7 @@ export function AdminDashboard() {
       render: (user: Profile) => (
         <div className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
-            <AvatarImage src={user.avatar_url || "/placeholder.svg"} alt={user.name} />
+            <AvatarImage src={user.avatar_url || undefined} alt={user.name} />
             <AvatarFallback className="bg-primary/20 text-primary text-xs">
               {user.name
                 .split(" ")
@@ -629,9 +631,11 @@ export function AdminDashboard() {
             <TabsTrigger value="members">Miembros</TabsTrigger>
           </TabsList>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setIsInviteMemberOpen(true)}>
-              <UserPlus className="mr-2 h-4 w-4" />
-              Invitar Miembro
+            <Button variant="outline" asChild>
+              <Link href="/admin/members?openInvite=1">
+                <UserPlus className="mr-2 h-4 w-4" />
+                Invitar Miembro
+              </Link>
             </Button>
             <Button onClick={() => setIsCreateEntityOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -724,31 +728,6 @@ export function AdminDashboard() {
             <Button onClick={handleCreateEntity} disabled={isSavingEntity}>
               {isSavingEntity ? "Guardando..." : "Crear Entidad"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Invitar Nuevo Miembro</DialogTitle>
-            <DialogDescription>Envía una invitación por correo electrónico</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="member-email">Correo Electrónico</Label>
-              <Input id="member-email" type="email" placeholder="asesor@email.com" />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="member-name">Nombre (opcional)</Label>
-              <Input id="member-name" placeholder="Nombre del asesor" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsInviteMemberOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={() => setIsInviteMemberOpen(false)}>Enviar Invitación</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -904,7 +883,7 @@ export function AdminDashboard() {
               >
                 <Checkbox checked={selectedMembersForEntity.includes(member.id)} />
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={member.avatar_url || "/placeholder.svg"} alt={member.name} />
+                  <AvatarImage src={member.avatar_url || undefined} alt={member.name} />
                   <AvatarFallback className="bg-primary/20 text-primary text-xs">
                     {member.name
                       .split(" ")

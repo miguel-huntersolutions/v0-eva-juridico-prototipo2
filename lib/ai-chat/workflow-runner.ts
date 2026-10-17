@@ -4,16 +4,29 @@
  * Generated from OpenAI Agent Builder and adapted for conversation history
  */
 
-import { tool, fileSearchTool, Agent, AgentInputItem, Runner, withTrace } from "@openai/agents"
+import { fileSearchTool, Agent, AgentInputItem, Runner, withTrace } from "@openai/agents"
 import { z } from "zod"
 import { OpenAI } from "openai"
 import { runGuardrails } from "@openai/guardrails"
+import { generateText } from "ai"
+import { openai } from "@ai-sdk/openai"
 import type { ChatMessage } from "./types"
+import {
+  getOpenAIModel,
+  getOpenAIWorkflowModel,
+  getAsesorJuridicoSystemPrompt,
+  getAsesorJuridicoTemperature,
+  openAIModelSupportsSamplingParams,
+  temperatureOptionForModel,
+} from "@/lib/ai-model-config"
+import {
+  ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT,
+  ASESOR_JURIDICO_TEMPERATURE_DEFAULT,
+} from "@/lib/ai-chat/asesor-juridico-system-prompt"
+import { buildGuaranteeLawEvaContext } from "@/lib/guarantee-law/eva-context"
 
-// Get workflow ID from environment variable
+// Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
-
-// Vector store ID for file search
 const VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID || "vs_6925fde642a481918a79478672c29e81"
 
 // Shared client for guardrails and file search (created lazily so build-time
@@ -26,11 +39,13 @@ function getClient(): OpenAI {
   return _client
 }
 
-// Guardrails definitions
-const jailbreakGuardrailConfig = {
-  guardrails: [
-    { name: "Jailbreak", config: { model: "gpt-4o-mini", confidence_threshold: 0.7 } },
-  ],
+// Guardrails definitions (model from env via getOpenAIWorkflowModel)
+function getJailbreakGuardrailConfig() {
+  return {
+    guardrails: [
+      { name: "Jailbreak", config: { model: getOpenAIWorkflowModel(), confidence_threshold: 0.7 } },
+    ],
+  }
 }
 function getContext() {
   return { guardrailLlm: getClient() }
@@ -181,6 +196,17 @@ function extractOutputText(output: any): string {
 
 const fileSearch = fileSearchTool([VECTOR_STORE_ID])
 
+/** modelSettings para Agents SDK; omite temperature/topP en modelos o-series (no los admiten). */
+function agentModelSettings(
+  temperature: number,
+  maxTokens: number,
+): { temperature?: number; topP?: number; maxTokens: number; store: true } {
+  const model = getOpenAIWorkflowModel()
+  const base = { maxTokens, store: true as const }
+  if (!openAIModelSupportsSamplingParams(model)) return base
+  return { ...base, temperature, topP: 1 }
+}
+
 // Agent definitions
 const ClassificationAgentSchema = z.object({
   classification: z.enum(["contract_consultation", "process_guidance", "legal_research", "general_information"]),
@@ -194,19 +220,15 @@ const classificationAgent = new Agent({
 2. Questions about contract terms, clauses, or legal interpretation should route to "contract_consultation".
 3. Questions about laws, regulations, jurisprudence, or legal precedents should route to "legal_research".
 4. Any other general questions about public contracting should go to "general_information".`,
-  model: "gpt-4o-mini",
+  model: getOpenAIWorkflowModel(),
   outputType: ClassificationAgentSchema,
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const processGuidanceAgent = new Agent({
   name: "Process Guidance Agent",
   instructions: `You are a specialized agent for guiding users through public contracting processes in Colombia.
+  Use file search to base your answers on the documents in the knowledge base (alcaldes, contratos, procesos, plantillas).
   Provide step-by-step guidance on processes like:
   - Licitación pública
   - Selección abreviada
@@ -215,20 +237,17 @@ const processGuidanceAgent = new Agent({
   - Evaluación de ofertas
   - Adjudicación y celebración de contratos
   
-  Always cite the relevant articles from Decreto 1082 de 2015 and other applicable regulations.
-  Provide clear, actionable guidance with specific deadlines and requirements.`,
-  model: "gpt-4o-mini",
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  Always cite the relevant articles from Decreto 1082 de 2015 and other applicable regulations when available in the documents.
+  Provide clear, actionable guidance with specific deadlines and requirements.   Prefer information retrieved from the documents over general knowledge.`,
+  model: getOpenAIWorkflowModel(),
+  tools: [fileSearch],
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const contractConsultationAgent = new Agent({
   name: "Contract Consultation Agent",
   instructions: `You are a specialized agent for contract consultation and interpretation.
+  Use file search to base your answers on the documents in the knowledge base (contratos, cláusulas, normativa).
   Help users understand:
   - Contract terms and clauses
   - Legal requirements for contracts
@@ -236,14 +255,10 @@ const contractConsultationAgent = new Agent({
   - Guarantees and warranties
   - Payment and execution terms
   
-  Always reference the specific legal framework (Ley 80, Decreto 1082) and provide precise citations.`,
-  model: "gpt-4o-mini",
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  Always reference the specific legal framework (Ley 80, Decreto 1082) when available in the documents and provide precise citations. Prefer information retrieved from the documents.`,
+  model: getOpenAIWorkflowModel(),
+  tools: [fileSearch],
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const legalResearchAgent = new Agent({
@@ -256,14 +271,9 @@ const legalResearchAgent = new Agent({
   - Legal precedents and interpretations
   
   Use file search to find relevant documents and always cite your sources accurately.`,
-  model: "gpt-4o-mini",
+  model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
 })
 
 const generalInformationAgent = new Agent({
@@ -278,25 +288,62 @@ const generalInformationAgent = new Agent({
   
   Use file search when available to provide accurate, up-to-date information.
   Always respond in Spanish (Colombian) and cite relevant sources.`,
-  model: "gpt-4o-mini",
+  model: getOpenAIWorkflowModel(),
   tools: [fileSearch],
-  modelSettings: {
-    temperature: 1,
-    topP: 1,
-    maxTokens: 2048,
-    store: true,
-  },
+  modelSettings: agentModelSettings(1, 2048),
+})
+
+/** Paso 1 de /api/assistant: solo RAG; si no basta, el servidor usa generateText con el asesor jurídico. */
+const RagFirstResultSchema = z.object({
+  sufficient: z.boolean().describe(
+    "true solo si la consulta puede responderse con fundamento claro en fragmentos recuperados de los documentos indexados",
+  ),
+  groundedAnswer: z.string().describe(
+    "Respuesta completa en español cuando sufficient es true; si false, cadena vacía",
+  ),
+})
+
+/** Instrucciones del asesor + tarea estructurada RAG (solo /api/assistant; no afecta runWorkflow de documentos). */
+const RAG_PROBE_INSTRUCTIONS_SUFFIX = `
+
+---
+TAREA CON HERRAMIENTA file_search (repositorio de documentos indexados en EVA Jurídico):
+Tienes obligatoriamente la herramienta file_search sobre el vector store de documentos cargados.
+
+Procedimiento:
+1) Usa file_search y busca en los documentos indexados información relevante para la última consulta del usuario. El historial de la conversación sirve solo como contexto.
+2) Si encuentras contenido en esos documentos que permita responder con seguridad la consulta, cumpliendo las reglas de rol, alcance, marco normativo, jurisprudencia y estilo indicados arriba, pon sufficient=true y redacta la respuesta completa en groundedAnswer (español colombiano, formal y técnico). Cuando corresponda, indica de qué documento o sección proviene la información (sin inventar nombres de archivo).
+3) Si tras usar file_search no hay material suficiente en los documentos indexados para fundamentar la respuesta, pon sufficient=false y groundedAnswer debe ser exactamente una cadena vacía.
+
+No inventes citas a documentos. No pongas sufficient=true sin respaldo recuperable en la búsqueda.`
+
+const ragDocumentProbeAgent = new Agent({
+  name: "RAG document probe",
+  instructions: `${getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT)}${RAG_PROBE_INSTRUCTIONS_SUFFIX}`,
+  model: getOpenAIWorkflowModel(),
+  tools: [fileSearch],
+  outputType: RagFirstResultSchema,
+  modelSettings: agentModelSettings(0, 8192),
 })
 
 type WorkflowInput = { input_as_text: string }
+
+export type RunWorkflowOptions = {
+  /** Si true, no se ejecutan guardrails (evita que el prompt largo del RAG dispare jailbreak y devuelva el JSON de guardrails en vez de la respuesta del agente). */
+  skipGuardrails?: boolean
+  /** Organización del usuario para filtrar periodos de restricción. */
+  organizationId?: string | null
+}
 
 /**
  * Run the workflow with conversation history
  */
 export async function runWorkflow(
   inputText: string,
-  conversationHistory: ChatMessage[] = []
+  conversationHistory: ChatMessage[] = [],
+  options: RunWorkflowOptions = {}
 ): Promise<string> {
+  const { skipGuardrails = false } = options
   const workflow: WorkflowInput = {
     input_as_text: inputText,
   }
@@ -320,19 +367,20 @@ export async function runWorkflow(
       },
     })
 
-    const guardrailsInputText = workflow.input_as_text
-    const {
-      hasTripwire: guardrailsHasTripwire,
-      safeText: guardrailsAnonymizedText,
-      failOutput: guardrailsFailOutput,
-      passOutput: guardrailsPassOutput,
-    } = await runAndApplyGuardrails(guardrailsInputText, jailbreakGuardrailConfig, agentHistory, workflow)
+    if (!skipGuardrails) {
+      const guardrailsInputText = workflow.input_as_text
+      const {
+        hasTripwire: guardrailsHasTripwire,
+        safeText: guardrailsAnonymizedText,
+        failOutput: guardrailsFailOutput,
+        passOutput: guardrailsPassOutput,
+      } = await runAndApplyGuardrails(guardrailsInputText, getJailbreakGuardrailConfig(), agentHistory, workflow)
 
-    const guardrailsOutput = guardrailsHasTripwire ? guardrailsFailOutput : guardrailsPassOutput
+      const guardrailsOutput = guardrailsHasTripwire ? guardrailsFailOutput : guardrailsPassOutput
 
-    if (guardrailsHasTripwire) {
-      return JSON.stringify(guardrailsOutput)
-    } else {
+      if (guardrailsHasTripwire) {
+        return JSON.stringify(guardrailsOutput)
+      }
       // Update conversation history with safe text
       if (agentHistory.length > 0) {
         const lastMessage = agentHistory[agentHistory.length - 1]
@@ -340,7 +388,9 @@ export async function runWorkflow(
           lastMessage.content[0].text = guardrailsAnonymizedText
         }
       }
+    }
 
+    {
       const classificationAgentResultTemp = await runner.run(classificationAgent, [...agentHistory])
       agentHistory.push(...classificationAgentResultTemp.newItems.map((item: any) => item.rawItem))
 
@@ -403,6 +453,112 @@ export async function runWorkflow(
         }
         return extractOutputText(generalAgentResult)
       }
+    }
+  })
+}
+
+const GENERAL_FALLBACK_FOOTER = `\n\n---\n**Nota:** Respuesta en **modo asesor normativo** (no hubo material suficiente en los documentos indexados del repositorio para responder solo con archivos). Contrastar con un abogado titulado ante el caso concreto.`
+
+const PLATFORM_RESTRICTION_FOOTER = `\n\n---\n**Nota:** Los periodos de restricción y las fechas de etapa salen de la **configuración de EVA**, no de los PDF indexados. El resto del criterio jurídico, si lo hay, es modo asesor. Contrastar con un abogado titulado ante el caso concreto.`
+
+const DOCS_ANSWER_PREFIX = "**Fuente:** documentos indexados en el sistema.\n\n"
+
+/**
+ * Orquestación para el chat del asistente: primero RAG (file_search + salida estructurada);
+ * si no alcanza, respuesta con modelo de chat y temperatura 0 según {@link ASESOR_JURIDICO_SYSTEM_PROMPT}.
+ */
+export async function runRagFirstThenGeneralChat(
+  inputText: string,
+  conversationHistory: ChatMessage[] = [],
+  options: RunWorkflowOptions = {},
+): Promise<{ text: string; source: "documents" | "general" }> {
+  const { skipGuardrails = false, organizationId = null } = options
+  const workflow: WorkflowInput = { input_as_text: inputText }
+
+  const agentHistory: AgentInputItem[] = convertMessagesToAgentInput(conversationHistory)
+  agentHistory.push({
+    role: "user",
+    content: [{ type: "input_text", text: inputText }],
+  })
+
+  return await withTrace("EvaJuridicoRagFirst", async () => {
+    const runner = new Runner({
+      traceMetadata: {
+        __trace_source__: "eva-rag-first",
+        workflow_id: WORKFLOW_ID || "eva-rag-first",
+      },
+    })
+
+    let effectiveUserText = inputText
+
+    if (!skipGuardrails) {
+      const guardrailsInputText = workflow.input_as_text
+      const {
+        hasTripwire: guardrailsHasTripwire,
+        safeText: guardrailsAnonymizedText,
+        failOutput: guardrailsFailOutput,
+        passOutput: guardrailsPassOutput,
+      } = await runAndApplyGuardrails(guardrailsInputText, getJailbreakGuardrailConfig(), agentHistory, workflow)
+
+      const guardrailsOutput = guardrailsHasTripwire ? guardrailsFailOutput : guardrailsPassOutput
+
+      if (guardrailsHasTripwire) {
+        return {
+          text: JSON.stringify(guardrailsOutput),
+          source: "general",
+        }
+      }
+      if (agentHistory.length > 0) {
+        const lastMessage = agentHistory[agentHistory.length - 1]
+        if (lastMessage.content && lastMessage.content[0] && lastMessage.content[0].type === "input_text") {
+          lastMessage.content[0].text = guardrailsAnonymizedText
+          effectiveUserText = guardrailsAnonymizedText
+        }
+      }
+    }
+
+    const probeResult = await runner.run(ragDocumentProbeAgent, [...agentHistory])
+    const parsed = probeResult.finalOutput as z.infer<typeof RagFirstResultSchema> | undefined
+
+    if (
+      parsed &&
+      parsed.sufficient === true &&
+      typeof parsed.groundedAnswer === "string" &&
+      parsed.groundedAnswer.trim().length > 0
+    ) {
+      return {
+        text: `${DOCS_ANSWER_PREFIX}${parsed.groundedAnswer.trim()}`,
+        source: "documents",
+      }
+    }
+
+    const chatModelId = getOpenAIModel()
+    const openaiModel = openai(chatModelId as "gpt-4o")
+    const historyMessages = [
+      ...conversationHistory.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+      { role: "user" as const, content: effectiveUserText },
+    ]
+
+    const restrictionContext = await buildGuaranteeLawEvaContext(effectiveUserText, organizationId)
+    const result = await generateText({
+      model: openaiModel,
+      system: `${getAsesorJuridicoSystemPrompt(ASESOR_JURIDICO_SYSTEM_PROMPT_DEFAULT)}${restrictionContext}`,
+      messages: historyMessages,
+      ...temperatureOptionForModel(
+        chatModelId,
+        getAsesorJuridicoTemperature(ASESOR_JURIDICO_TEMPERATURE_DEFAULT),
+      ),
+      maxTokens: 4096,
+    })
+
+    const body = (result.text || "").trim()
+    const footer = restrictionContext.trim() ? PLATFORM_RESTRICTION_FOOTER : GENERAL_FALLBACK_FOOTER
+    return {
+      text: body ? `${body}${footer}` : `No fue posible generar una respuesta.${footer}`,
+      source: "general",
     }
   })
 }

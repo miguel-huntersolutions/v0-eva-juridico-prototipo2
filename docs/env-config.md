@@ -1,0 +1,114 @@
+# Variables de entorno
+
+Configuración de la aplicación vía `.env.local` (desarrollo) o variables de entorno en Vercel/hosting. No commitear `.env.local`; usar `.env.example` como plantilla sin valores sensibles.
+
+---
+
+## App y URL base
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `NEXT_PUBLIC_APP_URL` | Recomendada | URL base de la app (invitaciones, callbacks, links en emails). En producción debe ser la URL pública. Si no se define, en Vercel se usa `VERCEL_URL`. |
+| `VERCEL_URL` | Auto (Vercel) | En Vercel se rellena automáticamente; se usa como fallback de URL si no hay `NEXT_PUBLIC_APP_URL`. |
+| `NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL` | Opcional | Redirect tras registro/login en desarrollo (p. ej. `http://localhost:3000/dashboard`). |
+
+La URL efectiva se obtiene con `getAppUrl()` en `lib/app-config.ts`.
+
+---
+
+## Supabase
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Sí | URL del proyecto Supabase. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Sí | Clave anónima (pública) para el cliente en el navegador. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Sí (server) | Clave de service role para operaciones en servidor (invitaciones, RAG ingest, actualizar documentos, etc.). No exponer en cliente. |
+
+**Migraciones SQL:** si el repositorio añade scripts en `scripts/` (p. ej. `031-templates-entity-id.sql` para `templates.entity_id`), aplíquelos en el SQL Editor de Supabase o su pipeline de migraciones para mantener el esquema alineado con el código.
+
+---
+
+## OpenAI (modelos y API)
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `OPENAI_API_KEY` | Sí | API key de OpenAI para chat, workflows, RAG e ingest. |
+| `OPENAI_MODEL` | Opcional | Modelo principal (chat, documento, mejorar texto). Default: `gpt-4o`. Valores típicos: `gpt-4o`, `gpt-4o-mini`. |
+| `OPENAI_WORKFLOW_MODEL` | Opcional | Modelo del agente/workflow (guardrails, RAG). Si no se define, se usa `OPENAI_MODEL`. Default en código: `gpt-4o-mini`. |
+| `OPENAI_ASSISTANT_WORKFLOW_ID` | Sí (asistente) | ID del workflow del asistente (formato `wf_...`). Si no está definido, el RAG vía asistente se desactiva. |
+| `OPENAI_VECTOR_STORE_ID` | Sí (RAG) | ID del vector store de OpenAI para RAG e ingestión de documentos (formato `vs_...`). |
+| `ASESOR_JURIDICO_TEMPERATURE` | Opcional | Temperatura del asesor jurídico (`/api/chat` y fallback de `/api/assistant`). Rango 0..2. Default: `0`. **Ignorada** si el modelo no admite muestreo (p. ej. `o1`, `o3`, `gpt-5`, `gpt-5.5`, `gpt-5-mini`; sí aplica en `gpt-4o`, `gpt-4.1`, `gpt-5-chat-latest`). |
+| `ASESOR_JURIDICO_SYSTEM_PROMPT` | Opcional | Sobrescribe el system prompt del asesor jurídico (texto completo). Si está vacío o no se define, se usa el texto por defecto del archivo `lib/ai-chat/asesor-juridico-system-prompt.ts`. |
+
+Los modelos y parámetros del asesor jurídico se leen desde `lib/ai-model-config.ts` (`getOpenAIModel`, `getOpenAIWorkflowModel`, `getOpenAIChatModelString`, `getAsesorJuridicoTemperature`, `getAsesorJuridicoSystemPrompt`).
+
+---
+
+## Google (Drive, OAuth, Sheets)
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `GOOGLE_DRIVE_ID` | Una de las dos | ID del Shared Drive. Recomendado: con Shared Drive los archivos no se comparten como "cualquiera con el enlace". |
+| `GOOGLE_DRIVE_FOLDER_ID` | Una de las dos | ID de la carpeta raíz donde se crean documentos y carpetas. |
+| `GOOGLE_CLIENT_ID` | Sí (OAuth) | Client ID de la consola de Google (OAuth). |
+| `GOOGLE_CLIENT_SECRET` | Sí (OAuth) | Client secret. |
+| `GOOGLE_REDIRECT_URI` | Sí (OAuth) | URI de callback; debe coincidir con la config en Google (p. ej. `https://tu-dominio/api/google/callback` o `http://localhost:3000/api/google/callback`). |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_PROJECT_ID` | **No se usan** | El código no las lee: Drive y Sheets funcionan solo con OAuth por usuario (`lib/google/oauth.ts`). Se pueden eliminar de Vercel. |
+| `GOOGLE_DRIVE_TIMEOUT_MS` | Opcional | Timeout en ms para descargas de Drive. Default: 120000. Se usa en `lib/app-config.ts` → `getDriveRequestTimeoutMs()`. |
+
+---
+
+## Límites de tiempo (opcionales)
+
+Todas son **opcionales**; si no se definen se usan los valores por defecto indicados. Se leen en `lib/app-config.ts`.
+
+> Ojo: el `maxDuration` que usa Vercel está fijo en cada `route.ts` (`export const maxDuration = 60`) y debe ser un literal, así que estas variables **no** cambian el límite real de la función.
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `AI_CHAT_MAX_DURATION` | 60 | Duración máxima en segundos de la ruta de chat del asistente. |
+| `ASSISTANT_MAX_DURATION` | 60 | Duración máxima en segundos de la ruta del asistente (workflow). |
+| `GENERATE_DOCUMENT_MAX_DURATION` | 120 | Duración máxima en segundos para la generación de documento (subida a Drive, etc.). |
+
+---
+
+## Brevo (correo transaccional)
+
+Las **invitaciones de Auth** siguen por SMTP de Supabase (ver `docs/supabase-smtp-config.md`). Esta API cubre asignación de procesos, mensajes del hilo, alertas de etapas y propuestas de entidad.
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `BREVO_API_KEY` | Para enviar | Clave API de Brevo (SMTP & API → API keys). **No** es la SMTP key. |
+| `BREVO_SENDER_EMAIL` | Para enviar | Remitente verificado en Brevo (Transactional → Senders). |
+| `BREVO_SENDER_NAME` | Opcional | Nombre visible. Default: nombre de la app. |
+| `BREVO_SMTP_USER` | Opcional | Si la clave empieza por `xsmtpsib-` (clave SMTP), el envío usa SMTP con este usuario en lugar de la API v3. |
+| `BREVO_SMTP_HOST`, `BREVO_SMTP_PORT` | Opcional | Default: `smtp-relay.sendinblue.com` y `587`. |
+
+Si faltan, la app no falla: omite el correo, deja la notificación in-app y registra `email_failed` en auditoría.
+
+---
+
+## Cron (Vercel)
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `CRON_SECRET` | Sí, para los cron | Vercel la envía como `Authorization: Bearer …` a `/api/cron/stage-alerts` y `/api/cron/reconcile-drive` (programados en `vercel.json`). Sin ella, los cron responden 401. |
+
+---
+
+## Canales externos (API MCP, SPEC-005)
+
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `EVA_MCP_API_KEY` | Si se usa el bot | Bearer que debe enviar OpenClaw a `/api/mcp/*`. Usa un valor largo y aleatorio; rótalo si se filtra. |
+| `EVA_MCP_INTEGRATION_USER_ID` | Si se usa `generate-smart` | ID del perfil cuyos tokens de Google se usan para generar documentos desde el bot. |
+
+---
+
+## Resumen de uso en código
+
+- **URL de la app**: `getAppUrl()` en invitaciones, create-member, send-invitation.
+- **Modelos**: `lib/ai-model-config.ts` en chat, workflow-runner, interpret-intent, improve-text, create-chat-api-route.
+- **Timeouts/duraciones**: `lib/app-config.ts` en `lib/google/drive.ts` (timeout Drive) y en `app/api/chat`, `app/api/assistant`, `app/api/generate-document` (maxDuration).
+
+Para añadir una nueva variable que deba ser configurable, definirla en `.env.local`, documentarla aquí y, si aplica, leerla desde `lib/app-config.ts` o `lib/ai-model-config.ts` en lugar de usar `process.env` directo en varias rutas.

@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import {
   FileText,
   Plus,
@@ -56,8 +56,26 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { ProcessType } from "@/lib/mock-data"
-import { getTemplates, createTemplate, deleteTemplate, updateTemplate, getProcessTypes, type Template } from "@/lib/supabase/client-data-access"
-import { extractTagsFromDocx } from "@/lib/utils/template-helpers"
+import {
+  getTemplates,
+  createTemplate,
+  deleteTemplate,
+  updateTemplate,
+  getProcessTypes,
+  getTemplateEntityOptions,
+  type Template,
+  type TemplateEntityOption,
+} from "@/lib/supabase/client-data-access"
+
+const ENTITY_GLOBAL_VALUE = "__global__"
+import {
+  extractTagsFromDocx,
+  parseDynamicTableTagToken,
+  findUnclosedVariablesInDocx,
+  findAllVariablesLooseInDocx,
+} from "@/lib/utils/template-helpers"
+import { useProfile } from "@/hooks/use-profile"
+import { isOrgSuperadmin, isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 interface UploadedFile {
   name: string
@@ -68,7 +86,10 @@ interface UploadedFile {
 }
 
 export function TemplatesPage() {
+  const MAX_DOCX_SIZE_BYTES = 4.5 * 1024 * 1024
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const { profile, isLoading: profileLoading } = useProfile()
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
@@ -84,21 +105,41 @@ export function TemplatesPage() {
   // Edit dialog states
   const [editTemplateName, setEditTemplateName] = React.useState("")
   const [editProcessTypeId, setEditProcessTypeId] = React.useState("")
+  const [editEntityId, setEditEntityId] = React.useState<string>(ENTITY_GLOBAL_VALUE)
   const [editReplacementFile, setEditReplacementFile] = React.useState<UploadedFile | null>(null)
   const [editExtractedTags, setEditExtractedTags] = React.useState<string[]>([])
   const [isExtractingEditTags, setIsExtractingEditTags] = React.useState(false)
+  const [editLargeFileWarning, setEditLargeFileWarning] = React.useState<string | null>(null)
   const [isEditDragging, setIsEditDragging] = React.useState(false)
   const [isSavingEdit, setIsSavingEdit] = React.useState(false)
   const editFileInputRef = React.useRef<HTMLInputElement>(null)
   // Renamed filterProcessType to processTypeFilter for consistency
   const [filterProcessType, setFilterProcessType] = React.useState<string>("all")
+  const [filterEntityId, setFilterEntityId] = React.useState<string>("all")
   const [createStep, setCreateStep] = React.useState(1)
   const [templateName, setTemplateName] = React.useState("")
   const [templateDescription, setTemplateDescription] = React.useState("")
   const [selectedProcessTypeId, setSelectedProcessTypeId] = React.useState("")
+  const [selectedEntityId, setSelectedEntityId] = React.useState("")
+  const [entityOptions, setEntityOptions] = React.useState<TemplateEntityOption[]>([])
   const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(null)
   const [extractedTags, setExtractedTags] = React.useState<string[]>([])
+
+  // CAP-10 (CA-033.3): variables ya conocidas en las plantillas existentes
+  // (se tratan como el mismo dato entre plantillas — CAP-03)
+  const knownVariables = React.useMemo(() => {
+    const set = new Set<string>()
+    for (const t of templates) {
+      for (const v of t.variables || []) {
+        // Ignorar tokens de tabla dinámica (llevan formato especial)
+        if (v.includes("{{") || v.includes("@")) continue
+        set.add(v.toUpperCase())
+      }
+    }
+    return set
+  }, [templates])
   const [isExtractingTags, setIsExtractingTags] = React.useState(false)
+  const [largeFileWarning, setLargeFileWarning] = React.useState<string | null>(null)
   // Renamed isDragging to isDragActive for consistency
   const [isDragging, setIsDragging] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
@@ -116,23 +157,53 @@ export function TemplatesPage() {
     }
   }, [searchParams])
 
+  const tenantOrgId = isOrgSuperadmin(profile)
+    ? profile!.organization_id!
+    : !isPlatformSuperadmin(profile)
+      ? profile?.organization_id ?? null
+      : null
+
+  const loadEntityOptionsForScope = React.useCallback(async (orgScope: string | null) => {
+    const entityOpts = await getTemplateEntityOptions(orgScope).catch((e) => {
+      console.warn("[TemplatesPage] No se pudieron cargar entidades:", e)
+      return [] as TemplateEntityOption[]
+    })
+    if (!orgScope) return entityOpts
+    return entityOpts.filter((e) => e.organizationId === orgScope)
+  }, [])
+
   React.useEffect(() => {
     async function loadData() {
+      if (profileLoading) return
+
       try {
         setIsLoadingTypes(true)
         setIsLoadingTemplates(true)
         setLoadError(null)
 
-        const [typesData, templatesData] = await Promise.all([getProcessTypes(), getTemplates()])
+        // Org-superadmin / admin: siempre su org. Plataforma: sin filtro.
+        const orgScope = tenantOrgId
 
+        const [typesData, templatesData, entityOpts] = await Promise.all([
+          // Tenant: solo tipos compartidos + de su org (nunca los exclusivos de otra)
+          getProcessTypes(orgScope),
+          getTemplates(undefined, undefined, orgScope),
+          loadEntityOptionsForScope(orgScope),
+        ])
+
+        // Org-SA: solo tipos de su org (los que crea en Tipos de Proceso), no el catálogo ajeno
+        const scopedTypes = orgScope
+          ? typesData.filter((pt) => pt.organization_id === orgScope)
+          : typesData
         setProcessTypes(
-          typesData.map((pt) => ({
+          scopedTypes.map((pt) => ({
             id: pt.id,
             name: pt.name,
             description: pt.description || "",
           })),
         )
         setTemplates(templatesData)
+        setEntityOptions(entityOpts)
       } catch (err) {
         console.error("Error loading data:", err)
         setLoadError("Error al cargar los datos. Por favor, intente de nuevo.")
@@ -143,13 +214,14 @@ export function TemplatesPage() {
     }
 
     loadData()
-  }, [])
+  }, [profileLoading, profile?.id, profile?.role, tenantOrgId, loadEntityOptionsForScope])
 
   // Sync edit form values when selectedTemplate changes and dialog opens
   React.useEffect(() => {
     if (isEditOpen && selectedTemplate) {
       setEditTemplateName(selectedTemplate.name)
       setEditProcessTypeId(selectedTemplate.processTypeId)
+      setEditEntityId(selectedTemplate.entityId || ENTITY_GLOBAL_VALUE)
       // Reset replacement file and tags when dialog opens
       setEditReplacementFile(null)
       setEditExtractedTags(selectedTemplate.variables || [])
@@ -191,6 +263,8 @@ export function TemplatesPage() {
     return null
   }
 
+  const isTenantScoped = !!tenantOrgId
+
   // Modified filteredTemplates logic slightly
   const filteredTemplates = React.useMemo(() => {
     let result = [...templates]
@@ -199,13 +273,38 @@ export function TemplatesPage() {
       result = result.filter((t) => t.processTypeId === filterProcessType)
     }
 
+    if (filterEntityId !== "all") {
+      result = result.filter((t) => !t.entityId || t.entityId === filterEntityId)
+    }
+
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
-      result = result.filter((t) => t.name.toLowerCase().includes(query) || t.fileUrl.toLowerCase().includes(query))
+      result = result.filter(
+        (t) =>
+          t.name.toLowerCase().includes(query) ||
+          t.fileUrl.toLowerCase().includes(query) ||
+          (t.entityName && t.entityName.toLowerCase().includes(query)),
+      )
     }
 
     return result
-  }, [templates, filterProcessType, searchQuery])
+  }, [templates, filterProcessType, filterEntityId, searchQuery])
+
+  // En el filtro de listado: solo tipos que tienen plantillas del tenant (no el catálogo global)
+  const filterProcessTypeOptions = React.useMemo(() => {
+    if (!isTenantScoped) return processTypes
+    const usedIds = new Set(templates.map((t) => t.processTypeId).filter(Boolean))
+    return processTypes.filter((pt) => usedIds.has(pt.id))
+  }, [isTenantScoped, processTypes, templates])
+
+  React.useEffect(() => {
+    if (
+      filterProcessType !== "all" &&
+      !filterProcessTypeOptions.some((pt) => pt.id === filterProcessType)
+    ) {
+      setFilterProcessType("all")
+    }
+  }, [filterProcessType, filterProcessTypeOptions])
 
   // Added templatesByType memo (though not used in the final merged code)
   const templatesByType = React.useMemo(() => {
@@ -224,6 +323,7 @@ export function TemplatesPage() {
     setSelectedTemplate(template)
     setEditTemplateName(template.name)
     setEditProcessTypeId(template.processTypeId)
+    setEditEntityId(template.entityId || ENTITY_GLOBAL_VALUE)
     setEditReplacementFile(null)
     setEditExtractedTags(template.variables || [])
     setIsEditOpen(true)
@@ -232,6 +332,7 @@ export function TemplatesPage() {
   const resetEditDialog = () => {
     setEditTemplateName("")
     setEditProcessTypeId("")
+    setEditEntityId(ENTITY_GLOBAL_VALUE)
     setEditReplacementFile(null)
     setEditExtractedTags([])
     setIsEditDragging(false)
@@ -248,7 +349,22 @@ export function TemplatesPage() {
       file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
       file.name.endsWith(".docx")
     ) {
+      if (file.size > MAX_DOCX_SIZE_BYTES) {
+        setEditReplacementFile(null)
+        setEditExtractedTags(selectedTemplate?.variables || [])
+        setEditLargeFileWarning(
+          "Archivo bloqueado por tamaño. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar.",
+        )
+        alert("El archivo supera el tamaño máximo permitido (4.5 MB). Reduce el peso y vuelve a intentarlo.")
+        return
+      }
+
       setIsExtractingEditTags(true)
+      setEditLargeFileWarning(
+        file.size >= MAX_DOCX_SIZE_BYTES * 0.8
+          ? "El archivo es grande y podría fallar en la subida/generación. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar."
+          : null,
+      )
       
       try {
         // Extract tags from the document
@@ -267,6 +383,7 @@ export function TemplatesPage() {
         alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
         setEditReplacementFile(null)
         setEditExtractedTags([])
+        setEditLargeFileWarning(null)
       } finally {
         setIsExtractingEditTags(false)
       }
@@ -312,11 +429,13 @@ export function TemplatesPage() {
       const updateData: {
         name: string
         processTypeId: string
+        entityId: string | null
         fileUrl?: string
         variables?: string[]
       } = {
         name: editTemplateName,
         processTypeId: editProcessTypeId,
+        entityId: editEntityId === ENTITY_GLOBAL_VALUE ? null : editEntityId,
       }
 
       // Get the process type name for folder organization
@@ -429,24 +548,37 @@ export function TemplatesPage() {
   const clearFilters = () => {
     setSearchQuery("")
     setFilterProcessType("all")
+    setFilterEntityId("all")
   }
 
-  const hasActiveFilters = searchQuery || filterProcessType !== "all"
+  const hasActiveFilters = searchQuery || filterProcessType !== "all" || filterEntityId !== "all"
 
   const resetCreateDialog = () => {
     setCreateStep(1)
     setTemplateName("")
     setTemplateDescription("")
     setSelectedProcessTypeId("")
+    setSelectedEntityId("")
     setUploadedFile(null)
     setExtractedTags([])
     setIsDragging(false)
     setIsUploading(false)
     setIsExtractingTags(false)
+    setLargeFileWarning(null)
   }
 
-  const handleOpenCreate = () => {
+  const handleOpenCreate = async () => {
     resetCreateDialog()
+    // Re-cargar entidades del tenant al abrir (evita listado cruzado en caché)
+    if (tenantOrgId) {
+      try {
+        const ents = await loadEntityOptionsForScope(tenantOrgId)
+        setEntityOptions(ents)
+        if (ents.length === 1) setSelectedEntityId(ents[0].id)
+      } catch (e) {
+        console.warn("[TemplatesPage] Error refreshing entities on create:", e)
+      }
+    }
     setIsCreateOpen(true)
   }
 
@@ -460,13 +592,48 @@ export function TemplatesPage() {
       file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
       file.name.endsWith(".docx")
     ) {
+      if (file.size > MAX_DOCX_SIZE_BYTES) {
+        setUploadedFile(null)
+        setExtractedTags([])
+        setLargeFileWarning(
+          "Archivo bloqueado por tamaño. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar.",
+        )
+        alert("El archivo supera el tamaño máximo permitido (4.5 MB). Reduce el peso y vuelve a intentarlo.")
+        return
+      }
+
       setIsUploading(true)
       setIsExtractingTags(true)
+      setLargeFileWarning(
+        file.size >= MAX_DOCX_SIZE_BYTES * 0.8
+          ? "El archivo es grande y podría fallar en la subida/generación. En Word ve a Preferencias > Guardar y desmarca 'Incrustar fuentes en el archivo', luego guarda y vuelve a cargar."
+          : null,
+      )
       
       try {
+        // CAP-10 (RF-033, CA-033.2): rechazar la carga si hay variables sin cerrar
+        const unclosed = await findUnclosedVariablesInDocx(file)
+        if (unclosed.length > 0) {
+          const detalle = unclosed
+            .slice(0, 3)
+            .map((u) => `• "${u.fragment}" (cerca de: "…${u.context}…")`)
+            .join("\n")
+          alert(
+            `La plantilla tiene ${unclosed.length} variable(s) sin cerrar y no se puede cargar:\n\n${detalle}\n\nCorrige el documento en Word y vuelve a cargarlo.`,
+          )
+          setUploadedFile(null)
+          setExtractedTags([])
+          setLargeFileWarning(null)
+          return
+        }
+
         // Extract tags from the document
         const tags = await extractTagsFromDocx(file)
-        
+
+        // CAP-10 (CA-033.1): también las variables en minúsculas van a la lista
+        const looseVars = await findAllVariablesLooseInDocx(file)
+        const merged = Array.from(new Set([...tags, ...looseVars])).sort()
+
         setUploadedFile({
           name: file.name,
           size: file.size,
@@ -474,12 +641,13 @@ export function TemplatesPage() {
           lastModified: file.lastModified,
           file: file, // Store the File object for later use
         })
-        setExtractedTags(tags)
+        setExtractedTags(merged)
       } catch (error) {
         console.error("Error processing file:", error)
         alert(error instanceof Error ? error.message : "Error al procesar el archivo. Por favor, intente de nuevo.")
         setUploadedFile(null)
         setExtractedTags([])
+        setLargeFileWarning(null)
       } finally {
         setIsUploading(false)
         setIsExtractingTags(false)
@@ -522,48 +690,12 @@ export function TemplatesPage() {
   }
 
   const handleDownloadExample = () => {
-    // Create a mock .docx download (in real app this would download actual file)
-    const content = `
-PLANTILLA DE EJEMPLO - EVA JURÍDICO
-=====================================
-
-Este documento sirve como ejemplo de estructura para plantillas de documentos jurídicos.
-
-VARIABLES DISPONIBLES:
-- {{ENTIDAD_NOMBRE}}: Nombre de la entidad contratante
-- {{ENTIDAD_NIT}}: NIT de la entidad
-- {{REPRESENTANTE_LEGAL}}: Nombre del representante legal
-- {{OBJETO_CONTRATO}}: Objeto del contrato
-- {{VALOR_CONTRATO}}: Valor total del contrato
-- {{PLAZO_EJECUCION}}: Plazo de ejecución
-- {{FECHA_ELABORACION}}: Fecha de elaboración del documento
-- {{SECRETARIA_NOMBRE}}: Nombre de la secretaría supervisora
-
-SECCIONES SUGERIDAS:
-1. IDENTIFICACIÓN
-2. JUSTIFICACIÓN DE LA NECESIDAD
-3. OBJETO DEL CONTRATO
-4. ESPECIFICACIONES TÉCNICAS
-5. ANÁLISIS DEL SECTOR
-6. PRESUPUESTO Y CERTIFICACIÓN
-7. CRITERIOS DE SELECCIÓN
-8. ANÁLISIS DE RIESGOS
-9. GARANTÍAS
-10. SUPERVISIÓN
-
-=====================================
-© EVA Jurídico - Plantilla de Ejemplo
-    `.trim()
-
-    const blob = new Blob([content], { type: "text/plain" })
-    const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
-    a.href = url
-    a.download = "plantilla-ejemplo-eva-juridico.txt"
+    a.href = "/docs/ESTUDIO-PREVIO.docx"
+    a.download = "ESTUDIO-PREVIO.docx"
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
   }
 
   const formatFileSize = (bytes: number): string => {
@@ -574,7 +706,18 @@ SECCIONES SUGERIDAS:
     return Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
   }
 
-  const canProceedStep1 = templateName.trim() !== "" && selectedProcessTypeId !== ""
+  const formatVariableForDisplay = (tag: string): string => {
+    const tableDef = parseDynamicTableTagToken(tag)
+    if (!tableDef) return `{{${tag}}}`
+    const [family, variant = "base"] = tableDef.loopName.split("@")
+    return `{{TABLE_${family}_${variant.toUpperCase()}_${tableDef.fields.map((f) => f.toUpperCase()).join("_")}}}`
+  }
+
+  const canProceedStep1 =
+    templateName.trim() !== "" &&
+    selectedProcessTypeId !== "" &&
+    selectedEntityId !== "" &&
+    entityOptions.some((e) => e.id === selectedEntityId)
   const canProceedStep2 = uploadedFile !== null
   const selectedProcessType = processTypes.find((pt) => pt.id === selectedProcessTypeId)
 
@@ -695,7 +838,7 @@ SECCIONES SUGERIDAS:
   }
 
   const handleCreateTemplate = async (retryCount = 0) => {
-    if (!templateName || !selectedProcessTypeId || !uploadedFile || !uploadedFile.file) return
+    if (!templateName || !selectedProcessTypeId || !selectedEntityId || !uploadedFile || !uploadedFile.file) return
 
     try {
       setIsSaving(true)
@@ -764,9 +907,16 @@ SECCIONES SUGERIDAS:
         ? `fileId:${uploadData.fileId}|path:${uploadData.drivePath || uploadData.directLink || uploadData.webViewLink}`
         : uploadData.drivePath || uploadData.directLink || uploadData.webViewLink
 
+      const selectedEntity = entityOptions.find((e) => e.id === selectedEntityId)
+      if (!selectedEntity?.organizationId) {
+        throw new Error("No se pudo determinar la organización de la entidad seleccionada")
+      }
+
       const newTemplate = await createTemplate({
         name: templateName,
         processTypeId: selectedProcessTypeId,
+        entityId: selectedEntityId,
+        organizationId: selectedEntity.organizationId,
         fileUrl: fileUrl, // Store fileId and path for easy access
         description: templateDescription,
         variables: extractedTags, // Save the extracted tags
@@ -774,6 +924,11 @@ SECCIONES SUGERIDAS:
 
       setTemplates([...templates, newTemplate])
       handleCloseCreate()
+      if (profile?.role === "superadmin") {
+        router.push("/superadmin/templates")
+      } else {
+        router.push("/member/processes")
+      }
     } catch (err) {
       console.error("Error creating template:", err)
       alert(err instanceof Error ? err.message : "Error al crear la plantilla. Por favor, intente de nuevo.")
@@ -869,8 +1024,8 @@ SECCIONES SUGERIDAS:
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 sm:flex-row">
-            <div className="relative flex-1">
+          <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap">
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar plantillas..."
@@ -880,14 +1035,27 @@ SECCIONES SUGERIDAS:
               />
             </div>
             <Select value={filterProcessType} onValueChange={setFilterProcessType}>
-              <SelectTrigger className="w-full sm:w-[250px]">
+              <SelectTrigger className="w-full lg:w-[220px]">
                 <SelectValue placeholder="Filtrar por tipo de proceso" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los tipos de proceso</SelectItem>
-                {processTypes.map((pt) => (
+                {filterProcessTypeOptions.map((pt) => (
                   <SelectItem key={pt.id} value={pt.id}>
                     {pt.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterEntityId} onValueChange={setFilterEntityId}>
+              <SelectTrigger className="w-full lg:w-[260px]">
+                <SelectValue placeholder="Filtrar por entidad" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[280px]">
+                <SelectItem value="all">Todas las entidades</SelectItem>
+                {entityOptions.map((ent) => (
+                  <SelectItem key={ent.id} value={ent.id}>
+                    {isTenantScoped ? ent.name : `${ent.organizationName} — ${ent.name}`}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -908,9 +1076,18 @@ SECCIONES SUGERIDAS:
                   </div>
                   <div className="space-y-1">
                     <CardTitle className="text-base leading-tight">{template.name}</CardTitle>
-                    <Badge variant="secondary" className="text-xs">
-                      {getProcessTypeName(template.processTypeId)}
-                    </Badge>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="secondary" className="text-xs">
+                        {getProcessTypeName(template.processTypeId)}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {template.entityName
+                          ? template.entityName
+                          : template.entityId
+                            ? "Entidad"
+                            : "Todas las entidades"}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
                 <DropdownMenu>
@@ -978,7 +1155,7 @@ SECCIONES SUGERIDAS:
             <FileText className="h-12 w-12 text-muted-foreground/50" />
             <h3 className="mt-4 text-lg font-semibold">No hay plantillas</h3>
             <p className="mt-2 text-center text-sm text-muted-foreground">
-              {searchQuery || filterProcessType !== "all"
+              {searchQuery || filterProcessType !== "all" || filterEntityId !== "all"
                 ? "No se encontraron plantillas con los filtros aplicados."
                 : "Comienza creando tu primera plantilla de documento."}
             </p>
@@ -1083,7 +1260,38 @@ SECCIONES SUGERIDAS:
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
-                    La plantilla se usará para generar documentos de este tipo de proceso
+                    Solo tipos compartidos de EVA y los de su organización (no los exclusivos de otros tenants).
+                  </p>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="tpl-entity">Entidad cliente *</Label>
+                  {entityOptions.length === 0 ? (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertTitle>No hay entidades disponibles</AlertTitle>
+                      <AlertDescription className="text-sm">
+                        Cree entidades en su organización antes de asociar plantillas.
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <Select value={selectedEntityId} onValueChange={setSelectedEntityId}>
+                      <SelectTrigger id="tpl-entity">
+                        <SelectValue placeholder="Seleccionar entidad..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[280px]">
+                        {entityOptions.map((ent) => (
+                          <SelectItem key={ent.id} value={ent.id}>
+                            <span className="line-clamp-2">
+                              {isTenantScoped ? ent.name : `${ent.organizationName} — ${ent.name}`}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Solo los procesos de esta entidad (de su organización) verán esta plantilla al generar documentos.
                   </p>
                 </div>
 
@@ -1189,7 +1397,7 @@ SECCIONES SUGERIDAS:
                         <Upload className="mr-2 h-4 w-4" />
                         Seleccionar Archivo
                       </Button>
-                      <p className="text-xs text-muted-foreground">Solo archivos .docx (máx. 10MB)</p>
+                      <p className="text-xs text-muted-foreground">Solo archivos .docx (máx. 4.5MB)</p>
                     </div>
                   )}
                   <input
@@ -1200,6 +1408,13 @@ SECCIONES SUGERIDAS:
                     onChange={handleFileChangeNew} // Use the renamed file change handler
                   />
                 </div>
+                {largeFileWarning && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertTitle>Archivo grande detectado</AlertTitle>
+                    <AlertDescription className="text-sm">{largeFileWarning}</AlertDescription>
+                  </Alert>
+                )}
 
                 {/* Show extracted tags */}
                 {uploadedFile && extractedTags.length > 0 && (
@@ -1214,12 +1429,32 @@ SECCIONES SUGERIDAS:
                           Se encontraron {extractedTags.length} variable{extractedTags.length !== 1 ? "s" : ""} en el documento:
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {extractedTags.map((tag) => (
-                            <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {`{{${tag}}}`}
-                            </Badge>
-                          ))}
+                          {extractedTags.map((tag) => {
+                            // CAP-10 (CA-033.3): si la variable ya existe en otras
+                            // plantillas, se tratará como el mismo dato (CAP-03)
+                            const isKnown = knownVariables.has(tag.toUpperCase())
+                            return (
+                              <Badge
+                                key={tag}
+                                variant={isKnown ? "default" : "secondary"}
+                                className="font-mono text-xs"
+                                title={
+                                  isKnown
+                                    ? "Esta variable ya existe en otras plantillas: se tratará como el mismo dato"
+                                    : "Variable nueva"
+                                }
+                              >
+                                {formatVariableForDisplay(tag)}
+                                {isKnown && " ✓"}
+                              </Badge>
+                            )
+                          })}
                         </div>
+                        {extractedTags.some((t) => knownVariables.has(t.toUpperCase())) && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Las marcadas con ✓ ya existen en otras plantillas y se tratarán como el mismo dato.
+                          </p>
+                        )}
                         <p className="mt-3 text-xs text-muted-foreground">
                           Estas variables se guardarán con la plantilla y podrás usarlas para generar documentos dinámicamente.
                         </p>
@@ -1262,6 +1497,17 @@ SECCIONES SUGERIDAS:
                   </div>
                   <Separator />
                   <div>
+                    <p className="text-sm text-muted-foreground">Entidad</p>
+                    <p className="font-medium">
+                      {entityOptions.find((e) => e.id === selectedEntityId)
+                        ? `${entityOptions.find((e) => e.id === selectedEntityId)!.organizationName} — ${
+                            entityOptions.find((e) => e.id === selectedEntityId)!.name
+                          }`
+                        : selectedEntityId || "—"}
+                    </p>
+                  </div>
+                  <Separator />
+                  <div>
                     <p className="text-sm text-muted-foreground">Archivo</p>
                     <div className="flex items-center gap-2">
                       <FileText className="h-4 w-4 text-primary" />
@@ -1286,7 +1532,7 @@ SECCIONES SUGERIDAS:
                         <div className="mt-2 flex flex-wrap gap-2">
                           {extractedTags.map((tag) => (
                             <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {`{{${tag}}}`}
+                              {formatVariableForDisplay(tag)}
                             </Badge>
                           ))}
                         </div>
@@ -1358,7 +1604,13 @@ SECCIONES SUGERIDAS:
                 </div>
                 <div>
                   <h3 className="font-semibold">{selectedTemplate.name}</h3>
-                  <Badge variant="secondary">{getProcessTypeName(selectedTemplate.processTypeId)}</Badge>
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="secondary">{getProcessTypeName(selectedTemplate.processTypeId)}</Badge>
+                    <Badge variant="outline">
+                      {selectedTemplate.entityName ||
+                        (selectedTemplate.entityId ? "Entidad asignada" : "Todas las entidades")}
+                    </Badge>
+                  </div>
                 </div>
               </div>
               <Separator />
@@ -1433,6 +1685,36 @@ SECCIONES SUGERIDAS:
                   </p>
                 </div>
 
+                <div className="grid gap-2">
+                  <Label htmlFor="edit-entity">Entidad</Label>
+                  <Select value={editEntityId} onValueChange={setEditEntityId}>
+                    <SelectTrigger id="edit-entity">
+                      <SelectValue placeholder="Entidad" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[280px]">
+                      {!isTenantScoped && (
+                        <SelectItem value={ENTITY_GLOBAL_VALUE}>Todas las entidades (sin restricción)</SelectItem>
+                      )}
+                      {selectedTemplate?.entityId &&
+                        !entityOptions.some((e) => e.id === selectedTemplate.entityId) && (
+                          <SelectItem value={selectedTemplate.entityId}>
+                            {selectedTemplate.entityName || selectedTemplate.entityId} (actual)
+                          </SelectItem>
+                        )}
+                      {entityOptions.map((ent) => (
+                        <SelectItem key={ent.id} value={ent.id}>
+                          {isTenantScoped ? ent.name : `${ent.organizationName} — ${ent.name}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {isTenantScoped
+                      ? "La plantilla aplica a procesos de esta entidad de su organización."
+                      : "Restringe la plantilla a una entidad o déjala global para compatibilidad con datos antiguos."}
+                  </p>
+                </div>
+
                 <Separator />
 
                 <div className="grid gap-2">
@@ -1452,7 +1734,7 @@ SECCIONES SUGERIDAS:
                             <div className="mt-2 flex flex-wrap gap-1">
                               {selectedTemplate.variables.map((tag) => (
                                 <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                                  {`{{${tag}}}`}
+                                  {formatVariableForDisplay(tag)}
                                 </Badge>
                               ))}
                             </div>
@@ -1518,6 +1800,13 @@ SECCIONES SUGERIDAS:
                     onChange={handleEditFileChange}
                   />
                 </div>
+                {editLargeFileWarning && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertTitle>Archivo grande detectado</AlertTitle>
+                    <AlertDescription className="text-sm">{editLargeFileWarning}</AlertDescription>
+                  </Alert>
+                )}
 
                 {/* Show extracted tags from new file or current tags */}
                 {(editReplacementFile ? editExtractedTags.length > 0 : selectedTemplate.variables && selectedTemplate.variables.length > 0) && (
@@ -1538,7 +1827,7 @@ SECCIONES SUGERIDAS:
                         <div className="mt-3 flex flex-wrap gap-2">
                           {(editReplacementFile ? editExtractedTags : selectedTemplate.variables || []).map((tag) => (
                             <Badge key={tag} variant="secondary" className="font-mono text-xs">
-                              {`{{${tag}}}`}
+                              {formatVariableForDisplay(tag)}
                             </Badge>
                           ))}
                         </div>

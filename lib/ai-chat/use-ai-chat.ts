@@ -37,7 +37,7 @@ export interface UseAIChatReturn {
  * const { messages, sendMessage, isLoading } = useAIChat({
  *   apiEndpoint: '/api/chat',
  *   systemPrompt: 'You are a helpful assistant',
- *   model: 'openai/gpt-4o'
+ *   model: 'openai/gpt-4o'  // optional; API uses OPENAI_MODEL env by default
  * })
  * ```
  */
@@ -59,7 +59,6 @@ export function useAIChat(
       headers,
     }),
     onError: (error) => {
-      console.error("[AI Chat] Error:", error)
       options.onError?.(error)
     },
   })

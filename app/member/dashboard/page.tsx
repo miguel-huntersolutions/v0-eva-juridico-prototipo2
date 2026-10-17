@@ -40,7 +40,7 @@ import type { Process } from "@/lib/mock-data"
 import { getEntities, getProcessesMapped, type Entity } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
 import { CreateProcessDialog } from "@/components/member/create-process-dialog"
-import { AIAssistant } from "@/components/member/ai-assistant"
+import { AssistantSheet } from "@/components/assistant/assistant-sheet"
 import Link from "next/link"
 import { logger } from "@/lib/logger"
 
@@ -451,8 +451,7 @@ function MemberDashboardContent() {
         onProcessCreated={handleProcessCreated}
       />
 
-      {/* AI Assistant */}
-      <AIAssistant open={isAssistantOpen} onOpenChange={setIsAssistantOpen} />
+      <AssistantSheet open={isAssistantOpen} onOpenChange={setIsAssistantOpen} />
     </div>
   )
 }

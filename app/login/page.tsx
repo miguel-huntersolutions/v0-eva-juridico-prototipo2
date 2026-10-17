@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { createClient } from "@/lib/supabase/client"
 import type { UserRole } from "@/lib/mock-data"
-import { logger } from "@/lib/logger"
+import { homePathForRole } from "@/lib/auth/home-path"
 
 interface ProfileOption {
   role: UserRole
@@ -107,7 +107,11 @@ function LoginPageContent() {
         } = await supabase.auth.getUser()
 
         if (user) {
-          const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", user.id).single()
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role, status, organization_id")
+            .eq("id", user.id)
+            .single()
 
           // Check if user is approved
           if (!profile || profile.status !== "approved") {
@@ -119,7 +123,7 @@ function LoginPageContent() {
 
           const role = profile?.role || "member"
           logger.auth("SESSION_CHECK", user.id, role, true)
-          const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          const route = homePathForRole(role, profile?.organization_id)
           window.location.href = route
           return
         }
@@ -161,7 +165,11 @@ function LoginPageContent() {
       if (data.user) {
         await new Promise((resolve) => setTimeout(resolve, 200))
 
-        const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", data.user.id).single()
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, status, organization_id")
+          .eq("id", data.user.id)
+          .single()
 
         // Check if user is approved
         if (!profile || profile.status !== "approved") {
@@ -173,7 +181,7 @@ function LoginPageContent() {
 
         const role = profile?.role || "member"
         logger.auth("LOGIN", data.user.id, role, true)
-        const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+        const route = homePathForRole(role, profile?.organization_id)
 
         window.location.href = route
       }
@@ -311,7 +319,15 @@ function LoginPageContent() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="password">Contraseña</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Contraseña</Label>
+                    <a
+                      href="/auth/forgot-password"
+                      className="text-xs text-muted-foreground hover:text-primary underline-offset-4 hover:underline"
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </a>
+                  </div>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input

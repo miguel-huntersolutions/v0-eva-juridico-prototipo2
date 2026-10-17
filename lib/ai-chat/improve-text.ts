@@ -5,6 +5,7 @@
 
 import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
+import { getOpenAIModel, getOpenAIChatModelString, temperatureOptionForModel } from "@/lib/ai-model-config"
 
 export interface ImproveTextOptions {
   /** Text to improve */
@@ -27,7 +28,7 @@ export interface ImproveTextOptions {
   secretaryName?: string
   /** Custom system prompt */
   systemPrompt?: string
-  /** AI model to use (default: openai/gpt-4o) */
+  /** AI model to use (default from OPENAI_MODEL env) */
   model?: string
 }
 
@@ -154,7 +155,7 @@ export async function improveText(options: ImproveTextOptions): Promise<string> 
     legalBasis,
     secretaryName,
     systemPrompt,
-    model = "openai/gpt-4o",
+    model = getOpenAIChatModelString(),
   } = options
 
   if (!text.trim()) {
@@ -245,11 +246,12 @@ export async function improveText(options: ImproveTextOptions): Promise<string> 
 
     // Map model string to OpenAI model
     let openaiModel
+    let modelId = getOpenAIModel()
     if (model?.startsWith("openai/")) {
-      const modelName = model.replace("openai/", "")
-      openaiModel = openai(modelName as any)
+      modelId = model.replace("openai/", "")
+      openaiModel = openai(modelId as any)
     } else {
-      openaiModel = openai("gpt-4o")
+      openaiModel = openai(modelId as "gpt-4o")
     }
 
     // Generate improved text
@@ -257,13 +259,12 @@ export async function improveText(options: ImproveTextOptions): Promise<string> 
       model: openaiModel,
       system: finalSystemPrompt,
       prompt: userPrompt,
-      temperature: 0.7,
+      ...temperatureOptionForModel(modelId, 0.7),
       maxTokens: 2000,
     })
 
     return result.text.trim()
   } catch (error: any) {
-    console.error("[AI Text Improvement] Error:", error)
     
     // Handle specific OpenAI errors
     if (error?.error?.type === "insufficient_quota") {

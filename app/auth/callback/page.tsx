@@ -5,6 +5,7 @@ import { Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createBrowserClient } from "@/lib/supabase/client"
 import { Loader2 } from "lucide-react"
+import { homePathForRole } from "@/lib/auth/home-path"
 
 function AuthCallbackContent() {
   const router = useRouter()
@@ -225,7 +226,7 @@ function AuthCallbackContent() {
                 id: user.id,
                 email: user.email || "",
                 name: userName,
-                role: user.user_metadata?.role || "member",
+                role: "member", // Nunca desde user_metadata: lo controla quien se registra (ver scripts/047)
                 status: "pending", // New users must be approved
                 organization_id: organizationId, // Associate with selected organization
               })
@@ -279,14 +280,15 @@ function AuthCallbackContent() {
           // For now, if user is authenticated, redirect based on role
           // The update-password page will handle password setup
           
+          // CAP-09 (RF-031): auditar inicio de sesión OAuth (fire-and-forget)
+          fetch("/api/audit/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "login", details: { method: "oauth" } }),
+          }).catch(() => {})
+
           // Redirect based on role
-          if (role === "superadmin") {
-            router.push("/superadmin")
-          } else if (role === "admin") {
-            router.push("/admin")
-          } else {
-            router.push("/member")
-          }
+          router.push(homePathForRole(role, profile?.organization_id))
         } else {
           // No tokens, check if we're already authenticated
           const {
@@ -339,7 +341,7 @@ function AuthCallbackContent() {
                   id: user.id,
                   email: user.email || "",
                   name: userName,
-                  role: user.user_metadata?.role || "member",
+                  role: "member", // Nunca desde user_metadata: lo controla quien se registra (ver scripts/047)
                   status: "pending", // New users must be approved
                   organization_id: organizationId, // Associate with selected organization
                 })
@@ -393,13 +395,7 @@ function AuthCallbackContent() {
             }
 
             const role = profile?.role || "member"
-            if (role === "superadmin") {
-              router.push("/superadmin")
-            } else if (role === "admin") {
-              router.push("/admin")
-            } else {
-              router.push("/member")
-            }
+            router.push(homePathForRole(role, profile?.organization_id))
           } else {
             setError("No se recibieron tokens de autenticación")
             setIsLoading(false)

@@ -73,24 +73,24 @@ export async function fetchConversations(userId?: string): Promise<ChatConversat
 
     return conversationsWithMessages
   } catch (error) {
-    console.error("[Supabase] Error fetching conversations:", error)
     throw new Error(`Failed to fetch conversations: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
 
 /**
- * Fetch a single conversation by ID with all messages
+ * Fetch a single conversation by ID with all messages.
+ * Returns null if the conversation does not exist (e.g. deleted or wrong id).
  */
-export async function fetchConversation(id: string): Promise<ChatConversation> {
+export async function fetchConversation(id: string): Promise<ChatConversation | null> {
   try {
     const { data: convData, error: convError } = await supabase
       .from("conversations")
       .select("*")
       .eq("id", id)
-      .single()
+      .maybeSingle()
 
     if (convError) throw convError
-    if (!convData) throw new Error("Conversation not found")
+    if (!convData) return null
 
     const { data: messagesData, error: messagesError } = await supabase
       .from("messages")
@@ -105,7 +105,6 @@ export async function fetchConversation(id: string): Promise<ChatConversation> {
       messages: (messagesData || []).map(mapMessageFromDB),
     }
   } catch (error) {
-    console.error("[Supabase] Error fetching conversation:", error)
     throw new Error(`Failed to fetch conversation: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -155,19 +154,8 @@ export async function createConversation(
       messages: conversation.messages || [],
     }
   } catch (error: any) {
-    console.error("[Supabase] Error creating conversation:", error)
-    
-    // Provide more detailed error information
     const errorMessage = error?.message || error?.error_description || "Unknown error"
     const errorCode = error?.code || error?.error_code || "unknown"
-    
-    // Log full error for debugging
-    console.error("[Supabase] Full error details:", {
-      message: errorMessage,
-      code: errorCode,
-      details: error,
-    })
-    
     throw new Error(
       `Failed to create conversation: ${errorMessage} (Code: ${errorCode})`
     )
@@ -198,10 +186,10 @@ export async function updateConversation(
     if (error) throw error
     if (!data) throw new Error("Conversation not found")
 
-    // Reload with messages
-    return await fetchConversation(id)
+    const reloaded = await fetchConversation(id)
+    if (!reloaded) throw new Error("Conversation not found")
+    return reloaded
   } catch (error) {
-    console.error("[Supabase] Error updating conversation:", error)
     throw new Error(`Failed to update conversation: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -233,9 +221,10 @@ export async function addMessagesToConversation(
       (msg) => !existingContentSet.has(`${msg.role}:${msg.content.slice(0, 100)}`)
     )
 
-    // If no new messages, just return the conversation
     if (newMessages.length === 0) {
-      return await fetchConversation(conversationId)
+      const conv = await fetchConversation(conversationId)
+      if (!conv) throw new Error("Conversation not found")
+      return conv
     }
 
     // Get current max sequence_order
@@ -269,10 +258,10 @@ export async function addMessagesToConversation(
         .eq("id", conversationId)
     }
 
-    // Reload conversation with all messages
-    return await fetchConversation(conversationId)
+    const conv = await fetchConversation(conversationId)
+    if (!conv) throw new Error("Conversation not found")
+    return conv
   } catch (error) {
-    console.error("[Supabase] Error adding messages:", error)
     throw new Error(`Failed to add messages: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
@@ -286,7 +275,6 @@ export async function deleteConversation(id: string): Promise<void> {
 
     if (error) throw error
   } catch (error) {
-    console.error("[Supabase] Error deleting conversation:", error)
     throw new Error(`Failed to delete conversation: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }

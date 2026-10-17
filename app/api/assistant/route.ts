@@ -4,25 +4,34 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { runWorkflow } from "@/lib/ai-chat/workflow-runner"
+import { runRagFirstThenGeneralChat } from "@/lib/ai-chat/workflow-runner"
 import { fetchConversation } from "@/lib/ai-chat/services/conversations-api"
+import { requireAuth } from "@/lib/supabase/require-auth"
+import { createServerClient } from "@/lib/supabase/server"
 
+/** Segment config must be static; runtime can use ASSISTANT_MAX_DURATION / Vercel. */
 export const maxDuration = 60
 
-// Get workflow ID from environment variable
-const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID
-
-if (!WORKFLOW_ID) {
-  console.warn("[Assistant API] OPENAI_ASSISTANT_WORKFLOW_ID not set. Assistant will not work properly.")
-} else {
-  console.log(`[Assistant API] Using workflow ID: ${WORKFLOW_ID.substring(0, 10)}...`)
-}
-
 export async function POST(req: NextRequest) {
+  // RF-005 (CAP-01): exigir sesión antes de consumir el modelo.
+  const { user, error: authError } = await requireAuth()
+  if (authError) return authError
+
   try {
-    if (!WORKFLOW_ID) {
+    let organizationId: string | null = null
+    if (user?.id) {
+      const supabase = await createServerClient()
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("organization_id")
+        .eq("id", user.id)
+        .maybeSingle()
+      organizationId = profile?.organization_id ?? null
+    }
+
+    if (!process.env.OPENAI_API_KEY?.trim()) {
       return NextResponse.json(
-        { error: "Assistant workflow not configured" },
+        { error: "OpenAI API key not configured" },
         { status: 500 }
       )
     }
@@ -46,25 +55,25 @@ export async function POST(req: NextRequest) {
           conversationHistory = conversation.messages.slice(0, -1) // Exclude last message to avoid duplicates
         }
       } catch (error) {
-        console.error("[Assistant API] Error loading conversation history:", error)
         // Continue without history if loading fails
       }
     }
 
-    // Run the workflow with conversation history
-    const responseText = await runWorkflow(message, conversationHistory)
+    // RAG (file_search) primero; si no alcanza, asesor normativo con generateText (temp. 0)
+    const { text: responseText, source: answerSource } = await runRagFirstThenGeneralChat(
+      message,
+      conversationHistory,
+      { organizationId },
+    )
 
-    // Return the response
-    // Note: For workflows, we use conversationId as the "thread" identifier
-    // since workflows don't use OpenAI threads in the traditional sense
     return NextResponse.json({
       message: responseText,
-      threadId: conversationId || threadId, // Use conversationId as thread identifier
+      /** "documents" = respuesta anclada al repositorio indexado; "general" = modo normativo sin RAG suficiente */
+      answerSource,
+      threadId: conversationId || threadId,
       conversationId,
     })
   } catch (error: any) {
-    console.error("[Assistant API] Error:", error)
-
     // Handle specific OpenAI errors
     if (error?.status === 401 || error?.message?.includes("API key")) {
       return NextResponse.json(

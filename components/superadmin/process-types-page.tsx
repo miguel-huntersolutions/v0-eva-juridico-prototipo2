@@ -68,9 +68,16 @@ import {
   updateTemplate,
 } from "@/lib/supabase/client-data-access"
 import type { ProcessType, Template } from "@/lib/supabase/client-data-access"
+import { useProfile } from "@/hooks/use-profile"
+import { isOrgSuperadmin, isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 export function ProcessTypesPage() {
   const router = useRouter()
+  const { profile, isLoading: profileLoading } = useProfile()
+  const platformSa = isPlatformSuperadmin(profile)
+  const orgSa = isOrgSuperadmin(profile)
+  const tenantOrgId = orgSa ? profile!.organization_id! : null
+
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [templates, setTemplates] = React.useState<Template[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
@@ -94,15 +101,27 @@ export function ProcessTypesPage() {
   const [isDeleting, setIsDeleting] = React.useState(false)
 
   React.useEffect(() => {
+    if (profileLoading) return
     loadData()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileLoading, tenantOrgId, platformSa])
 
   async function loadData() {
     try {
       setIsLoading(true)
       setError(null)
-      const [typesData, templatesData] = await Promise.all([getProcessTypes(), getTemplates()])
-      setProcessTypes(typesData)
+      // Org-SA: solo tipos de su org (+ compartidos vía getProcessTypes). Plataforma: todos.
+      const orgScope = platformSa ? null : tenantOrgId
+      const [typesData, templatesData] = await Promise.all([
+        getProcessTypes(orgScope),
+        getTemplates(undefined, undefined, orgScope),
+      ])
+      // Org-SA gestiona solo los tipos de su org (no el catálogo compartido de plataforma)
+      setProcessTypes(
+        orgSa && tenantOrgId
+          ? typesData.filter((t) => t.organization_id === tenantOrgId)
+          : typesData,
+      )
       setTemplates(templatesData)
     } catch (err) {
       console.error("Error loading data:", err)
@@ -299,12 +318,18 @@ export function ProcessTypesPage() {
 
   async function handleCreate() {
     if (!formData.name.trim() || !formData.description.trim()) return
+    if (orgSa && !tenantOrgId) {
+      setError("No se pudo determinar su organización para crear el tipo de proceso")
+      return
+    }
 
     try {
       setIsSaving(true)
       const newType = await createProcessType({
         name: formData.name.trim(),
         description: formData.description.trim(),
+        // Org-SA: siempre de su tenant. Plataforma: compartido (null).
+        organizationId: orgSa ? tenantOrgId : null,
       })
       setProcessTypes((prev) => [...prev, newType])
       setIsCreateOpen(false)
@@ -377,11 +402,22 @@ export function ProcessTypesPage() {
     )
   }
 
+  const canMutateType = (type: ProcessType) => {
+    if (platformSa) return true
+    if (!orgSa || !tenantOrgId) return false
+    // Org-SA solo edita/borra tipos de su organización (no el catálogo compartido)
+    return type.organization_id === tenantOrgId
+  }
+
   return (
     <div className="flex flex-col gap-8 p-8">
       <PageHeader
         title="Tipos de Proceso"
-        description="Configura los tipos de contratación disponibles para todas las organizaciones"
+        description={
+          orgSa
+            ? "Crea y gestiona los tipos de contratación de su organización para asociar plantillas"
+            : "Configura los tipos de contratación disponibles para todas las organizaciones"
+        }
       >
         <Button
           onClick={() => {
@@ -484,41 +520,46 @@ export function ProcessTypesPage() {
 
                 return (
                   <Collapsible key={type.id} open={isExpanded} onOpenChange={() => toggleExpanded(type.id)}>
-                    <div className="rounded-lg border transition-all hover:border-primary/50">
+                    <div className="min-w-0 overflow-hidden rounded-lg border transition-all hover:border-primary/50">
                       {/* Main row */}
-                      <div className="group flex items-center justify-between p-4">
-                        <div className="flex items-start gap-4 flex-1">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                      <div className="group flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:p-4">
+                        <div className="flex min-w-0 flex-1 items-start gap-3 sm:gap-4">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                             <FolderKanban className="h-5 w-5 text-primary" />
                           </div>
-                          <div className="space-y-2 flex-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h3 className="font-semibold">{type.name}</h3>
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="min-w-0 break-words font-semibold">{type.name}</h3>
                               {typeTemplates.length > 0 ? (
-                                <Badge variant="secondary" className="text-xs">
+                                <Badge variant="secondary" className="shrink-0 text-xs">
                                   <FileStack className="mr-1 h-3 w-3" />
                                   {typeTemplates.length} plantilla{typeTemplates.length !== 1 ? "s" : ""}
                                 </Badge>
                               ) : (
-                                <Badge variant="outline" className="text-xs text-muted-foreground">
+                                <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
                                   Sin plantillas
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-sm text-muted-foreground max-w-xl">{type.description}</p>
+                            <p className="text-sm text-muted-foreground break-words">{type.description}</p>
                             {/* Plantillas asociadas - siempre visible */}
                             {typeTemplates.length > 0 && (
-                              <div className="flex items-center gap-2 flex-wrap mt-2">
+                              <div className="mt-2 space-y-1.5">
                                 <span className="text-xs font-medium text-muted-foreground">Plantillas asociadas:</span>
-                                <div className="flex items-center gap-1.5 flex-wrap">
+                                <div className="flex max-w-full flex-col gap-1.5 sm:flex-row sm:flex-wrap">
                                   {typeTemplates.slice(0, 3).map((template) => (
-                                    <Badge key={template.id} variant="outline" className="text-xs font-normal">
-                                      <FileText className="mr-1 h-3 w-3" />
-                                      {template.name}
+                                    <Badge
+                                      key={template.id}
+                                      variant="outline"
+                                      className="h-auto max-w-full min-w-0 justify-start whitespace-normal break-words py-1 text-left text-xs font-normal"
+                                      title={template.name}
+                                    >
+                                      <FileText className="mt-0.5 shrink-0" />
+                                      <span className="min-w-0">{template.name}</span>
                                     </Badge>
                                   ))}
                                   {typeTemplates.length > 3 && (
-                                    <Badge variant="outline" className="text-xs font-normal">
+                                    <Badge variant="outline" className="w-fit text-xs font-normal">
                                       +{typeTemplates.length - 3} más
                                     </Badge>
                                   )}
@@ -528,7 +569,7 @@ export function ProcessTypesPage() {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex shrink-0 items-center justify-end gap-1 border-t pt-2 sm:border-0 sm:pt-0">
                           {typeTemplates.length > 0 && (
                             <CollapsibleTrigger asChild>
                               <Button variant="ghost" size="sm" className="gap-1">
@@ -549,52 +590,65 @@ export function ProcessTypesPage() {
 
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100">
+                              <Button variant="ghost" size="icon" className="h-8 w-8 sm:opacity-0 sm:group-hover:opacity-100">
                                 <MoreHorizontal className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEdit(type)}>
-                                <Pencil className="mr-2 h-4 w-4" />
-                                Editar
-                              </DropdownMenuItem>
+                              {canMutateType(type) && (
+                                <DropdownMenuItem onClick={() => handleEdit(type)}>
+                                  <Pencil className="mr-2 h-4 w-4" />
+                                  Editar
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem onClick={() => handleViewTemplates(type)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 Ver Plantillas ({typeTemplates.length})
                               </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(type)}>
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Eliminar
-                              </DropdownMenuItem>
+                              {canMutateType(type) && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(type)}>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Eliminar
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
                       </div>
 
                       <CollapsibleContent>
-                        <div className="border-t bg-muted/30 px-4 py-3">
-                          <div className="ml-14 space-y-2">
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                        <div className="border-t bg-muted/30 px-3 py-3 sm:px-4">
+                          <div className="space-y-2 sm:ml-14">
+                            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                               Plantillas Asociadas
                             </p>
                             {typeTemplates.map((template) => (
                               <div
                                 key={template.id}
-                                className="flex items-center justify-between rounded-md border bg-background p-3 transition-colors hover:bg-accent/50"
+                                className="flex min-w-0 flex-col gap-2 rounded-md border bg-background p-3 transition-colors hover:bg-accent/50 sm:flex-row sm:items-center sm:justify-between"
                               >
-                                <div className="flex items-center gap-3">
-                                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-500/10">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-blue-500/10">
                                     <FileText className="h-4 w-4 text-blue-500" />
                                   </div>
-                                  <div>
-                                    <p className="text-sm font-medium">{template.name}</p>
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium" title={template.name}>
+                                      {template.name}
+                                    </p>
                                     <p className="text-xs text-muted-foreground">
                                       Creada: {new Date(template.createdAt).toLocaleDateString("es-CO")}
                                     </p>
                                   </div>
                                 </div>
-                                <Button variant="ghost" size="sm" onClick={() => handleViewTemplate(template)}>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full sm:w-auto"
+                                  onClick={() => handleViewTemplate(template)}
+                                >
                                   <Eye className="mr-2 h-4 w-4" />
                                   Ver
                                 </Button>
@@ -788,6 +842,9 @@ export function ProcessTypesPage() {
                         </div>
                         <div>
                           <p className="font-medium">{template.name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Entidad: {template.entityName || (template.entityId ? "—" : "Todas")}
+                          </p>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-muted-foreground">{getFileNameFromUrl(template.fileUrl)}</span>
                             <span className="text-xs text-muted-foreground">•</span>

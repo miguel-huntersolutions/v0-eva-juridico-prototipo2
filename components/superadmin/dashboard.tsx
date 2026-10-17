@@ -48,12 +48,16 @@ import {
   type Template,
 } from "@/lib/supabase/client-data-access"
 import { useImpersonation } from "@/lib/impersonation-context"
+import { useProfile } from "@/hooks/use-profile"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
+import { AdminDashboard } from "@/components/admin/dashboard"
 
 // Alias for backward compatibility
 type OrganizationWithCounts = OrganizationMapped
 
 export function SuperadminDashboard() {
   const router = useRouter()
+  const { profile, isLoading: profileLoading } = useProfile()
   const { startImpersonation } = useImpersonation()
   const [isCreateOrgOpen, setIsCreateOrgOpen] = React.useState(false)
   const [isEditOrgOpen, setIsEditOrgOpen] = React.useState(false)
@@ -68,12 +72,20 @@ export function SuperadminDashboard() {
   const [orgsThisMonth, setOrgsThisMonth] = React.useState(0)
   const [orgsLastMonth, setOrgsLastMonth] = React.useState(0)
 
+  const platformSa = isPlatformSuperadmin(profile)
+
   React.useEffect(() => {
     async function loadData() {
+      // Org superadmin: no cargar métricas globales (se muestra AdminDashboard)
+      if (profileLoading) return
+      if (profile && !platformSa) {
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
-        // For superadmin, we need to get ALL organizations, not just active ones
-        // So we'll fetch directly from Supabase
+        // For platform superadmin, we need to get ALL organizations, not just active ones
         const { createBrowserClient } = await import("@/lib/supabase/client")
         const supabase = createBrowserClient()
         
@@ -147,7 +159,12 @@ export function SuperadminDashboard() {
       }
     }
     loadData()
-  }, [])
+  }, [profile, profileLoading, platformSa])
+
+  // Defensa: si llega un org-superadmin aquí, mostrar dashboard de tenant
+  if (!profileLoading && profile && !platformSa) {
+    return <AdminDashboard />
+  }
 
   const handleEditOrganization = (org: OrganizationWithCounts) => {
     setSelectedOrg(org)
@@ -233,13 +250,14 @@ export function SuperadminDashboard() {
       key: "actions",
       title: "",
       className: "w-10",
-      render: (org: OrganizationWithCounts) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
+          render: (org: OrganizationWithCounts) => (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">Acciones</span>
+                </Button>
+              </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => startImpersonation(org)}>
               <Eye className="mr-2 h-4 w-4" />
@@ -269,13 +287,13 @@ export function SuperadminDashboard() {
   }
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    <div className="flex flex-col gap-4 md:gap-8">
       <PageHeader title="Panel de Superadministrador" description="Gestiona la plataforma EVA Jurídico de forma global">
         
       </PageHeader>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatsCard
           title="Organizaciones"
           value={stats.totalOrgs}

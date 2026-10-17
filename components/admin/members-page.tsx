@@ -10,7 +10,6 @@ import {
   Trash2,
   Building,
   Mail,
-  Calendar,
   Shield,
   CheckCircle2,
   XCircle,
@@ -22,7 +21,7 @@ import {
   X,
   Briefcase,
   FileText,
-  Activity,
+  Copy,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -66,6 +65,7 @@ import {
 import { useProfile } from "@/hooks/use-profile"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
 import { useOrganizationSelector } from "@/hooks/use-organization-selector"
+import { useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
 
@@ -80,10 +80,12 @@ interface MemberExtended extends Profile {
 
 export function MembersPage() {
   const { profile, isLoading: profileLoading } = useProfile()
-  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role)
-  const isSuperadmin = actualRole === "superadmin"
+  const platformSa = profile?.role === "superadmin" && !profile.organization_id
+  const { actualRole, effectiveRole, isSimulating } = useRoleSwitcher(profile?.role, platformSa)
+  const isSuperadmin = platformSa
   const isSimulatingAdmin = isSuperadmin && effectiveRole === "admin"
 
+  const searchParams = useSearchParams()
   const {
     effectiveOrganizationId,
     isLoaded: orgLoaded,
@@ -108,6 +110,11 @@ export function MembersPage() {
   const [isEditOpen, setIsEditOpen] = React.useState(false)
   const [isAssignEntitiesOpen, setIsAssignEntitiesOpen] = React.useState(false)
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false)
+  const [invitationResult, setInvitationResult] = React.useState<{
+    message: string
+    inviteLink: string | null
+  } | null>(null)
+  const [linkCopied, setLinkCopied] = React.useState(false)
   const [selectedMember, setSelectedMember] = React.useState<MemberExtended | null>(null)
 
   // Form states
@@ -116,6 +123,7 @@ export function MembersPage() {
     name: "",
     message: "",
     entityIds: [] as string[],
+    kind: "member" as "member" | "entity_contact",
   })
   const [selectedEntities, setSelectedEntities] = React.useState<string[]>([])
   const [isSending, setIsSending] = React.useState(false)
@@ -127,6 +135,7 @@ export function MembersPage() {
     status: "active" as "active" | "inactive",
   })
   const [isSaving, setIsSaving] = React.useState(false)
+  const [resendingMemberId, setResendingMemberId] = React.useState<string | null>(null)
 
   const [entities, setEntities] = React.useState<EntityMapped[]>([])
 
@@ -173,7 +182,7 @@ export function MembersPage() {
       console.log("[MembersPage] Total profiles:", membersData.length)
       
       // Filter only members (not admins)
-      const memberProfiles = membersData.filter((m) => m.role === "member")
+      const memberProfiles = membersData.filter((m) => m.role === "member" || m.role === "entity_contact")
       console.log("[MembersPage] Filtered members (role='member'):", memberProfiles.length)
       console.log("[MembersPage] Member profiles:", memberProfiles.map(m => ({ id: m.id, name: m.name, email: m.email, role: m.role, organization_id: m.organization_id })))
 
@@ -183,7 +192,11 @@ export function MembersPage() {
           // Get assigned entities from database
           let assignedEntityIds: string[] = []
           try {
-            assignedEntityIds = await getMemberAssignedEntities(member.id)
+            if (member.role === "entity_contact") {
+              assignedEntityIds = member.entity_id ? [member.entity_id] : []
+            } else {
+              assignedEntityIds = await getMemberAssignedEntities(member.id)
+            }
             console.log(`[MembersPage] Member ${member.name} assigned entities:`, assignedEntityIds.length, assignedEntityIds)
             // If no entities assigned, use empty array (member has no access)
             // Don't default to all entities - this was causing incorrect counts
@@ -240,6 +253,16 @@ export function MembersPage() {
       setLoading(false)
     }
   }, [profileLoading, orgLoaded, effectiveOrganizationId, loadData])
+
+  // Abrir modal de invitar cuando se llega desde dashboard (openInvite=1)
+  React.useEffect(() => {
+    if (searchParams.get("openInvite") === "1") {
+      setIsInviteOpen(true)
+      const url = new URL(window.location.href)
+      url.searchParams.delete("openInvite")
+      window.history.replaceState({}, "", url.pathname + (url.search || ""))
+    }
+  }, [searchParams])
 
   // Stats
   const stats = {
@@ -454,9 +477,10 @@ export function MembersPage() {
         body: JSON.stringify({
           email: inviteData.email,
           name: inviteData.name || inviteData.email.split("@")[0],
-          role: "member",
+          role: inviteData.kind,
           organizationId: effectiveOrganizationId,
-          entityIds: inviteData.entityIds, // Include selected entities
+          entityIds:
+            inviteData.kind === "entity_contact" ? inviteData.entityIds.slice(0, 1) : inviteData.entityIds,
           isInvitation: true, // Flag to indicate this is an invitation
         }),
       })
@@ -466,11 +490,12 @@ export function MembersPage() {
         throw new Error(error.message || "Error al enviar la invitación")
       }
 
+      const invitedEmail = inviteData.email
       const result = await response.json()
       console.log("[MembersPage] Member created successfully:", result)
       
       setIsInviteOpen(false)
-      setInviteData({ email: "", name: "", message: "", entityIds: [] })
+      setInviteData({ email: "", name: "", message: "", entityIds: [], kind: "member" })
       
       // Wait a bit for the database trigger to create the profile
       await new Promise(resolve => setTimeout(resolve, 1000))
@@ -481,6 +506,21 @@ export function MembersPage() {
       
       // Switch to "approved" tab to show the newly invited member (invitations are approved)
       setStatusFilter("approved")
+
+      if (result.inviteLink && result.emailSent === false) {
+        setInvitationResult({
+          message: result.message || `Usuario creado para ${invitedEmail}. El correo no se envió automáticamente (SMTP).`,
+          inviteLink: result.inviteLink,
+        })
+      }
+
+      // Si la asignación de entidades falló, avisar (el miembro quedó creado pero sin entidades)
+      if (result.entitiesWarning) {
+        alert(
+          `El miembro fue creado, pero no se pudieron asignar las entidades: ${result.entitiesWarning}\n\n` +
+          `Asígnalas manualmente desde el botón de asignar entidades.`,
+        )
+      }
     } catch (err) {
       console.error("Error sending invitation:", err)
       alert(err instanceof Error ? err.message : "Error al enviar la invitación")
@@ -489,7 +529,45 @@ export function MembersPage() {
     }
   }
 
+  const handleResendInvitation = async (member: MemberExtended) => {
+    if (!effectiveOrganizationId) return
+    try {
+      setResendingMemberId(member.id)
+      const response = await fetch("/api/send-invitation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: member.id,
+          organizationId: effectiveOrganizationId,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const msg = data.error || data.message || "Error al reenviar la invitación"
+        throw new Error(msg)
+      }
+      const link = data.inviteLink ?? data.link ?? null
+      if (link) {
+        setInvitationResult({
+          message: data.message || `Invitación generada para ${member.email}`,
+          inviteLink: link,
+        })
+      } else {
+        alert(data.message || `Invitación reenviada a ${member.email}`)
+      }
+    } catch (err) {
+      console.error("Error resending invitation:", err)
+      alert(err instanceof Error ? err.message : "Error al reenviar la invitación")
+    } finally {
+      setResendingMemberId(null)
+    }
+  }
+
   const toggleEntity = (entityId: string) => {
+    if (selectedMember?.role === "entity_contact") {
+      setSelectedEntities([entityId])
+      return
+    }
     if (selectedEntities.includes(entityId)) {
       setSelectedEntities(selectedEntities.filter((id) => id !== entityId))
     } else {
@@ -501,8 +579,15 @@ export function MembersPage() {
     if (!selectedMember) return
 
     try {
-      // Save assignments to database
+    if (selectedMember.role === "entity_contact") {
+      if (selectedEntities.length !== 1) {
+        alert("El contacto de entidad debe quedar asociado a una sola entidad.")
+        return
+      }
+      await updateMember(selectedMember.id, { entityId: selectedEntities[0] })
+    } else {
       await assignMemberEntities(selectedMember.id, selectedEntities)
+    }
       
       // Recalculate processes and documents count for this member based on new assigned entities
       // Use stored processes and documents, but filter by organization entities first
@@ -532,6 +617,7 @@ export function MembersPage() {
             ? { 
                 ...m, 
                 assignedEntities: selectedEntities,
+                entity_id: selectedMember.role === "entity_contact" ? selectedEntities[0] : m.entity_id,
                 processesCount,
                 documentsCount,
               }
@@ -589,21 +675,6 @@ export function MembersPage() {
       console.error("[formatDate] Error formatting date:", dateString, error)
       return "Nunca"
     }
-  }
-
-  const formatRelativeTime = (dateString: string) => {
-    if (!dateString) return "Nunca"
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffHours < 1) return "Hace menos de 1 hora"
-    if (diffHours < 24) return `Hace ${diffHours} horas`
-    if (diffDays === 1) return "Ayer"
-    if (diffDays < 7) return `Hace ${diffDays} días`
-    return formatDate(dateString)
   }
 
   if (loading || profileLoading || !orgLoaded) {
@@ -725,7 +796,7 @@ export function MembersPage() {
                 {/* Member Info */}
                 <div className="flex items-start gap-4">
                   <Avatar className="h-14 w-14 border-2 border-primary/20">
-                    <AvatarImage src={member.avatar_url || "/placeholder.svg"} alt={member.name} />
+                    <AvatarImage src={member.avatar_url || undefined} alt={member.name} />
                     <AvatarFallback className="bg-primary/20 text-primary text-lg">
                       {member.name
                         .split(" ")
@@ -738,7 +809,7 @@ export function MembersPage() {
                     <p className="text-sm text-muted-foreground truncate">{member.email}</p>
                     <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                       <Shield className="h-3 w-3" />
-                      <span>Asesor Jurídico</span>
+                      <span>{member.role === "entity_contact" ? "Contacto de entidad" : "Asesor Jurídico"}</span>
                     </div>
                   </div>
                 </div>
@@ -795,14 +866,6 @@ export function MembersPage() {
                   </div>
                 )}
 
-                {/* Last Active */}
-                {member.status !== "pending" && (
-                  <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Activity className="h-3 w-3" />
-                    <span>Última actividad: {formatRelativeTime(member.lastActive)}</span>
-                  </div>
-                )}
-
                 {/* Actions */}
                 <div className="mt-4 flex items-center justify-between border-t pt-4">
                   <div className="flex gap-1">
@@ -846,12 +909,16 @@ export function MembersPage() {
                             Rechazar Usuario
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => {
-                            // TODO: Implement resend invitation
-                            console.log("Reenviar invitación para:", member.email)
-                          }}>
-                            <Send className="mr-2 h-4 w-4" />
-                            Reenviar Invitación
+                          <DropdownMenuItem
+                            onClick={() => handleResendInvitation(member)}
+                            disabled={resendingMemberId === member.id}
+                          >
+                            {resendingMemberId === member.id ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <Send className="mr-2 h-4 w-4" />
+                            )}
+                            {resendingMemberId === member.id ? "Enviando…" : "Reenviar Invitación"}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                         </>
@@ -911,20 +978,46 @@ export function MembersPage() {
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/20">
                 <UserPlus className="h-5 w-5 text-primary" />
               </div>
-              Invitar Nuevo Miembro
+              Invitar usuario
             </DialogTitle>
             <DialogDescription>
-              Envía una invitación por correo electrónico para unirse a la organización
+              Envía una invitación por correo. El asesor genera documentos; el contacto de entidad solo entra al hilo de su alcaldía, sin cuenta de Google.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
+              <Label>Tipo de usuario *</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={inviteData.kind === "member" ? "default" : "outline"}
+                  onClick={() => setInviteData({ ...inviteData, kind: "member", entityIds: [] })}
+                >
+                  Asesor jurídico
+                </Button>
+                <Button
+                  type="button"
+                  variant={inviteData.kind === "entity_contact" ? "default" : "outline"}
+                  onClick={() =>
+                    setInviteData({
+                      ...inviteData,
+                      kind: "entity_contact",
+                      entityIds: inviteData.entityIds.slice(0, 1),
+                    })
+                  }
+                >
+                  Contacto de entidad
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="invite-email">Correo Electrónico *</Label>
               <Input
                 id="invite-email"
                 type="email"
-                placeholder="asesor@ejemplo.com"
+                placeholder={inviteData.kind === "entity_contact" ? "funcionario@alcaldia.gov.co" : "asesor@ejemplo.com"}
                 value={inviteData.email}
                 onChange={(e) => setInviteData({ ...inviteData, email: e.target.value })}
               />
@@ -934,7 +1027,7 @@ export function MembersPage() {
               <Label htmlFor="invite-name">Nombre (Opcional)</Label>
               <Input
                 id="invite-name"
-                placeholder="Nombre del asesor"
+                placeholder={inviteData.kind === "entity_contact" ? "Nombre del funcionario" : "Nombre del asesor"}
                 value={inviteData.name}
                 onChange={(e) => setInviteData({ ...inviteData, name: e.target.value })}
               />
@@ -942,7 +1035,9 @@ export function MembersPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="invite-entities">Entidades a Asociar *</Label>
+              <Label htmlFor="invite-entities">
+                {inviteData.kind === "entity_contact" ? "Entidad *" : "Entidades a Asociar *"}
+              </Label>
               {entities.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No hay entidades disponibles. Crea una entidad primero.</p>
               ) : (
@@ -950,10 +1045,15 @@ export function MembersPage() {
                   {entities.map((entity) => (
                     <div key={entity.id} className="flex items-center space-x-2">
                       <input
-                        type="checkbox"
+                        type={inviteData.kind === "entity_contact" ? "radio" : "checkbox"}
+                        name={inviteData.kind === "entity_contact" ? "invite-entity" : undefined}
                         id={`entity-${entity.id}`}
                         checked={inviteData.entityIds.includes(entity.id)}
                         onChange={(e) => {
+                          if (inviteData.kind === "entity_contact") {
+                            setInviteData({ ...inviteData, entityIds: [entity.id] })
+                            return
+                          }
                           if (e.target.checked) {
                             setInviteData({
                               ...inviteData,
@@ -976,7 +1076,9 @@ export function MembersPage() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                Selecciona las entidades a las que el miembro tendrá acceso
+                {inviteData.kind === "entity_contact"
+                  ? "Solo verá los hilos de los procesos de esta entidad. No necesita conectar Google ni entrar a Drive."
+                  : "Selecciona las entidades a las que el miembro tendrá acceso"}
               </p>
             </div>
 
@@ -1040,7 +1142,7 @@ export function MembersPage() {
               {/* Header */}
               <div className="flex items-start gap-4">
                 <Avatar className="h-20 w-20 border-2 border-primary/20">
-                  <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
+                  <AvatarImage src={selectedMember.avatar_url || undefined} alt={selectedMember.name} />
                   <AvatarFallback className="bg-primary/20 text-primary text-2xl">
                     {selectedMember.name
                       .split(" ")
@@ -1060,10 +1162,6 @@ export function MembersPage() {
                     <span className="flex items-center gap-1">
                       <Shield className="h-4 w-4" />
                       Asesor Jurídico
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-4 w-4" />
-                      Última actividad: {formatRelativeTime(selectedMember.lastActive)}
                     </span>
                   </div>
                 </div>
@@ -1155,7 +1253,7 @@ export function MembersPage() {
             <div className="space-y-4 py-4">
               <div className="flex items-center gap-4 p-4 rounded-lg bg-muted/50">
                 <Avatar className="h-12 w-12">
-                  <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
+                  <AvatarImage src={selectedMember.avatar_url || undefined} alt={selectedMember.name} />
                   <AvatarFallback className="bg-primary/20 text-primary">
                     {selectedMember.name
                       .split(" ")
@@ -1229,7 +1327,9 @@ export function MembersPage() {
               Asignar Entidades
             </DialogTitle>
             <DialogDescription>
-              Selecciona las entidades a las que {selectedMember?.name} tendrá acceso
+              {selectedMember?.role === "entity_contact"
+                ? `Elige la única entidad cuyos hilos podrá ver ${selectedMember?.name}`
+                : `Selecciona las entidades a las que ${selectedMember?.name} tendrá acceso`}
             </DialogDescription>
           </DialogHeader>
 
@@ -1299,7 +1399,7 @@ export function MembersPage() {
           {selectedMember && (
             <div className="flex items-center gap-4 p-4 rounded-lg bg-destructive/10 border border-destructive/20">
               <Avatar className="h-12 w-12">
-                <AvatarImage src={selectedMember.avatar_url || "/placeholder.svg"} alt={selectedMember.name} />
+                <AvatarImage src={selectedMember.avatar_url || undefined} alt={selectedMember.name} />
                 <AvatarFallback className="bg-destructive/20 text-destructive">
                   {selectedMember.name
                     .split(" ")
@@ -1331,6 +1431,58 @@ export function MembersPage() {
                 </>
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invitation link result (when email is not sent automatically) */}
+      <Dialog
+        open={!!invitationResult}
+        onOpenChange={(open) => {
+          if (!open) {
+            setInvitationResult(null)
+            setLinkCopied(false)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Send className="h-5 w-5 text-primary" />
+              Enlace de invitación
+            </DialogTitle>
+            <DialogDescription>{invitationResult?.message}</DialogDescription>
+          </DialogHeader>
+          {invitationResult?.inviteLink && (
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Copia y envía este enlace al invitado:</Label>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={invitationResult.inviteLink}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(invitationResult.inviteLink!)
+                    setLinkCopied(true)
+                    setTimeout(() => setLinkCopied(false), 2000)
+                  }}
+                >
+                  {linkCopied ? (
+                    <span className="text-xs">Copiado</span>
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setInvitationResult(null)}>Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -26,9 +26,17 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { getEntities, getProcessesMapped, getMemberAssignedEntities, type Entity } from "@/lib/supabase/client-data-access"
+import {
+  getEntities,
+  getEntitiesForImpersonation,
+  getProcessesMapped,
+  getProcessesForImpersonation,
+  getMemberAssignedEntities,
+  type Entity,
+} from "@/lib/supabase/client-data-access"
 import type { Process } from "@/lib/mock-data"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { logger } from "@/lib/logger"
 
 const moduleOptions = [
@@ -72,6 +80,9 @@ export default function MemberPage() {
   const pageLoadTime = React.useRef(Date.now())
 
   const { profile, isLoading: profileLoading } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
+
   const [assignedEntities, setAssignedEntities] = React.useState<Entity[]>([])
   const [loading, setLoading] = React.useState(true)
   const [allProcesses, setAllProcesses] = React.useState<Process[]>([])
@@ -82,26 +93,28 @@ export default function MemberPage() {
 
   React.useEffect(() => {
     async function loadEntities() {
-      if (!profile?.organization_id || !profile?.id) {
+      if (!orgId) {
         setLoading(false)
         return
       }
       const startTime = Date.now()
       try {
-        // Get assigned entity IDs for this member
-        const assignedEntityIds = await getMemberAssignedEntities(profile.id)
-        console.log("[MemberPage] Assigned entity IDs:", assignedEntityIds)
-        
-        // Get all entities from organization
-        const allEntities = await getEntities(profile.organization_id)
-        
-        // Filter to only assigned entities that are active
-        const assigned = allEntities.filter(
-          (e) => assignedEntityIds.includes(e.id) && e.status === "active"
-        )
-        
-        console.log("[MemberPage] All entities:", allEntities.length, "Assigned entities:", assigned.length)
-        setAssignedEntities(assigned)
+        const allEntities = isImpersonating
+          ? await getEntitiesForImpersonation(orgId)
+          : await getEntities(orgId)
+        if (isImpersonating) {
+          setAssignedEntities(allEntities.filter((e) => e.status === "active"))
+        } else {
+          if (!profile?.id) {
+            setLoading(false)
+            return
+          }
+          const assignedEntityIds = await getMemberAssignedEntities(profile.id)
+          const assigned = allEntities.filter(
+            (e) => assignedEntityIds.includes(e.id) && e.status === "active"
+          )
+          setAssignedEntities(assigned)
+        }
         logger.fetch("/member", "Entities", true, Date.now() - startTime)
       } catch (err) {
         logger.error("/member", "Error loading entities", err)
@@ -109,17 +122,22 @@ export default function MemberPage() {
         setLoading(false)
       }
     }
-    if (!profileLoading && profile?.organization_id && profile?.id) {
+    if (!profileLoading && orgId) {
       loadEntities()
+    } else if (!profileLoading && !orgId) {
+      setLoading(false)
     }
-  }, [profile?.organization_id, profile?.id, profileLoading])
+  }, [orgId, profile?.id, profileLoading, isImpersonating])
 
   React.useEffect(() => {
+    if (!orgId) return
     async function loadProcesses() {
       const startTime = Date.now()
       try {
-        const data = await getProcessesMapped()
-        setAllProcesses(data)
+        const data = isImpersonating
+          ? await getProcessesForImpersonation(orgId)
+          : await getProcessesMapped()
+        setAllProcesses(data as Process[])
         logger.fetch("/member", "Processes", true, Date.now() - startTime)
         logger.pageLoaded("/member", Date.now() - pageLoadTime.current, profile?.id, profile?.role)
       } catch (err) {
@@ -127,7 +145,7 @@ export default function MemberPage() {
       }
     }
     loadProcesses()
-  }, [profile?.id, profile?.role])
+  }, [orgId, isImpersonating])
 
   const filteredEntities = assignedEntities.filter(
     (entity) => entity.name.toLowerCase().includes(searchQuery.toLowerCase()) || entity.nit.includes(searchQuery),
@@ -150,6 +168,48 @@ export default function MemberPage() {
     )
   }
 
+  // Superadmin (o admin) sin organización: invitar a suplantar para ver la vista de miembro
+  if (!orgId && profile?.role === "superadmin") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-8">
+        <Card className="max-w-md border-dashed">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building className="h-6 w-6 text-primary" />
+              Vista de miembro
+            </CardTitle>
+            <CardDescription>
+              Para ver datos de una organización (entidades, procesos, documentos), suplanta esa organización desde el panel de administración.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild>
+              <Link href="/superadmin/organizations">
+                Ir a organizaciones y suplantar
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Member sin organización asignada
+  if (!orgId) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-8">
+        <Card className="max-w-md border-dashed">
+          <CardContent className="pt-6">
+            <p className="text-muted-foreground text-center">
+              No tienes una organización asignada. Contacta al administrador.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="flex flex-col gap-8 p-8">
@@ -160,7 +220,7 @@ export default function MemberPage() {
             <h1 className="text-3xl font-bold tracking-tight">Panel del Asesor</h1>
           </div>
           <p className="text-muted-foreground max-w-2xl">
-            Bienvenido, <span className="font-medium text-foreground">{profile?.full_name || "Asesor"}</span>. Accede a
+            Bienvenido, <span className="font-medium text-foreground">{profile?.name || "Asesor"}</span>. Accede a
             tus herramientas de gestión jurídica y selecciona una entidad para comenzar.
           </p>
         </div>

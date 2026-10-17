@@ -9,7 +9,7 @@ import { getOrCreateProcessSpreadsheet, updateSheetData } from "@/lib/google/she
 import { createServerClient } from "@/lib/supabase/server"
 import { hasValidTokens } from "@/lib/google/oauth"
 
-// Documentos grandes: más tiempo para descargar plantilla, generar y subir
+/** Segment config must be static; runtime can use GENERATE_DOCUMENT_MAX_DURATION / Vercel. */
 export const maxDuration = 120
 
 /**
@@ -26,16 +26,10 @@ export async function POST(request: NextRequest) {
     } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      console.error("[generate-document] Auth error:", authError)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    console.log("[generate-document] User authenticated:", user.id)
-
-    // Check if user has valid Google OAuth tokens
     const hasTokens = await hasValidTokens(user.id)
-    console.log("[generate-document] Has valid tokens:", hasTokens)
-    
     if (!hasTokens) {
       return NextResponse.json(
         { error: "Google authentication required", needsAuth: true },
@@ -54,21 +48,64 @@ export async function POST(request: NextRequest) {
       entityId, // Entity ID to get logo
       secretaryName, // Secretary name for auto-replacement
       createdBy, // User ID who created the document
+      templateId, // UUID de plantilla (recomendado; valida alcance por entidad)
+      images, // Record<tag, { dataUrl: string; width?: number; height?: number }>
+      tableData, // CAP-03: filas de tablas dinámicas { familia: [{campo:valor}] } para persistir
+      fieldOrigin, // CAP-03: 'form' | 'reuse' | 'copy' | 'smart_fill'
     } = body
-
-    console.log("[generate-document] Request received", {
-      processCode: processCode || "MISSING",
-      processId: processId || "EMPTY",
-      documentName: documentName || "MISSING",
-      hasProcessCode: !!processCode,
-      hasReplacements: !!replacements,
-    })
 
     if (!templatePath || !replacements || !processCode || !documentName) {
       return NextResponse.json(
         { error: "Missing required fields: templatePath, replacements, processCode, documentName" },
         { status: 400 },
       )
+    }
+
+    // Plantillas con entity_id solo pueden generarse para procesos de esa entidad
+    const { getTemplateById, getProcess } = await import("@/lib/supabase/data-access")
+    let templateEntityId: string | null | undefined
+    let templateNameForAudit: string | null = null
+    if (templateId && typeof templateId === "string") {
+      try {
+        const tpl = await getTemplateById(templateId)
+        if (tpl.file_url !== templatePath) {
+          return NextResponse.json(
+            { error: "Los datos de la plantilla no coinciden con la selección." },
+            { status: 400 },
+          )
+        }
+        templateEntityId = tpl.entity_id ?? null
+        templateNameForAudit = tpl.name ?? null
+      } catch {
+        return NextResponse.json({ error: "Plantilla no encontrada" }, { status: 404 })
+      }
+    } else {
+      const { data: byPath } = await supabase
+        .from("templates")
+        .select("entity_id")
+        .eq("file_url", templatePath)
+      if (byPath?.length === 1) {
+        templateEntityId = byPath[0].entity_id ?? null
+      }
+    }
+    if (templateEntityId) {
+      if (!processId || typeof processId !== "string") {
+        return NextResponse.json(
+          { error: "Esta plantilla está asociada a una entidad; se requiere el proceso (processId)." },
+          { status: 400 },
+        )
+      }
+      try {
+        const proc = await getProcess(processId)
+        if (proc.entity_id !== templateEntityId) {
+          return NextResponse.json(
+            { error: "Esta plantilla no corresponde a la entidad del proceso." },
+            { status: 403 },
+          )
+        }
+      } catch {
+        return NextResponse.json({ error: "Proceso no encontrado o sin acceso" }, { status: 403 })
+      }
     }
 
     // Extract fileId from templatePath if it's in the format "fileId:xxx|path:yyy"
@@ -80,27 +117,17 @@ export async function POST(request: NextRequest) {
       const fileIdMatch = templatePath.match(/fileId:([^|]+)/)
       if (fileIdMatch && fileIdMatch[1]) {
         templateFileId = fileIdMatch[1]
-        console.log("[generate-document] Using stored fileId:", templateFileId)
       }
     }
-    
-    // If no fileId found, try to find by path
-    // Note: This will only work if the file is in the current user's Drive
-    // For templates uploaded by superadmin, we need the fileId
     if (!templateFileId) {
-      console.log("[generate-document] FileId not found, searching by path:", templatePath)
       templateFileId = await findFileByPath(user.id, templatePath)
     }
-    
     if (!templateFileId) {
-      console.error("[generate-document] Template file not found. templatePath:", templatePath)
       return NextResponse.json({ 
         error: "Template file not found in Google Drive. Please ensure the template was uploaded correctly.",
         details: "If the template was uploaded by another user, the fileId must be stored in the database."
       }, { status: 404 })
     }
-    
-    console.log("[generate-document] Found template fileId:", templateFileId)
 
     // Download the template
     // Try with current user first, but if it fails (file belongs to another user),
@@ -109,15 +136,14 @@ export async function POST(request: NextRequest) {
     try {
       templateBuffer = await downloadFileFromDrive(user.id, templateFileId)
     } catch (downloadError) {
-      console.log("[generate-document] Failed to download with current user, trying to find file owner...")
       // If download fails, the file might belong to another user (e.g., superadmin)
       // Try to find a user with valid tokens who might have access
       // For now, we'll try with the current user again but with better error handling
       // In the future, we could query for superadmin users with valid tokens
       throw new Error(
         `No se pudo acceder al archivo del template. ` +
-        `El archivo puede pertenecer a otro usuario. ` +
-        `Asegúrate de que el template fue subido correctamente y que tienes permisos para accederlo. ` +
+        `Si las plantillas están en un Drive de equipo (Shared Drive), la cuenta de Google con la que estás conectado en la app debe tener acceso a ese Drive. ` +
+        `Pide al administrador que te agregue al Drive de equipo de la organización. ` +
         `Error: ${downloadError instanceof Error ? downloadError.message : "Unknown error"}`
       )
     }
@@ -132,7 +158,6 @@ export async function POST(request: NextRequest) {
           entityLogoUrl = entity.logo_url
         }
       } catch (err) {
-        console.warn("[generate-document] Could not fetch entity logo:", err)
         // Continue without logo if fetch fails
       }
     }
@@ -147,11 +172,39 @@ export async function POST(request: NextRequest) {
     }
 
     // Replace tags in the document (including logo if present)
-    const generatedBuffer = await replaceTagsInDocx(templateBuffer, allReplacements, entityLogoUrl)
+    // Decodifica imágenes subidas en el formulario (dataURL base64 -> Buffer).
+    // Solo se aceptan tags válidos (IMAGE o IMAGE_*) para evitar inyección de claves arbitrarias.
+    const { isImageTag } = await import("@/lib/utils/template-helpers")
+    const decodedImages: Record<string, { buffer: Buffer; width?: number; height?: number }> = {}
+    if (images && typeof images === "object") {
+      for (const [tag, raw] of Object.entries(images as Record<string, any>)) {
+        if (!isImageTag(tag)) continue
+        const dataUrl = raw?.dataUrl
+        if (typeof dataUrl !== "string") continue
+        const match = dataUrl.match(/^data:([\w./+-]+);base64,(.+)$/)
+        if (!match) continue
+        try {
+          const buffer = Buffer.from(match[2], "base64")
+          if (buffer.length === 0) continue
+          decodedImages[tag] = {
+            buffer,
+            width: typeof raw.width === "number" ? raw.width : undefined,
+            height: typeof raw.height === "number" ? raw.height : undefined,
+          }
+        } catch (e) {
+          console.warn(`[generate-document] Could not decode image for tag ${tag}:`, e)
+        }
+      }
+    }
 
-    // Upload the generated document to Google Drive
+    const generatedBuffer = await replaceTagsInDocx(
+      templateBuffer,
+      allReplacements,
+      entityLogoUrl,
+      decodedImages,
+    )
+
     if (!processCode) {
-      console.error("[generate-document] ERROR: processCode is missing or empty!")
       return NextResponse.json(
         { error: "Process code is required for folder organization" },
         { status: 400 },
@@ -160,6 +213,11 @@ export async function POST(request: NextRequest) {
 
     const mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     const LARGE_FILE_THRESHOLD = 5 * 1024 * 1024 // 5 MB: subir por stream para no duplicar pico de memoria
+
+    // RF-009 (CAP-02): estructura Entidad/Secretaría/Proceso cuando hay entidad.
+    const folderPath = entityName
+      ? { entityName, secretaryName: secretaryName ?? null, processCode }
+      : undefined
 
     let uploadResult
     if (generatedBuffer.length >= LARGE_FILE_THRESHOLD) {
@@ -173,6 +231,8 @@ export async function POST(request: NextRequest) {
           documentName,
           mimeType,
           processCode,
+          "session",
+          folderPath,
         )
       } finally {
         await unlink(tmpPath).catch(() => {})
@@ -184,33 +244,65 @@ export async function POST(request: NextRequest) {
         documentName,
         mimeType,
         processCode,
+        "session",
+        folderPath,
       )
     }
 
-    console.log("[generate-document] Upload result:", {
-      fileId: uploadResult.fileId,
-      processFolderId: uploadResult.processFolderId,
-      processFolderUrl: uploadResult.processFolderUrl,
-      drivePath: uploadResult.drivePath,
-    })
-
-    // Save document to database if processId is provided
+    // RF-010 (CAP-02): el registro en DB NO es opcional; si falla, la generación falla
+    // (el archivo ya está en Drive y se devuelve su enlace para conciliación).
     if (processId) {
       try {
         const { createDocument } = await import("@/lib/supabase/data-access")
-        await createDocument({
+        // RF-015 (CAP-04): versionado. Si ya existe un documento con el mismo nombre
+        // en este proceso, la nueva generación es la versión N+1 (no pisa la anterior).
+        const { data: existing } = await supabase
+          .from("documents")
+          .select("version")
+          .eq("process_id", processId)
+          .eq("name", documentName)
+          .order("version", { ascending: false })
+          .limit(1)
+        const nextVersion = existing && existing.length > 0 ? (existing[0].version || 1) + 1 : 1
+
+        const createdDoc = await createDocument({
           process_id: processId,
           name: documentName,
           type: "generated", // or extract from template name
-          version: 1,
+          version: nextVersion,
           status: "draft",
           file_url: uploadResult.webViewLink, // Store the Google Drive URL
           file_size: generatedBuffer.length,
           created_by: createdBy || user.id,
+          template_id: templateId || null, // CAP-02: qué plantilla lo generó (para continuar procesos parciales)
+        } as any)
+
+        // CAP-09 (RF-031): auditoría de generación/regeneración (sin contenido)
+        const { logAuditEvent, getRequestIp } = await import("@/lib/audit/log")
+        await logAuditEvent({
+          processId,
+          documentId: (createdDoc as any)?.id ?? null,
+          actorId: user.id,
+          action: nextVersion > 1 ? "document_regenerated" : "document_generated",
+          details: {
+            documentName,
+            version: nextVersion,
+            templateId: templateId || null,
+            templateName: templateNameForAudit,
+            drivePath: uploadResult.drivePath,
+          },
+          ip: getRequestIp(request),
         })
       } catch (dbError) {
-        console.error("Error saving document to database:", dbError)
-        // Don't fail the request if DB save fails, just log it
+        return NextResponse.json(
+          {
+            error: "El documento se creó en Drive pero no se pudo registrar en la plataforma.",
+            fileUrl: uploadResult.webViewLink,
+            drivePath: uploadResult.drivePath,
+            message: dbError instanceof Error ? dbError.message : "Error desconocido",
+          },
+          { status: 500 },
+        )
       }
     }
 
@@ -249,43 +341,112 @@ export async function POST(request: NextRequest) {
               spreadsheet_id: spreadsheetId,
               spreadsheet_url: spreadsheetUrl,
             } as any)
-          } catch (updateError) {
-            console.error("Error updating process with spreadsheet info:", updateError)
+          } catch {
             // Don't fail if update fails
           }
         }
       }
-    } catch (sheetsError) {
-      console.error("Error saving to Google Sheets:", sheetsError)
-      // Don't fail the request if Sheets fails, just log it
+    } catch {
+      // Don't fail the request if Sheets fails
     }
-    
-    // Update process with drive folder info if processId is provided
-    console.log("[generate-document] Updating process with drive folder info:", {
-      processId,
-      processFolderId: uploadResult.processFolderId,
-      processFolderUrl: uploadResult.processFolderUrl,
-    })
-    
+
     if (processId && uploadResult.processFolderId) {
       try {
         const { updateProcess } = await import("@/lib/supabase/data-access")
-        const updateData = {
+        await updateProcess(processId, {
           drive_folder_id: uploadResult.processFolderId,
           drive_folder_url: uploadResult.processFolderUrl,
-        }
-        console.log("[generate-document] Calling updateProcess with:", { processId, updateData })
-        const updated = await updateProcess(processId, updateData as any)
-        console.log("[generate-document] Process updated successfully:", updated)
-      } catch (updateError) {
-        console.error("[generate-document] Error updating process with drive folder info:", updateError)
-        // Don't fail if update fails, but log the error
+        } as any)
+      } catch {
+        // Don't fail if update fails
       }
-    } else {
-      console.warn("[generate-document] Skipping drive folder update:", {
-        hasProcessId: !!processId,
-        hasProcessFolderId: !!uploadResult.processFolderId,
-      })
+    }
+
+    // CAP-02: cuando TODAS las plantillas del tipo ya tienen documento generado,
+    // el proceso deja de ser "borrador" y pasa a "en progreso" automáticamente.
+    // Mientras falten plantillas, sigue en draft y la lista muestra "Continuar N/M".
+    if (processId) {
+      try {
+        const { data: proc } = await supabase
+          .from("processes")
+          .select("status, process_type_id")
+          .eq("id", processId)
+          .single()
+        if (proc?.status === "draft" && proc.process_type_id) {
+          // Total de plantillas del tipo (relación; fallback a templates.process_type_id)
+          const { data: rels } = await supabase
+            .from("template_process_types")
+            .select("template_id")
+            .eq("process_type_id", proc.process_type_id)
+          let total = new Set((rels || []).map((r) => r.template_id).filter(Boolean)).size
+          if (total === 0) {
+            const { data: direct } = await supabase
+              .from("templates")
+              .select("id")
+              .eq("process_type_id", proc.process_type_id)
+            total = direct?.length ?? 0
+          }
+          // Plantillas ya generadas en el proceso
+          const { data: docs } = await supabase
+            .from("documents")
+            .select("template_id")
+            .eq("process_id", processId)
+            .not("template_id", "is", null)
+          const generated = new Set((docs || []).map((d) => d.template_id).filter(Boolean)).size
+
+          if (total > 0 && generated >= total) {
+            await supabase
+              .from("processes")
+              .update({ status: "in_progress", updated_at: new Date().toISOString() })
+              .eq("id", processId)
+          }
+        }
+      } catch {
+        // no bloquear la generación si falla la transición de estado
+      }
+    }
+
+    // CAP-03 (RF-012/013/014): persistir los valores del formulario para poder
+    // reutilizar el proceso y copiar campos entre minutas. No bloquea la generación.
+    if (processId) {
+      try {
+        const origin = typeof fieldOrigin === "string" ? fieldOrigin : "form"
+        const rows: Array<Record<string, unknown>> = []
+        for (const [tag, value] of Object.entries(allReplacements)) {
+          if (tag === "ENTIDAD" || tag === "SECRETARIA") continue
+          if (Array.isArray(value)) continue // tablas dinámicas van por tableData
+          rows.push({
+            process_id: processId,
+            tag,
+            value: value == null ? "" : String(value),
+            table_rows: null,
+            origin,
+            updated_by: createdBy || user.id,
+            updated_at: new Date().toISOString(),
+          })
+        }
+        if (tableData && typeof tableData === "object") {
+          for (const [family, tableRows] of Object.entries(tableData as Record<string, unknown>)) {
+            if (!Array.isArray(tableRows)) continue
+            rows.push({
+              process_id: processId,
+              tag: family,
+              value: null,
+              table_rows: tableRows,
+              origin,
+              updated_by: createdBy || user.id,
+              updated_at: new Date().toISOString(),
+            })
+          }
+        }
+        if (rows.length > 0) {
+          await supabase
+            .from("process_field_values")
+            .upsert(rows, { onConflict: "process_id,tag" })
+        }
+      } catch (persistErr) {
+        console.warn("[generate-document] No se pudieron persistir los campos del proceso:", persistErr)
+      }
     }
 
     return NextResponse.json({
@@ -299,7 +460,6 @@ export async function POST(request: NextRequest) {
       spreadsheetUrl,
     })
   } catch (error) {
-    console.error("Error generating document:", error)
     return NextResponse.json(
       {
         error: "Failed to generate document",

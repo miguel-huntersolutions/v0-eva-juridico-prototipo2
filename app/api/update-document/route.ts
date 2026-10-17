@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { logAuditEvent, getRequestIp, type AuditAction } from "@/lib/audit/log"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 /**
  * PUT /api/update-document
@@ -39,11 +41,18 @@ export async function PUT(request: NextRequest) {
     const body = await request.json()
     const { documentId, status, comment } = body
 
-    // Members can only set status to "pending" (send to review)
-    // Admins and superadmins can set any status
-    if (profile.role === "member" && status !== "pending") {
+    // Members can set status to "pending" (send to review) or "draft" (only when doc is rejected, to correct it).
+    if (profile.role === "member" && status !== "pending" && status !== "draft") {
       return NextResponse.json(
-        { error: "Forbidden: Members can only send documents to review (pending status)" },
+        { error: "Forbidden: Members can only send to review (pending) or reopen as draft when rejected" },
+        { status: 403 },
+      )
+    }
+
+    // Admin and superadmin cannot set "pending" — only the member who created the doc sends to review.
+    if ((profile.role === "admin" || profile.role === "superadmin") && status === "pending") {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el miembro que creó el documento puede enviarlo a revisión" },
         { status: 403 },
       )
     }
@@ -55,9 +64,9 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    if (!["draft", "pending", "approved", "rejected"].includes(status)) {
+    if (!["draft", "pending", "in_review", "approved", "rejected"].includes(status)) {
       return NextResponse.json(
-        { error: "Invalid status. Must be one of: draft, pending, approved, rejected" },
+        { error: "Invalid status. Must be one of: draft, pending, in_review, approved, rejected" },
         { status: 400 },
       )
     }
@@ -65,7 +74,6 @@ export async function PUT(request: NextRequest) {
     // Use service role client to bypass RLS
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!serviceRoleKey) {
-      console.error("SUPABASE_SERVICE_ROLE_KEY is not configured")
       return NextResponse.json(
         { error: "Server configuration error: Service role key not configured" },
         { status: 500 },
@@ -95,9 +103,17 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 })
     }
 
+    // Member can set "draft" only when the document is currently "rejected" (to correct and resubmit).
+    if (profile.role === "member" && status === "draft" && document.status !== "rejected") {
+      return NextResponse.json(
+        { error: "Solo puede volver a borrador un documento que esté rechazado" },
+        { status: 403 },
+      )
+    }
+
     // Verify document belongs to user's organization (if admin or member, not superadmin)
     const documentOrgId = (document.process as any)?.entity?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== documentOrgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, documentOrgId)) {
       return NextResponse.json(
         { error: "Forbidden: You can only update documents in your own organization" },
         { status: 403 },
@@ -110,11 +126,7 @@ export async function PUT(request: NextRequest) {
       updated_at: new Date().toISOString(),
     }
 
-    // Add comment if provided (you might want to store this in a separate table)
-    if (comment) {
-      // For now, we'll store it in a metadata field if your schema supports it
-      // Otherwise, you might need to create a document_comments table
-    }
+    const previousStatus = document.status as string
 
     const { data: updatedDocument, error: updateError } = await serviceRoleClient
       .from("documents")
@@ -124,21 +136,71 @@ export async function PUT(request: NextRequest) {
       .single()
 
     if (updateError) {
-      console.error("[update-document] Error updating document:", updateError)
       return NextResponse.json(
         { error: "Failed to update document", message: updateError.message },
         { status: 500 },
       )
     }
 
-    console.log(`[update-document] Document ${documentId} updated to status: ${status}`)
+    // Audit log: record status transition (including rejection/approval comments)
+    const { data: profileRow } = await serviceRoleClient
+      .from("profiles")
+      .select("name, role")
+      .eq("id", user.id)
+      .single()
+    const changedByName = (profileRow as any)?.name ?? user.email ?? null
+    const changedByRole = (profileRow as any)?.role ?? profile?.role ?? null
+
+    await serviceRoleClient.from("document_audit_log").insert({
+      document_id: documentId,
+      from_status: previousStatus,
+      to_status: status,
+      changed_by: user.id,
+      changed_by_name: changedByName,
+      changed_by_role: changedByRole,
+      comment: typeof comment === "string" ? comment.trim() || null : null,
+    })
+
+    // CAP-09 (RF-031): evento en el registro global de auditoría
+    const auditActionByStatus: Record<string, AuditAction> = {
+      pending: "document_sent_to_review",
+      approved: "document_approved",
+      rejected: "document_rejected",
+      draft: "document_reopened",
+    }
+    await logAuditEvent({
+      action: auditActionByStatus[status] ?? "document_reopened",
+      actorId: user.id,
+      processId: document.process_id ?? null,
+      documentId,
+      organizationId: documentOrgId ?? profile.organization_id,
+      details: {
+        documentName: document.name,
+        from: previousStatus,
+        to: status,
+        ...(typeof comment === "string" && comment.trim() ? { comment: comment.trim() } : {}),
+      },
+      ip: getRequestIp(request),
+    })
+
+    // When approved, ingest document into RAG (vector store) so the assistant can search it
+    if (status === "approved") {
+      try {
+        const { ingestDocumentToRag } = await import("@/lib/rag/ingest")
+        const result = await ingestDocumentToRag(documentId, user.id)
+        if (!result.success) {
+          // Document is still approved; ingest failure is non-fatal
+        }
+      } catch {
+        // Do not fail the request; document is already approved
+      }
+    }
 
     return NextResponse.json({
       success: true,
       document: updatedDocument,
     })
   } catch (error) {
-    console.error("Error updating document:", error)
     return NextResponse.json(
       {
         error: "Failed to update document",

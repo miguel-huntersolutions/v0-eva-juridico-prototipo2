@@ -5,13 +5,20 @@
 
 import { convertToModelMessages, streamText, type UIMessage } from "ai"
 import { openai } from "@ai-sdk/openai"
+import {
+  getOpenAIChatModelString,
+  getOpenAIModel,
+  openAIModelSupportsSamplingParams,
+} from "@/lib/ai-model-config"
 import type { AIChatConfig } from "./types"
 
 export interface CreateChatRouteOptions {
   /** System prompt for the AI */
   systemPrompt: string
-  /** AI model to use (default: openai/gpt-4o) */
+  /** AI model to use (default from OPENAI_MODEL env, e.g. openai/gpt-4o) */
   model?: string
+  /** Sampling temperature (default: model default; use 0 for instrucciones tipo GPT “fijo”) */
+  temperature?: number
   /** Maximum duration in seconds (default: 30) */
   maxDuration?: number
   /** Additional configuration */
@@ -28,14 +35,15 @@ export interface CreateChatRouteOptions {
  * 
  * export const POST = createChatRoute({
  *   systemPrompt: 'You are a helpful assistant',
- *   model: 'openai/gpt-4o'
+ *   model: getOpenAIChatModelString()  // or from OPENAI_MODEL env
  * })
  * ```
  */
 export function createChatRoute(options: CreateChatRouteOptions) {
   const {
     systemPrompt,
-    model = "openai/gpt-4o",
+    model = getOpenAIChatModelString(),
+    temperature,
     maxDuration = 30,
   } = options
 
@@ -50,19 +58,24 @@ export function createChatRoute(options: CreateChatRouteOptions) {
         const modelName = model.replace("openai/", "")
         openaiModel = openai(modelName as any)
       } else {
-        // Default to gpt-4o
-        openaiModel = openai("gpt-4o")
+        openaiModel = openai(getOpenAIModel() as "gpt-4o")
       }
+
+      const modelId = model?.startsWith("openai/")
+        ? model.replace("openai/", "")
+        : getOpenAIModel()
 
       const result = streamText({
         model: openaiModel,
         system: systemPrompt,
         messages: convertToModelMessages(messages),
+        ...(temperature !== undefined && openAIModelSupportsSamplingParams(modelId)
+          ? { temperature }
+          : {}),
       })
 
       return result.toUIMessageStreamResponse()
     } catch (error: any) {
-      console.error("[AI Chat API] Error:", error)
       
       // Handle specific OpenAI errors
       if (error?.error?.type === "insufficient_quota") {

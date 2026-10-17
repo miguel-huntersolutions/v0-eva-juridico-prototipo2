@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   Plus,
   FolderKanban,
@@ -26,6 +26,12 @@ import {
   CheckCircle,
   RotateCcw,
   Files,
+  Sparkles,
+  Copy,
+  UserPlus,
+  ScrollText,
+  MessageSquareText,
+  CalendarClock,
 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { StatsCard } from "@/components/stats-card"
@@ -42,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -54,20 +61,233 @@ import {
 import {
   getProcessTypes,
   getEntities,
+  getEntitiesForImpersonation,
   getProcessesMapped,
-  deleteProcess as deleteProcessDB,
+  getProcessesForImpersonation,
+  getOrganizationMembers,
   type ProcessType,
-  type Entity,
+  type EntityMapped,
   type ProcessMapped,
 } from "@/lib/supabase/client-data-access"
 import { useProfile } from "@/hooks/use-profile"
+import { useImpersonation } from "@/lib/impersonation-context"
 import { CreateProcessDialog } from "./create-process-dialog"
-import { GenerateDocumentsDialog } from "./generate-documents-dialog"
+import { type ProcessData } from "./generate-documents-dialog"
+import { ProcessThreadDialog } from "./process-thread-dialog"
+import { ProcessStagesDialog } from "./process-stages-dialog"
 
 type ProcessStatus = "all" | "draft" | "in_progress" | "review" | "completed" | "archived"
 
+function getStatusOptions(currentStatus: string) {
+  const allStatuses = [
+    { value: "draft", label: "Borrador", icon: Pencil },
+    { value: "in_progress", label: "En Progreso", icon: Play },
+    { value: "review", label: "En Revisión", icon: Clock },
+    { value: "completed", label: "Completado", icon: CheckCircle },
+    { value: "archived", label: "Archivado", icon: Archive },
+  ]
+  return allStatuses.filter((s) => s.value !== currentStatus)
+}
+
+function ProcessActionsMenu({
+  process,
+  isUpdatingStatus,
+  onView,
+  onDelete,
+  onUpdateStatus,
+  onReuse,
+  progressLabel,
+  isAdmin,
+  onAssign,
+  onViewAudit,
+  onOpenThread,
+  onOpenStages,
+}: {
+  process: ProcessMapped
+  isUpdatingStatus: boolean
+  onView: () => void
+  onDelete: () => void
+  onUpdateStatus: (status: string) => void
+  onReuse: () => void
+  /** CAP-02: si la generación está incompleta, texto de progreso (ej. "3/9") */
+  progressLabel?: string
+  /** CAP-08/09: solo admin puede asignar responsables y ver la auditoría */
+  isAdmin?: boolean
+  onAssign?: () => void
+  onViewAudit?: () => void
+  /** CAP-07: abrir el hilo de comunicación del proceso */
+  onOpenThread?: () => void
+  /** CAP-11: abrir el cronograma de etapas del proceso */
+  onOpenStages?: () => void
+}) {
+  const router = useRouter()
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">Acciones</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onView()
+          }}
+        >
+          <Eye className="mr-2 h-4 w-4" />
+          Ver detalles
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            router.push(`/member/documents?processId=${process.id}`)
+          }}
+        >
+          <Files className="mr-2 h-4 w-4" />
+          Ver documentos del proceso
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            router.push(`/member/processes/${process.id}/generate`)
+          }}
+        >
+          <Play className="mr-2 h-4 w-4" />
+          {process.status === "draft"
+            ? `Continuar diligenciamiento${progressLabel ? ` (${progressLabel})` : ""}`
+            : "Generar documentos"}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            router.push(`/member/processes/${process.id}/generate-smart`)
+          }}
+        >
+          <Sparkles className="mr-2 h-4 w-4" />
+          Generar con IA (contexto)
+        </DropdownMenuItem>
+        {/* RF-012 (CAP-03): reutilizar proceso */}
+        <DropdownMenuItem
+          onClick={(e) => {
+            e.stopPropagation()
+            onReuse()
+          }}
+        >
+          <Copy className="mr-2 h-4 w-4" />
+          Reutilizar proceso
+        </DropdownMenuItem>
+        {/* CAP-07 (RF-025): hilo de comunicación del proceso */}
+        {onOpenThread && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenThread()
+            }}
+          >
+            <MessageSquareText className="mr-2 h-4 w-4" />
+            Hilo de comunicación
+          </DropdownMenuItem>
+        )}
+        {/* CAP-11 (RF-044): cronograma de etapas SECOP */}
+        {onOpenStages && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenStages()
+            }}
+          >
+            <CalendarClock className="mr-2 h-4 w-4" />
+            Cronograma
+          </DropdownMenuItem>
+        )}
+        {/* CAP-08 (RF-028): asignar responsable — solo admin (CA-028.4) */}
+        {isAdmin && onAssign && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onAssign()
+            }}
+          >
+            <UserPlus className="mr-2 h-4 w-4" />
+            {process.assignedToId ? "Reasignar responsable" : "Asignar responsable"}
+          </DropdownMenuItem>
+        )}
+        {/* CAP-09 (RF-031): registro de auditoría — solo admin (CA-031.3) */}
+        {isAdmin && onViewAudit && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onViewAudit()
+            }}
+          >
+            <ScrollText className="mr-2 h-4 w-4" />
+            Registro de auditoría
+          </DropdownMenuItem>
+        )}
+        {process.spreadsheetUrl && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(process.spreadsheetUrl!, "_blank")
+            }}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Ver en Google Sheets
+          </DropdownMenuItem>
+        )}
+        {process.driveFolderUrl && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(process.driveFolderUrl!, "_blank")
+            }}
+          >
+            <FolderKanban className="mr-2 h-4 w-4" />
+            Ver Carpeta en Drive
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        {getStatusOptions(process.status).map((statusOption) => {
+          const Icon = statusOption.icon
+          return (
+            <DropdownMenuItem
+              key={statusOption.value}
+              onClick={(e) => {
+                e.stopPropagation()
+                onUpdateStatus(statusOption.value)
+              }}
+              disabled={isUpdatingStatus}
+            >
+              <Icon className="mr-2 h-4 w-4" />
+              Cambiar a {statusOption.label}
+            </DropdownMenuItem>
+          )
+        })}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          className="text-destructive"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Eliminar
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function ProcessesPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { profile } = useProfile()
+  const { isImpersonating, impersonatedOrg } = useImpersonation()
+  const orgId = isImpersonating && impersonatedOrg ? impersonatedOrg.id : profile?.organization_id
   const [processes, setProcesses] = React.useState<ProcessMapped[]>([])
   const [isLoadingProcesses, setIsLoadingProcesses] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -79,113 +299,409 @@ export function ProcessesPage() {
   const [isViewDialogOpen, setIsViewDialogOpen] = React.useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
-  const [isGenerateDocumentsDialogOpen, setIsGenerateDocumentsDialogOpen] = React.useState(false)
   const [isUpdatingStatus, setIsUpdatingStatus] = React.useState(false)
 
   const [processTypes, setProcessTypes] = React.useState<ProcessType[]>([])
   const [isLoadingTypes, setIsLoadingTypes] = React.useState(true)
-
-  const { profile } = useProfile()
-  const [entities, setEntities] = React.useState<Entity[]>([])
+  const [entities, setEntities] = React.useState<EntityMapped[]>([])
   const [isLoadingEntities, setIsLoadingEntities] = React.useState(true)
 
-  const loadProcesses = React.useCallback(async () => {
-    if (!profile?.organization_id) return
-    try {
-      setIsLoadingProcesses(true)
-      const data = await getProcessesMapped()
-      setProcesses(data)
-    } catch (error) {
-      console.error("Error loading processes:", error)
-    } finally {
-      setIsLoadingProcesses(false)
-    }
-  }, [profile?.organization_id])
+  // CAP-08: asignación de responsable (solo admin) + filtro por responsable (RF-030)
+  const isAdmin = profile?.role === "admin" || profile?.role === "superadmin"
+  const [members, setMembers] = React.useState<Array<{ id: string; name: string; email: string }>>([])
+  const [assigneeFilter, setAssigneeFilter] = React.useState<string>("all")
+  const [assignProcess, setAssignProcess] = React.useState<ProcessMapped | null>(null)
+  const [assigneeSelection, setAssigneeSelection] = React.useState<string>("")
+  const [isAssigning, setIsAssigning] = React.useState(false)
+  const [assignError, setAssignError] = React.useState<string | null>(null)
 
-  React.useEffect(() => {
-    loadProcesses()
-  }, [loadProcesses])
+  // CAP-07: hilo de comunicación del proceso
+  const [threadProcess, setThreadProcess] = React.useState<ProcessMapped | null>(null)
+  const [workspaceMeta, setWorkspaceMeta] = React.useState<{
+    assignees: Record<string, string>
+    unreadByProcess: Record<string, number>
+    messageCountByProcess: Record<string, number>
+  }>({ assignees: {}, unreadByProcess: {}, messageCountByProcess: {} })
 
-  // Load process types from database
+  // CAP-11: cronograma de etapas del proceso
+  const [stagesProcess, setStagesProcess] = React.useState<ProcessMapped | null>(null)
+
+  // CAP-09: registro de auditoría del proceso (solo admin)
+  const [auditProcess, setAuditProcess] = React.useState<ProcessMapped | null>(null)
+  const [auditEvents, setAuditEvents] = React.useState<Array<{
+    id: string
+    actionLabel: string
+    actorName: string
+    details: Record<string, unknown> | null
+    ip: string | null
+    createdAt: string
+  }>>([])
+  const [isLoadingAudit, setIsLoadingAudit] = React.useState(false)
+
+  // Load process types once on mount (no org dependency)
   React.useEffect(() => {
-    async function loadProcessTypes() {
-      try {
-        const types = await getProcessTypes()
-        setProcessTypes(types)
-      } catch (error) {
-        console.error("Error loading process types:", error)
-      } finally {
-        setIsLoadingTypes(false)
-      }
+    let cancelled = false
+    getProcessTypes()
+      .then((types) => {
+        if (!cancelled) setProcessTypes(types)
+      })
+      .catch((error) => console.error("Error loading process types:", error))
+      .finally(() => {
+        if (!cancelled) setIsLoadingTypes(false)
+      })
+    return () => {
+      cancelled = true
     }
-    loadProcessTypes()
   }, [])
 
-  // Load entities from database
+  // Load processes and entities in parallel as soon as orgId is available
   React.useEffect(() => {
-    async function loadEntities() {
-      if (!profile?.organization_id) return
-      try {
-        const data = await getEntities(profile.organization_id)
-        setEntities(data)
-      } catch (error) {
-        console.error("Error loading entities:", error)
-      } finally {
-        setIsLoadingEntities(false)
-      }
+    if (!orgId) {
+      setIsLoadingProcesses(false)
+      setIsLoadingEntities(false)
+      return
     }
-    loadEntities()
-  }, [profile?.organization_id])
+    let cancelled = false
+    setIsLoadingProcesses(true)
+    setIsLoadingEntities(true)
+    // Con organización: siempre acotar a ese tenant (evita que superadmin vea otras orgs vía RLS)
+    const loadProcesses =
+      isImpersonating || profile?.role === "superadmin" || profile?.role === "admin"
+        ? getProcessesForImpersonation(orgId)
+        : getProcessesMapped()
+    const loadEntities = isImpersonating
+      ? getEntitiesForImpersonation(orgId)
+      : getEntities(orgId)
+    Promise.all([loadProcesses, loadEntities])
+      .then(([processesData, entitiesData]) => {
+        if (!cancelled) {
+          const entityIds = new Set(entitiesData.map((e) => e.id))
+          const scoped =
+            entityIds.size > 0
+              ? processesData.filter((p) => entityIds.has(p.entityId))
+              : processesData
+          setProcesses(scoped)
+          setEntities(entitiesData)
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingProcesses(false)
+          setIsLoadingEntities(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [orgId, isImpersonating, profile?.role])
+
+  const loadWorkspaceMeta = React.useCallback(() => {
+    fetch("/api/processes/workspace-meta")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return
+        setWorkspaceMeta({
+          assignees: data.assignees || {},
+          unreadByProcess: data.unreadByProcess || {},
+          messageCountByProcess: data.messageCountByProcess || {},
+        })
+      })
+      .catch(() => {})
+  }, [])
+
+  React.useEffect(() => {
+    if (processes.length === 0) return
+    loadWorkspaceMeta()
+  }, [processes, loadWorkspaceMeta])
+
+  const assigneeName = (process: ProcessMapped) => {
+    if (process.assignedToId && workspaceMeta.assignees[process.assignedToId]) {
+      return workspaceMeta.assignees[process.assignedToId]
+    }
+    if (process.assignedToName) return process.assignedToName
+    if (process.assignedToId && process.assignedToId === profile?.id) {
+      return profile.name || "Tú"
+    }
+    return null
+  }
+
+  const openThread = (process: ProcessMapped) => {
+    setThreadProcess(process)
+    if ((workspaceMeta.unreadByProcess[process.id] || 0) > 0) {
+      fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId: process.id, type: "thread_message" }),
+      }).catch(() => {})
+      setWorkspaceMeta((prev) => ({
+        ...prev,
+        unreadByProcess: { ...prev.unreadByProcess, [process.id]: 0 },
+      }))
+    }
+  }
+
+  React.useEffect(() => {
+    const threadId = searchParams.get("thread")
+    if (!threadId || processes.length === 0) return
+    const process = processes.find((p) => p.id === threadId)
+    if (process) openThread(process)
+    // openThread cambia con meta; solo abrir al llegar el id
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, processes])
+
+  // Abrir diálogo de alta desde /admin/processes (Nuevo Proceso)
+  React.useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setIsCreateDialogOpen(true)
+    }
+  }, [searchParams])
+
+  // CAP-08: cargar miembros de la org para el selector de responsable (solo admin)
+  React.useEffect(() => {
+    if (!orgId || !isAdmin) return
+    let cancelled = false
+    getOrganizationMembers(orgId)
+      .then((list: any[]) => {
+        if (cancelled) return
+        setMembers(
+          (list || [])
+            .filter((m) => m.role === "member" || m.role === "admin")
+            .map((m) => ({ id: m.id, name: m.name || m.full_name || m.email, email: m.email })),
+        )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [orgId, isAdmin])
 
   const handleProcessCreated = (newProcess: ProcessMapped) => {
     setProcesses((prev) => [newProcess, ...prev])
   }
 
-  const [processDataToCreate, setProcessDataToCreate] = React.useState<{
-    processData: any
-    entity: Entity | null
-    secretaryName: string
-    processTypeName: string
-  } | null>(null)
-
-  const handleProcessCreatedAndReady = (processData: any, entity: Entity | null, secretaryName: string, processTypeName: string) => {
-    // Store the process data to create later
-    setProcessDataToCreate({
-      processData,
-      entity,
-      secretaryName,
-      processTypeName,
-    })
-    
-    // Ensure the entity is in the entities list if it's not already there
-    if (entity && !entities.find((e) => e.id === entity.id)) {
-      setEntities((prev) => [...prev, entity])
+  // Flujo "Crear y generar": NO se crea el proceso en BD aquí. Se navega a la
+  // pantalla independiente /processes/new/generate con los datos en sessionStorage;
+  // el proceso solo se persiste al generar el primer documento o guardar borrador.
+  // Si el usuario sale sin hacer nada, no queda ningún borrador vacío.
+  const handleProcessReadyToGenerate = (
+    processData: ProcessData,
+    entity: EntityMapped | null,
+    secretaryName: string,
+    processTypeName: string,
+  ) => {
+    setIsCreateDialogOpen(false)
+    try {
+      sessionStorage.setItem(
+        "eva:new-process-draft",
+        JSON.stringify({
+          processData,
+          entity: entity ? { id: entity.id, name: entity.name } : null,
+          secretaryName,
+          processTypeName,
+        }),
+      )
+    } catch {
+      // sessionStorage no disponible: la página destino redirigirá a /processes
     }
-    
-    // Open the generate documents dialog (process will be created at the end)
-    setIsGenerateDocumentsDialogOpen(true)
+    router.push("/member/processes/new/generate")
   }
 
-  const handleProcessCreatedFromDialog = (newProcess: ProcessMapped) => {
-    // Add the new process to the list and keep it selected so the dialog stays mounted
-    // (dialog is rendered when selectedProcess || processDataToCreate; we're about to clear processDataToCreate)
-    setProcesses((prev) => [newProcess, ...prev])
-    setSelectedProcess(newProcess)
-    setProcessDataToCreate(null)
+  const reloadProcesses = React.useCallback(async () => {
+    if (!orgId) return
+    try {
+      const useOrgApi =
+        isImpersonating || profile?.role === "superadmin" || profile?.role === "admin"
+      const data = useOrgApi ? await getProcessesForImpersonation(orgId) : await getProcessesMapped()
+      if (useOrgApi) {
+        setProcesses(data)
+      } else {
+        const ents = await getEntities(orgId)
+        const entityIds = new Set(ents.map((e) => e.id))
+        setProcesses(entityIds.size > 0 ? data.filter((p) => entityIds.has(p.entityId)) : data)
+      }
+    } catch {
+      // silencioso
+    }
+  }, [orgId, isImpersonating, profile?.role])
+
+  // CAP-02: progreso de generación por proceso (plantillas con doc / total del tipo).
+  // Define si se muestra "Continuar" y el texto con el avance ("Continuar 3/9").
+  const [generationProgress, setGenerationProgress] = React.useState<
+    Record<string, { generated: number; total: number }>
+  >({})
+
+  React.useEffect(() => {
+    if (processes.length === 0) {
+      setGenerationProgress({})
+      return
+    }
+    let cancelled = false
+    fetch("/api/processes/generation-progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ processIds: processes.map((p) => p.id) }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.progress) setGenerationProgress(data.progress)
+      })
+      .catch(() => {
+        // sin progreso: simplemente no se muestra el detalle
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [processes])
+
+  /** "Continuar" solo aplica a procesos en BORRADOR: son los que aún están en
+      diligenciamiento/generación. Al generar todas las plantillas el proceso pasa
+      a "En progreso" automáticamente y el acceso directo desaparece. */
+  const isGenerationIncomplete = (p: ProcessMapped) => {
+    if (p.status !== "draft") return false
+    const prog = generationProgress[p.id]
+    if (!prog || prog.total === 0) return true // borrador sin info de progreso: continuar
+    return prog.generated < prog.total
   }
+
+  /** Texto del acceso directo de continuación con progreso, ej. "Continuar 3/9". */
+  const continueLabel = (p: ProcessMapped) => {
+    const prog = generationProgress[p.id]
+    if (prog && prog.total > 0 && prog.generated > 0) {
+      return `Continuar ${prog.generated}/${prog.total}`
+    }
+    return "Continuar"
+  }
+
+  // CAP-11 (CA-044.1/044.2): resumen del cronograma por proceso (próxima etapa
+  // y etapas vencidas sin cumplir), para los badges del listado.
+  const [stagesSummary, setStagesSummary] = React.useState<
+    Record<string, { nextStageLabel: string; nextStageDate: string; daysUntil: number; overdueCount: number }>
+  >({})
+
+  React.useEffect(() => {
+    if (processes.length === 0) {
+      setStagesSummary({})
+      return
+    }
+    let cancelled = false
+    fetch("/api/processes/stages-summary")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.summary) setStagesSummary(data.summary)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [processes])
+
+  /** Badge de cronograma: etapa vencida (rojo) o próxima con cuenta regresiva. */
+  const stageBadge = (p: ProcessMapped) => {
+    const s = stagesSummary[p.id]
+    if (!s) return null
+    if (s.overdueCount > 0) {
+      return (
+        <Badge variant="destructive" className="text-xs" title={`${s.overdueCount} etapa(s) vencida(s) sin cumplir`}>
+          <CalendarClock className="mr-1 h-3 w-3" />
+          {s.overdueCount} vencida{s.overdueCount > 1 ? "s" : ""}
+        </Badge>
+      )
+    }
+    return (
+      <Badge
+        variant="outline"
+        className="text-xs"
+        title={`Próxima etapa: ${s.nextStageLabel} (${s.nextStageDate})`}
+      >
+        <CalendarClock className="mr-1 h-3 w-3" />
+        {s.nextStageLabel}: {s.daysUntil === 0 ? "hoy" : s.daysUntil === 1 ? "mañana" : `${s.daysUntil} días`}
+      </Badge>
+    )
+  }
+
+  const [deleteError, setDeleteError] = React.useState<string | null>(null)
 
   const handleDeleteProcess = async () => {
     if (!selectedProcess) return
     try {
       setIsDeleting(true)
-      await deleteProcessDB(selectedProcess.id)
+      setDeleteError(null)
+      // El borrado va por API (service role): con RLS del browser, un member
+      // borraba 0 filas SIN error y el proceso reaparecía al recargar.
+      const res = await fetch(`/api/processes/${selectedProcess.id}`, { method: "DELETE" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "No se pudo eliminar el proceso")
+      }
       setProcesses((prev) => prev.filter((p) => p.id !== selectedProcess.id))
       setIsDeleteDialogOpen(false)
       setSelectedProcess(null)
     } catch (error) {
       console.error("Error deleting process:", error)
+      // Error visible: antes se tragaba y la UI mentía (quitaba el proceso solo en memoria)
+      setDeleteError(error instanceof Error ? error.message : "Error al eliminar el proceso")
     } finally {
       setIsDeleting(false)
+    }
+  }
+
+  // CAP-08 (RF-028): asignar/reasignar responsable (solo admin). La API otorga
+  // acceso a la entidad si no lo tenía y deja todo en auditoría.
+  const openAssignDialog = (process: ProcessMapped) => {
+    setAssignProcess(process)
+    setAssigneeSelection(process.assignedToId || "none")
+    setAssignError(null)
+  }
+
+  const handleAssign = async () => {
+    if (!assignProcess) return
+    try {
+      setIsAssigning(true)
+      setAssignError(null)
+      const res = await fetch(`/api/processes/${assignProcess.id}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assigneeId: assigneeSelection === "none" ? null : assigneeSelection }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo asignar el proceso")
+      // Actualizar la lista local
+      setProcesses((prev) =>
+        prev.map((p) =>
+          p.id === assignProcess.id
+            ? {
+                ...p,
+                assignedToId: data.assignedTo,
+                assignedToName: data.assigneeName,
+                assignedAt: new Date().toISOString(),
+              }
+            : p,
+        ),
+      )
+      setAssignProcess(null)
+    } catch (err) {
+      setAssignError(err instanceof Error ? err.message : "Error al asignar el proceso")
+    } finally {
+      setIsAssigning(false)
+    }
+  }
+
+  // CAP-09 (RF-031): abrir el registro de auditoría del proceso (solo admin)
+  const openAuditDialog = async (process: ProcessMapped) => {
+    setAuditProcess(process)
+    setAuditEvents([])
+    setIsLoadingAudit(true)
+    try {
+      const res = await fetch(`/api/audit?processId=${process.id}`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "No se pudo cargar el registro")
+      setAuditEvents(data.events || [])
+    } catch (err) {
+      console.error("Error loading audit:", err)
+      setAuditEvents([])
+    } finally {
+      setIsLoadingAudit(false)
     }
   }
 
@@ -221,7 +737,6 @@ export function ProcessesPage() {
         )
       )
     } catch (err) {
-      console.error("Error updating process status:", err)
       const errorMsg = err instanceof Error ? err.message : "Error al actualizar el estado del proceso"
       alert(errorMsg)
     } finally {
@@ -229,15 +744,26 @@ export function ProcessesPage() {
     }
   }
 
-  const getStatusOptions = (currentStatus: string) => {
-    const allStatuses = [
-      { value: "draft", label: "Borrador", icon: Pencil },
-      { value: "in_progress", label: "En Progreso", icon: Play },
-      { value: "review", label: "En Revisión", icon: Clock },
-      { value: "completed", label: "Completado", icon: CheckCircle },
-      { value: "archived", label: "Archivado", icon: Archive },
-    ]
-    return allStatuses.filter((s) => s.value !== currentStatus)
+  // RF-012 (CAP-03): reutilizar proceso → crea borrador con campos precargados.
+  const [isReusing, setIsReusing] = React.useState(false)
+  const handleReuse = async (process: ProcessMapped) => {
+    if (isReusing) return
+    try {
+      setIsReusing(true)
+      const res = await fetch(`/api/processes/${process.id}/reuse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Error al reutilizar el proceso")
+      // Ir al formulario del nuevo proceso con los campos precargados.
+      router.push(`/member/processes/${data.process.id}/generate?reused=1`)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al reutilizar el proceso")
+    } finally {
+      setIsReusing(false)
+    }
   }
 
   // Filter processes
@@ -251,8 +777,12 @@ export function ProcessesPage() {
     const matchesStatus = statusFilter === "all" || process.status === statusFilter
     const matchesEntity = entityFilter === "all" || process.entityId === entityFilter
     const matchesProcessType = processTypeFilter === "all" || process.processTypeId === processTypeFilter
+    // CAP-08 (RF-030): filtrable por responsable
+    const matchesAssignee =
+      assigneeFilter === "all" ||
+      (assigneeFilter === "unassigned" ? !process.assignedToId : process.assignedToId === assigneeFilter)
 
-    return matchesSearch && matchesStatus && matchesEntity && matchesProcessType
+    return matchesSearch && matchesStatus && matchesEntity && matchesProcessType && matchesAssignee
   })
 
   // Calculate stats
@@ -274,20 +804,32 @@ export function ProcessesPage() {
   const hasActiveFilters =
     searchQuery || statusFilter !== "all" || entityFilter !== "all" || processTypeFilter !== "all"
 
+  const emptyState = (
+    <div className="flex flex-col items-center gap-2 py-12 text-center">
+      <FolderKanban className="h-8 w-8 text-muted-foreground" />
+      <p className="text-muted-foreground">No se encontraron procesos</p>
+      {hasActiveFilters && (
+        <Button variant="link" size="sm" onClick={clearFilters}>
+          Limpiar filtros
+        </Button>
+      )}
+    </div>
+  )
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 md:gap-6">
       <PageHeader
         title="Mis Procesos"
         description={`Gestiona y monitorea todos tus procesos de contratación (${processes.length} procesos)`}
       >
-        <Button className="gap-2" onClick={() => setIsCreateDialogOpen(true)}>
+        <Button className="w-full gap-2 sm:w-auto" onClick={() => setIsCreateDialogOpen(true)}>
           <Plus className="h-4 w-4" />
           Nuevo Proceso
         </Button>
       </PageHeader>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <StatsCard title="Total Procesos" value={stats.total} description="Procesos registrados" icon={FolderKanban} />
         <StatsCard title="Borradores" value={stats.draft} description="Pendientes de iniciar" icon={FileText} />
         <StatsCard title="En Progreso" value={stats.inProgress} description="Procesos activos" icon={Clock} />
@@ -298,7 +840,7 @@ export function ProcessesPage() {
       {/* Filters */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <CardTitle className="text-base">Filtros</CardTitle>
@@ -312,18 +854,18 @@ export function ProcessesPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-4">
-            <div className="relative flex-1 min-w-[200px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+            <div className="relative w-full sm:min-w-[200px] sm:flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por código, entidad o secretaría..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
+                className="w-full pl-9"
               />
             </div>
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ProcessStatus)}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
               <SelectContent>
@@ -336,7 +878,7 @@ export function ProcessesPage() {
               </SelectContent>
             </Select>
             <Select value={entityFilter} onValueChange={setEntityFilter}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <Building className="mr-2 h-4 w-4" />
                 <SelectValue placeholder="Entidad" />
               </SelectTrigger>
@@ -347,7 +889,9 @@ export function ProcessesPage() {
                     Cargando...
                   </SelectItem>
                 ) : (
-                  entities.map((entity) => (
+                  entities
+                    .filter((e) => e.status === "active")
+                    .map((entity) => (
                     <SelectItem key={entity.id} value={entity.id}>
                       {entity.name}
                     </SelectItem>
@@ -356,7 +900,7 @@ export function ProcessesPage() {
               </SelectContent>
             </Select>
             <Select value={processTypeFilter} onValueChange={setProcessTypeFilter}>
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue placeholder="Tipo de proceso" />
               </SelectTrigger>
               <SelectContent>
@@ -374,11 +918,28 @@ export function ProcessesPage() {
                 )}
               </SelectContent>
             </Select>
+            {/* CAP-08 (RF-030): filtro por responsable — solo admin */}
+            {isAdmin && (
+              <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+                <SelectTrigger className="w-full sm:w-[200px]">
+                  <SelectValue placeholder="Responsable" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los responsables</SelectItem>
+                  <SelectItem value="unassigned">Sin asignar</SelectItem>
+                  {members.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name || m.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Processes Table */}
+      {/* Processes list */}
       <Card>
         <CardHeader>
           <CardTitle>Listado de Procesos</CardTitle>
@@ -392,146 +953,232 @@ export function ProcessesPage() {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
+          ) : filteredProcesses.length === 0 ? (
+            emptyState
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[120px]">Código</TableHead>
-                  <TableHead>Entidad</TableHead>
-                  <TableHead>Secretaría</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-center">Docs</TableHead>
-                  <TableHead>Actualizado</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProcesses.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
-                      <div className="flex flex-col items-center gap-2">
-                        <FolderKanban className="h-8 w-8 text-muted-foreground" />
-                        <p className="text-muted-foreground">No se encontraron procesos</p>
-                        {hasActiveFilters && (
-                          <Button variant="link" size="sm" onClick={clearFilters}>
-                            Limpiar filtros
-                          </Button>
-                        )}
+            <>
+              {/* Mobile cards */}
+              <div className="space-y-3 md:hidden">
+                {filteredProcesses.map((process) => (
+                  <div
+                    key={process.id}
+                    className="rounded-lg border bg-card p-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                        <FolderKanban className="h-4 w-4 text-primary" />
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredProcesses.map((process) => (
-                    <TableRow key={process.id} className="group">
-                      <TableCell className="font-mono text-sm font-medium">
+                      <div className="min-w-0 flex-1 space-y-1">
                         <Link
                           href={`/member/documents?processId=${process.id}`}
-                          className="text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
+                          className="block truncate font-mono text-sm font-medium text-primary hover:underline"
                         >
                           {process.code}
                         </Link>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="font-normal">
-                          {process.entityName}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{process.secretaryName}</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm">{process.processTypeName}</span>
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={process.status} />
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="secondary">{process.documentsCount}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
+                        <p className="truncate text-sm">{process.entityName}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {process.secretaryName}
+                          {process.processTypeName ? ` · ${process.processTypeName}` : ""}
+                        </p>
+                        {/* CAP-08 (RF-030): responsable asignado */}
+                        <p className="truncate text-xs text-muted-foreground">
+                          Responsable: {assigneeName(process) || "Sin asignar"}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <StatusBadge status={process.status} />
+                          <Badge variant="secondary">{process.documentsCount} docs</Badge>
+                          {stageBadge(process)}
+                          <span className="text-xs text-muted-foreground">{process.updatedAt}</span>
+                          {/* CAP-02: "Continuar" solo en borradores */}
+                          {isGenerationIncomplete(process) && (
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => router.push(`/member/processes/${process.id}/generate`)}
+                            >
+                              <Play className="mr-1 h-3 w-3" />
+                              {continueLabel(process)}
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => {
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="relative h-7 px-2"
+                            title={
+                              (workspaceMeta.unreadByProcess[process.id] || 0) > 0
+                                ? `${workspaceMeta.unreadByProcess[process.id]} mensaje(s) nuevo(s)`
+                                : "Hilo de comunicación"
+                            }
+                            onClick={() => openThread(process)}
+                          >
+                            <MessageSquareText className="h-3.5 w-3.5" />
+                            {(workspaceMeta.unreadByProcess[process.id] || 0) > 0 && (
+                              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                                {workspaceMeta.unreadByProcess[process.id]}
+                              </span>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                      <ProcessActionsMenu
+                        process={process}
+                        isUpdatingStatus={isUpdatingStatus}
+                        onView={() => {
+                          setSelectedProcess(process)
+                          setIsViewDialogOpen(true)
+                        }}
+                        onDelete={() => {
+                          setSelectedProcess(process)
+                          setDeleteError(null)
+                          setIsDeleteDialogOpen(true)
+                        }}
+                        onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                        onReuse={() => handleReuse(process)}
+                        isAdmin={isAdmin}
+                        onAssign={() => openAssignDialog(process)}
+                        onViewAudit={() => openAuditDialog(process)}
+                        onOpenThread={() => openThread(process)}
+                        onOpenStages={() => setStagesProcess(process)}
+                        progressLabel={
+                          generationProgress[process.id]?.total > 0
+                            ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
+                            : undefined
+                        }
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden overflow-x-auto rounded-lg border md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[120px]">Código</TableHead>
+                      <TableHead>Entidad</TableHead>
+                      <TableHead>Secretaría</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead>Responsable</TableHead>
+                      <TableHead className="text-center">Docs</TableHead>
+                      <TableHead>Actualizado</TableHead>
+                      <TableHead className="w-[150px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProcesses.map((process) => (
+                      <TableRow key={process.id} className="group">
+                        <TableCell className="font-mono text-sm font-medium">
+                          <Link
+                            href={`/member/documents?processId=${process.id}`}
+                            className="rounded text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                          >
+                            {process.code}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="font-normal">
+                            {process.entityName}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{process.secretaryName}</span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{process.processTypeName}</span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusBadge status={process.status} />
+                            {stageBadge(process)}
+                          </div>
+                        </TableCell>
+                        {/* CAP-08 (RF-030): responsable visible en la vista de procesos */}
+                        <TableCell>
+                          {assigneeName(process) ? (
+                            <span className="text-sm">{assigneeName(process)}</span>
+                          ) : (
+                            <span className="text-xs italic text-muted-foreground">Sin asignar</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="secondary">{process.documentsCount}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{process.updatedAt}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-1">
+                            {/* CAP-02: "Continuar" solo en borradores (aún no terminan de generar) */}
+                            {isGenerationIncomplete(process) && (
+                              <Button
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                title="Continuar el diligenciamiento donde lo dejaste"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  router.push(`/member/processes/${process.id}/generate`)
+                                }}
+                              >
+                                <Play className="mr-1 h-3 w-3" />
+                                {continueLabel(process)}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="relative h-8 w-8"
+                              title={
+                                (workspaceMeta.unreadByProcess[process.id] || 0) > 0
+                                  ? `${workspaceMeta.unreadByProcess[process.id]} mensaje(s) nuevo(s)`
+                                  : "Hilo de comunicación"
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openThread(process)
+                              }}
+                            >
+                              <MessageSquareText className="h-4 w-4" />
+                              {(workspaceMeta.unreadByProcess[process.id] || 0) > 0 && (
+                                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                                  {workspaceMeta.unreadByProcess[process.id] > 9
+                                    ? "9+"
+                                    : workspaceMeta.unreadByProcess[process.id]}
+                                </span>
+                              )}
+                            </Button>
+                            <ProcessActionsMenu
+                              process={process}
+                              isUpdatingStatus={isUpdatingStatus}
+                              onView={() => {
                                 setSelectedProcess(process)
                                 setIsViewDialogOpen(true)
                               }}
-                            >
-                              <Eye className="mr-2 h-4 w-4" />
-                              Ver detalles
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => router.push(`/member/documents?processId=${process.id}`)}
-                            >
-                              <Files className="mr-2 h-4 w-4" />
-                              Ver documentos del proceso
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
+                              onDelete={() => {
                                 setSelectedProcess(process)
-                                setIsGenerateDocumentsDialogOpen(true)
-                              }}
-                            >
-                              <FileText className="mr-2 h-4 w-4" />
-                              Generar Documentos
-                            </DropdownMenuItem>
-                            {process.spreadsheetUrl && (
-                              <DropdownMenuItem
-                                onClick={() => window.open(process.spreadsheetUrl!, "_blank")}
-                              >
-                                <ExternalLink className="mr-2 h-4 w-4" />
-                                Ver en Google Sheets
-                              </DropdownMenuItem>
-                            )}
-                            {process.driveFolderUrl && (
-                              <DropdownMenuItem
-                                onClick={() => window.open(process.driveFolderUrl!, "_blank")}
-                              >
-                                <FolderKanban className="mr-2 h-4 w-4" />
-                                Ver Carpeta en Drive
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            {/* Status Change Options */}
-                            {getStatusOptions(process.status).map((statusOption) => {
-                              const Icon = statusOption.icon
-                              return (
-                                <DropdownMenuItem
-                                  key={statusOption.value}
-                                  onClick={() => handleUpdateStatus(process, statusOption.value)}
-                                  disabled={isUpdatingStatus}
-                                >
-                                  <Icon className="mr-2 h-4 w-4" />
-                                  Cambiar a {statusOption.label}
-                                </DropdownMenuItem>
-                              )
-                            })}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onClick={() => {
-                                setSelectedProcess(process)
+                                setDeleteError(null)
                                 setIsDeleteDialogOpen(true)
                               }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Eliminar
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                              onUpdateStatus={(status) => handleUpdateStatus(process, status)}
+                              onReuse={() => handleReuse(process)}
+                              isAdmin={isAdmin}
+                              onAssign={() => openAssignDialog(process)}
+                              onViewAudit={() => openAuditDialog(process)}
+                              onOpenThread={() => openThread(process)}
+                              onOpenStages={() => setStagesProcess(process)}
+                              progressLabel={
+                                generationProgress[process.id]?.total > 0
+                                  ? `${generationProgress[process.id].generated}/${generationProgress[process.id].total}`
+                                  : undefined
+                              }
+                            />
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -541,34 +1188,8 @@ export function ProcessesPage() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onProcessCreated={handleProcessCreated}
-        onProcessCreatedAndReady={handleProcessCreatedAndReady}
+        onProcessCreatedAndReady={handleProcessReadyToGenerate}
       />
-
-      {/* Generate Documents Dialog */}
-      {(selectedProcess || processDataToCreate) && (
-        <GenerateDocumentsDialog
-          open={isGenerateDocumentsDialogOpen}
-          onOpenChange={(open) => {
-            setIsGenerateDocumentsDialogOpen(open)
-            if (!open) {
-              // Clear process data when closing
-              setProcessDataToCreate(null)
-              if (!isCreateDialogOpen) {
-                setSelectedProcess(null)
-              }
-            }
-          }}
-          process={selectedProcess}
-          processData={processDataToCreate?.processData || null}
-          entity={selectedProcess 
-            ? entities.find((e) => e.id === selectedProcess.entityId) || null
-            : processDataToCreate?.entity || null}
-          secretaryName={selectedProcess?.secretaryName || processDataToCreate?.secretaryName || ""}
-          processTypeName={processDataToCreate?.processTypeName}
-          onProcessCreated={handleProcessCreatedFromDialog}
-          onDocumentsGenerated={loadProcesses}
-        />
-      )}
 
       {/* View Process Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
@@ -605,6 +1226,10 @@ export function ProcessesPage() {
                 <div>
                   <h4 className="font-semibold mb-1">Estado</h4>
                   <StatusBadge status={selectedProcess.status} />
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-1">Responsable</h4>
+                  <p className="text-sm text-muted-foreground">{assigneeName(selectedProcess) || "Sin asignar"}</p>
                 </div>
                 <div>
                   <h4 className="font-semibold mb-1">Fecha de Creación</h4>
@@ -647,6 +1272,11 @@ export function ProcessesPage() {
               se puede deshacer y eliminará todos los documentos asociados.
             </DialogDescription>
           </DialogHeader>
+          {deleteError && (
+            <p className="text-sm text-destructive rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+              {deleteError}
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} disabled={isDeleting}>
               Cancelar
@@ -667,6 +1297,137 @@ export function ProcessesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* CAP-08 (RF-028): diálogo de asignación de responsable (solo admin) */}
+      <Dialog open={!!assignProcess} onOpenChange={(open) => !open && setAssignProcess(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Asignar responsable</DialogTitle>
+            <DialogDescription>
+              Proceso <strong>{assignProcess?.code}</strong> · {assignProcess?.entityName}. Solo asesores o
+              administradores de la firma. El responsable recibirá una notificación y acceso a la entidad.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="assignee-select">Responsable</Label>
+            <Select value={assigneeSelection} onValueChange={setAssigneeSelection}>
+              <SelectTrigger id="assignee-select">
+                <SelectValue placeholder="Selecciona un miembro" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Sin responsable</SelectItem>
+                {members.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name || m.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {assignError && (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {assignError}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignProcess(null)} disabled={isAssigning}>
+              Cancelar
+            </Button>
+            <Button onClick={handleAssign} disabled={isAssigning}>
+              {isAssigning ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Asignando...
+                </>
+              ) : (
+                <>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Guardar asignación
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-09 (RF-031/032): registro de auditoría del proceso (solo admin) */}
+      <Dialog open={!!auditProcess} onOpenChange={(open) => !open && setAuditProcess(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Registro de auditoría</DialogTitle>
+            <DialogDescription>
+              Eventos del proceso <strong>{auditProcess?.code}</strong>. El registro es inalterable.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[400px] overflow-y-auto">
+            {isLoadingAudit ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : auditEvents.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Aún no hay eventos registrados para este proceso.
+              </p>
+            ) : (
+              <ul className="space-y-2 py-2">
+                {auditEvents.map((ev) => (
+                  <li key={ev.id} className="rounded-md border px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{ev.actionLabel}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{ev.createdAt}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {ev.actorName}
+                      {ev.details && Object.keys(ev.details).length > 0
+                        ? ` · ${Object.entries(ev.details)
+                            .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                            .join(" · ")}`
+                        : ""}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <DialogFooter className="flex items-center justify-between sm:justify-between">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                window.open(`/api/audit?processId=${auditProcess?.id}&format=csv`, "_blank")
+              }
+              disabled={auditEvents.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Exportar CSV
+            </Button>
+            <Button variant="outline" onClick={() => setAuditProcess(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CAP-07 (RF-025): hilo de comunicación del proceso */}
+      <ProcessThreadDialog
+        processId={threadProcess?.id ?? null}
+        processCode={threadProcess?.code}
+        open={!!threadProcess}
+        onOpenChange={(open) => {
+          if (!open) {
+            setThreadProcess(null)
+            loadWorkspaceMeta()
+          }
+        }}
+      />
+
+      {/* CAP-11 (RF-044): cronograma de etapas del proceso */}
+      <ProcessStagesDialog
+        processId={stagesProcess?.id ?? null}
+        processCode={stagesProcess?.code}
+        open={!!stagesProcess}
+        onOpenChange={(open) => !open && setStagesProcess(null)}
+      />
     </div>
   )
 }

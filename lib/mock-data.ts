@@ -83,7 +83,7 @@ export interface Document {
   name: string
   type: string
   version: number
-  status: "draft" | "pending" | "approved" | "rejected"
+  status: "draft" | "pending" | "in_review" | "approved" | "rejected"
   entityId: string
   entityName: string
   fileUrl: string

@@ -8,10 +8,13 @@ import { useOrganizationSelector } from "@/hooks/use-organization-selector"
 import { useImpersonation } from "@/lib/impersonation-context"
 import { OrganizationSelector } from "@/components/admin/organization-selector"
 import { Loader2 } from "lucide-react"
+import { FloatingChat } from "@/components/floating-chat/floating-chat"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { profile, isLoading: profileLoading } = useProfile()
-  const { actualRole, isSimulating, isLoaded: roleLoaded } = useRoleSwitcher(profile?.role)
+  const platformSa = isPlatformSuperadmin(profile)
+  const { actualRole, isSimulating, isLoaded: roleLoaded } = useRoleSwitcher(profile?.role, platformSa)
   const {
     effectiveOrganizationId,
     needsOrganizationSelection,
@@ -19,8 +22,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     selectOrganization,
   } = useOrganizationSelector({
     userOrganizationId: profile?.organization_id,
-    isSuperadmin: actualRole === "superadmin",
-    isSimulatingAdmin: isSimulating && actualRole === "superadmin",
+    isSuperadmin: platformSa,
+    isSimulatingAdmin: isSimulating && platformSa,
   })
   const { isImpersonating } = useImpersonation()
 
@@ -49,9 +52,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
       <AppSidebar profile={profile} selectedOrganizationId={effectiveOrganizationId || undefined} />
-      <main className={`flex-1 overflow-y-auto bg-background ${isImpersonating ? "pt-[48px]" : ""}`}>{children}</main>
+      <main className={`min-h-0 flex-1 overflow-y-auto bg-background ${isImpersonating ? "md:pt-[48px]" : ""}`}>{children}</main>
+      {/* Asistente flotante solo para admin de org; no para superadmin */}
+      {profile?.role !== "superadmin" ? <FloatingChat /> : null}
     </div>
   )
 }

@@ -15,23 +15,27 @@ export default function Home() {
   useEffect(() => {
     logger.pageView("/", undefined, undefined, { type: "landing" })
 
-    // Check if this is an invitation redirect (tokens in hash with type=invite)
+    // Check if this is an invitation or recovery redirect (tokens in hash)
     if (typeof window !== "undefined") {
       const hash = window.location.hash.substring(1)
       if (hash) {
         const hashParams = new URLSearchParams(hash)
         const type = hashParams.get("type")
         const accessToken = hashParams.get("access_token")
-        
-        // If this is an invitation with tokens, redirect to update-password page
-        if (type === "invite" && accessToken) {
-          console.log("[Home] Detected invitation tokens in hash, redirecting to update-password")
-          // Get organization ID from user metadata if available, or from query params
-          const orgId = new URLSearchParams(window.location.search).get("org")
-          const redirectUrl = orgId 
-            ? `/auth/update-password?invite=true&org=${orgId}${window.location.hash}`
-            : `/auth/update-password?invite=true${window.location.hash}`
-          router.push(redirectUrl)
+
+        if (accessToken && (type === "invite" || type === "recovery")) {
+          if (type === "invite") {
+            console.log("[Home] Detected invitation tokens in hash, redirecting to update-password")
+            const orgId = new URLSearchParams(window.location.search).get("org")
+            const redirectUrl = orgId
+              ? `/auth/update-password?invite=true&org=${orgId}${window.location.hash}`
+              : `/auth/update-password?invite=true${window.location.hash}`
+            router.push(redirectUrl)
+          } else {
+            // type === "recovery" — reset password from "forgot password" link
+            console.log("[Home] Detected recovery tokens in hash, redirecting to update-password")
+            router.push(`/auth/update-password${window.location.hash ? window.location.hash : ""}`)
+          }
           return
         }
       }

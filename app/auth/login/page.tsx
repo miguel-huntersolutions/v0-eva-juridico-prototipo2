@@ -13,6 +13,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState, useEffect, useRef } from "react"
 import { FileText, Loader2 } from "lucide-react"
+import { homePathForRole } from "@/lib/auth/home-path"
 import { Chrome } from "lucide-react"
 
 function LoginContent() {
@@ -47,7 +48,11 @@ function LoginContent() {
         } = await supabase.auth.getUser()
 
         if (user) {
-          const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", user.id).single()
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role, status, organization_id")
+            .eq("id", user.id)
+            .single()
 
           // Check if user is approved
           if (!profile || profile.status !== "approved") {
@@ -59,7 +64,7 @@ function LoginContent() {
 
           const role = profile?.role || "member"
           logger.auth("SESSION_CHECK", user.id, role, true)
-          const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+          const route = homePathForRole(role, profile?.organization_id)
           window.location.href = route
           return
         }
@@ -100,7 +105,11 @@ function LoginContent() {
       if (data.user) {
         await new Promise((resolve) => setTimeout(resolve, 200))
 
-        const { data: profile } = await supabase.from("profiles").select("role, status").eq("id", data.user.id).single()
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, status, organization_id")
+          .eq("id", data.user.id)
+          .single()
 
         // Check if user is approved
         if (!profile || profile.status !== "approved") {
@@ -112,7 +121,15 @@ function LoginContent() {
 
         const role = profile?.role || "member"
         logger.auth("LOGIN", data.user.id, role, true)
-        const route = role === "superadmin" ? "/superadmin" : role === "admin" ? "/admin" : "/member"
+
+        // CAP-09 (RF-031): auditar inicio de sesión (fire-and-forget)
+        fetch("/api/audit/log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "login", details: { method: "password" } }),
+        }).catch(() => {})
+
+        const route = homePathForRole(role, profile?.organization_id)
 
         window.location.href = route
       }
@@ -207,7 +224,15 @@ function LoginContent() {
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="password">Contraseña</Label>
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="password">Contraseña</Label>
+                      <Link
+                        href="/auth/forgot-password"
+                        className="text-xs text-muted-foreground hover:text-primary underline-offset-4 hover:underline"
+                      >
+                        ¿Olvidaste tu contraseña?
+                      </Link>
+                    </div>
                     <Input
                       id="password"
                       type="password"

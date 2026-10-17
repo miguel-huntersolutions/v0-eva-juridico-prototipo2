@@ -89,7 +89,7 @@ export default function SignUpPage() {
           emailRedirectTo: process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/dashboard`,
           data: {
             name: name,
-            role: "member",
+            // El rol no se envía: el trigger handle_new_user crea siempre member + pending (scripts/047)
             organization_id: selectedOrganizationId, // Store organization in user metadata
           },
         },

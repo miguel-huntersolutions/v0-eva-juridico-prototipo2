@@ -61,10 +61,15 @@ export function PendingUsersPage() {
       const res = await fetch("/api/pending-users")
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || data.message || "Error al cargar usuarios pendientes")
+        console.error("[pending-users] API error:", res.status, data)
+        throw new Error(
+          [data.error, data.message, data.hint].filter(Boolean).join(" — ") ||
+            "Error al cargar usuarios pendientes",
+        )
       }
       const data = await res.json()
       setUsers(data.users || [])
+      console.info("[pending-users] API response:", { count: data.users?.length ?? 0 })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar")
       setUsers([])
