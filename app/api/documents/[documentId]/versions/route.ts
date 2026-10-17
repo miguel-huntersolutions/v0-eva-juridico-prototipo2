@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 export async function GET(
   request: NextRequest,
@@ -40,7 +41,7 @@ export async function GET(
     if (docError || !doc) return NextResponse.json({ error: "Document not found" }, { status: 404 })
 
     const orgId = (doc.process as any)?.entity?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== orgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, orgId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 

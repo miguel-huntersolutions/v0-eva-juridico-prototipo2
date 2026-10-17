@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 /**
  * POST /api/assign-member-entities
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
     }
 
     // If user is admin (not superadmin), verify they can only assign entities to members in their own organization
-    if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
+    if (!canManageOrganization(profile, memberProfile.organization_id)) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only assign entities to members in their own organization" },
         { status: 403 },

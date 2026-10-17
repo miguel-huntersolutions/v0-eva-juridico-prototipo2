@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
     if (profile.role !== "admin" && profile.role !== "superadmin") {
       return NextResponse.json({ error: "Forbidden: only admin or superadmin" }, { status: 403 })
     }
-    if (profile.role === "admin" && profile.organization_id !== organizationId) {
+    if (!canManageOrganization(profile, organizationId)) {
       return NextResponse.json({ error: "Forbidden: admin can only request own organization" }, { status: 403 })
     }
 

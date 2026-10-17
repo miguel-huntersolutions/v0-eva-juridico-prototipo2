@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { ingestDocumentToRag } from "@/lib/rag/ingest"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
     }
 
     const docOrgId = (document.process as any)?.entity?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== docOrgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, docOrgId)) {
       return NextResponse.json({ error: "Forbidden: document belongs to another organization" }, { status: 403 })
     }
 

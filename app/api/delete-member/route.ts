@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 /**
  * DELETE /api/delete-member
@@ -52,7 +54,7 @@ export async function DELETE(request: NextRequest) {
     // Get member details before deletion
     const { data: memberProfile } = await serviceRoleClient
       .from("profiles")
-      .select("id, email, name, organization_id")
+      .select("id, email, name, role, organization_id")
       .eq("id", memberId)
       .single()
 
@@ -61,11 +63,26 @@ export async function DELETE(request: NextRequest) {
     }
 
     // If user is admin (not superadmin), verify they can only delete members from their own organization
-    if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
+    if (!canManageOrganization(profile, memberProfile.organization_id)) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only delete members from their own organization" },
         { status: 403 },
       )
+    }
+
+    // Sobre el perfil objetivo: nadie se borra a sí mismo, solo el superadmin de plataforma
+    // borra superadmins, y un admin no borra a otros admins.
+    if (memberProfile.id === user.id) {
+      return NextResponse.json({ error: "Forbidden: No puedes eliminar tu propia cuenta" }, { status: 403 })
+    }
+    if (memberProfile.role === "superadmin" && !isPlatformSuperadmin(profile)) {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede eliminar a un superadmin" },
+        { status: 403 },
+      )
+    }
+    if (profile.role === "admin" && memberProfile.role === "admin") {
+      return NextResponse.json({ error: "Forbidden: Admins cannot delete other admins" }, { status: 403 })
     }
 
     // Delete the profile first (this will cascade if configured)

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Borrador",
@@ -63,7 +64,7 @@ export async function GET(
     }
 
     const docOrgId = (document.process as any)?.entity?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== docOrgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, docOrgId)) {
       return NextResponse.json({ error: "Forbidden: document belongs to another organization" }, { status: 403 })
     }
 

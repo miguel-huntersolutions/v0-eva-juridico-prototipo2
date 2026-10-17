@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 /**
  * PUT /api/update-process
@@ -87,7 +88,7 @@ export async function PUT(request: NextRequest) {
 
     // Verify process belongs to user's organization (if admin or member, not superadmin)
     const processOrgId = (processData.entity as any)?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== processOrgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, processOrgId)) {
       return NextResponse.json(
         { error: "Forbidden: You can only update processes in your own organization" },
         { status: 403 },

@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,7 +64,7 @@ export async function POST(request: NextRequest) {
     if (source.organization_id !== target.organization_id) {
       return NextResponse.json({ error: "Las entidades deben ser de la misma organización" }, { status: 400 })
     }
-    if (profile.role === "admin" && profile.organization_id !== source.organization_id) {
+    if (!canManageOrganization(profile, source.organization_id)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
     if (target.status !== "active") {
