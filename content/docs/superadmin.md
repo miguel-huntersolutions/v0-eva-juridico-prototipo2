@@ -2,7 +2,7 @@
 
 ## Descripción del Rol
 
-El **Superadministrador** es el rol con mayor nivel de acceso en EVA Jurídico. Tiene control total sobre la plataforma y es responsable de gestionar todas las organizaciones (tenants) que utilizan el sistema.
+El **Superadministrador** es el rol con mayor nivel de acceso en LexIA Tech. Tiene control total sobre la plataforma y es responsable de gestionar todas las organizaciones (tenants) que utilizan el sistema.
 
 ## Funcionalidades Principales
 

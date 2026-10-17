@@ -1,4 +1,4 @@
-// Database types for EVA Jurídico
+// Database types for LexIA Tech
 
 // CAP-07: "entity_contact" = funcionario de la entidad (solo hilos de su entidad)
 export type UserRole = "superadmin" | "admin" | "member" | "entity_contact"

@@ -10,7 +10,7 @@
  * Variables:
  *   BREVO_API_KEY       — xkeysib- (API HTTP) o xsmtpsib- (SMTP)
  *   BREVO_SENDER_EMAIL  — remitente verificado en Brevo
- *   BREVO_SENDER_NAME   — opcional; default "EVA Jurídico"
+ *   BREVO_SENDER_NAME   — opcional; default APP_NAME (lang/es.json)
  *   BREVO_SMTP_USER     — login SMTP (si no, usa BREVO_SENDER_EMAIL)
  */
 
@@ -18,6 +18,7 @@ import nodemailer from "nodemailer"
 import { getAppUrl } from "@/lib/app-config"
 import { logAuditEvent } from "@/lib/audit/log"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { APP_NAME } from "@/lib/brand"
 
 const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email"
 
@@ -34,7 +35,7 @@ function sender(): { email: string; name: string } | null {
   if (!email) return null
   return {
     email,
-    name: process.env.BREVO_SENDER_NAME?.trim() || "EVA Jurídico",
+    name: process.env.BREVO_SENDER_NAME?.trim() || APP_NAME,
   }
 }
 
@@ -50,7 +51,7 @@ export function wrapEmailHtml(title: string, paragraphs: string[], ctaLabel?: st
       : ""
   return `<!DOCTYPE html><html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;padding:24px">
   <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:24px">
-    <p style="margin:0 0 4px;font-size:12px;color:#6b7280;letter-spacing:.04em">EVA JURÍDICO</p>
+    <p style="margin:0 0 4px;font-size:12px;color:#6b7280;letter-spacing:.04em">${escapeHtml(APP_NAME.toUpperCase())}</p>
     <h1 style="margin:0 0 16px;font-size:18px;color:#111827">${escapeHtml(title)}</h1>
     ${body}
     ${cta}

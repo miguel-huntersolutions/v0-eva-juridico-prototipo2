@@ -7,6 +7,7 @@ import { Bot } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { AssistantSheet } from "@/components/assistant/assistant-sheet"
+import { ASSISTANT_NAME } from "@/lib/brand"
 
 /**
  * RF-007 (CAP-01): el botón flotante abre el asistente real en un modal
@@ -24,7 +25,7 @@ export function FloatingChat() {
       <Button
         size="icon"
         className="relative h-14 w-14 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105"
-        aria-label="Abrir asistente jurídico EVA"
+        aria-label={`Abrir ${ASSISTANT_NAME}`}
         onClick={() => setOpen(true)}
       >
         <Bot className="h-6 w-6" />

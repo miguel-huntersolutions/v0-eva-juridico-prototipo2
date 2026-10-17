@@ -25,6 +25,7 @@ import {
   Menu,
   ScrollText,
   Scale,
+  Landmark,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -44,6 +45,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { useOrganizationBranding, type OrganizationBranding } from "@/lib/organization-branding"
+import { APP_NAME, APP_TAGLINE } from "@/lib/brand"
 import { createClient } from "@/lib/supabase/client"
 import type { Profile, UserRole } from "@/lib/types/database"
 import { useRoleSwitcher } from "@/hooks/use-role-switcher"
@@ -106,6 +109,7 @@ const navItems: NavItem[] = [
   { title: "Procesos", href: "/admin/processes", icon: FolderKanban, roles: ["admin"] },
   { title: "Documentos", href: "/admin/documents", icon: FileText, roles: ["admin"] },
   { title: "Auditoría", href: "/admin/audit", icon: ScrollText, roles: ["admin"] },
+  { title: "Mi Organización", href: "/admin/organization", icon: Landmark, roles: ["admin"] },
 
   // Member items
   { title: "Dashboard", href: "/member/dashboard", icon: Home, roles: ["member"] },
@@ -167,6 +171,37 @@ type SidebarPanelProps = {
   handleLogout: () => void
   onNavigate?: () => void
   showBrandHeader?: boolean
+  organization: Pick<OrganizationBranding, "name" | "logo_url"> | null
+}
+
+function organizationInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("")
+}
+
+/** Logo de la organización o, si no tiene, sus iniciales sobre el color principal. */
+function OrganizationMark({ organization, size }: { organization: Pick<OrganizationBranding, "name" | "logo_url">; size: "sm" | "lg" }) {
+  const box = size === "lg" ? "h-12 w-12 text-base" : "h-8 w-8 text-xs"
+  return organization.logo_url ? (
+    <img
+      src={organization.logo_url}
+      alt={`Logo de ${organization.name}`}
+      className={cn(box, "flex-shrink-0 rounded-lg bg-white object-contain p-1")}
+    />
+  ) : (
+    <div
+      className={cn(
+        box,
+        "flex flex-shrink-0 items-center justify-center rounded-lg bg-primary font-bold text-primary-foreground",
+      )}
+    >
+      {organizationInitials(organization.name) || <Building2 className="h-1/2 w-1/2" />}
+    </div>
+  )
 }
 
 function SidebarPanel({
@@ -189,26 +224,49 @@ function SidebarPanel({
   handleLogout,
   onNavigate,
   showBrandHeader = true,
+  organization,
 }: SidebarPanelProps) {
   const router = useRouter()
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
-      {showBrandHeader && (
-        <div className="flex h-16 flex-shrink-0 items-center gap-3 border-b border-sidebar-border px-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-            <FileText className="h-5 w-5 text-primary-foreground" />
+      {showBrandHeader &&
+        (organization ? (
+          /* Organización activa en grande: el usuario debe identificar en qué organización está */
+          <div className="flex-shrink-0 border-b border-sidebar-border px-4 py-4">
+            <div className="flex items-start gap-3">
+              <OrganizationMark organization={organization} size="lg" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/50">
+                  Organización
+                </span>
+                <span className="line-clamp-2 text-lg font-bold leading-tight" title={organization.name}>
+                  {organization.name}
+                </span>
+              </div>
+              {/* CAP-08 (RF-029): notificaciones in-app */}
+              <NotificationsBell />
+            </div>
+            <div className="mt-3 flex items-center gap-1.5 text-xs text-sidebar-foreground/50">
+              <FileText className="h-3.5 w-3.5" />
+              <span>{APP_NAME}</span>
+            </div>
           </div>
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-sm font-semibold tracking-tight">EVA Jurídico</span>
-            <span className="text-xs text-sidebar-foreground/60">Gestión Legal</span>
+        ) : (
+          <div className="flex h-16 flex-shrink-0 items-center gap-3 border-b border-sidebar-border px-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+              <FileText className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-sm font-semibold tracking-tight">{APP_NAME}</span>
+              <span className="text-xs text-sidebar-foreground/60">{APP_TAGLINE}</span>
+            </div>
+            {/* CAP-08 (RF-029): notificaciones in-app */}
+            <NotificationsBell />
           </div>
-          {/* CAP-08 (RF-029): notificaciones in-app */}
-          <NotificationsBell />
-        </div>
-      )}
+        ))}
 
-      {(isImpersonating || isSimulating || (effectiveRole === "admin" && selectedOrganization)) && (
+      {(isImpersonating || isSimulating || (effectiveRole === "admin" && canChangeOrganization)) && (
         <div className="flex-shrink-0 space-y-2 px-3 pt-3">
           {isImpersonating && impersonatedOrg && (
             <div className="rounded-lg border border-primary/30 bg-primary/10 p-2">
@@ -246,24 +304,11 @@ function SidebarPanel({
             </div>
           )}
 
-          {effectiveRole === "admin" && selectedOrganization && (
-            <div className="rounded-lg border bg-muted/50 p-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Building2 className="h-3.5 w-3.5" />
-                <span className="truncate font-medium">{selectedOrganization.name}</span>
-              </div>
-              {canChangeOrganization && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-1.5 h-6 w-full text-xs"
-                  onClick={handleChangeOrganization}
-                >
-                  <RefreshCw className="mr-1.5 h-3 w-3" />
-                  Cambiar Organización
-                </Button>
-              )}
-            </div>
+          {effectiveRole === "admin" && canChangeOrganization && (
+            <Button variant="outline" size="sm" className="h-7 w-full text-xs" onClick={handleChangeOrganization}>
+              <RefreshCw className="mr-1.5 h-3 w-3" />
+              Cambiar Organización
+            </Button>
           )}
         </div>
       )}
@@ -443,7 +488,7 @@ function SidebarPanel({
   )
 }
 
-export function AppSidebar({ profile, user }: AppSidebarProps) {
+export function AppSidebar({ profile, user, selectedOrganizationId }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [mobileOpen, setMobileOpen] = React.useState(false)
@@ -476,6 +521,19 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
     isSuperadmin: platformSa,
     isSimulatingAdmin: isSimulating && effectiveRole === "admin",
   })
+
+  // Organización activa: la suplantada, la elegida por el superadmin o la del perfil.
+  const activeOrganizationId =
+    (isImpersonating && impersonatedOrg?.id) ||
+    selectedOrganizationId ||
+    selectedOrganization?.id ||
+    profile?.organization_id ||
+    null
+  const organizationBranding = useOrganizationBranding(activeOrganizationId)
+  const organizationName = organizationBranding?.name || selectedOrganization?.name || impersonatedOrg?.name
+  const organization = organizationName
+    ? { name: organizationName, logo_url: organizationBranding?.logo_url ?? null }
+    : null
 
   const filteredItems = React.useMemo(() => {
     // Superadmin de org: tipos/plantillas + entidades/miembros (sin procesos ni documentos)
@@ -587,6 +645,7 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
     handleRoleSwitch,
     handleChangeOrganization,
     handleLogout,
+    organization,
   }
 
   return (
@@ -609,10 +668,19 @@ export function AppSidebar({ profile, user }: AppSidebarProps) {
           <Menu className="h-5 w-5" />
         </Button>
         <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary">
-            <FileText className="h-4 w-4 text-primary-foreground" />
-          </div>
-          <span className="truncate text-sm font-semibold tracking-tight">EVA Jurídico</span>
+          {organization ? (
+            <>
+              <OrganizationMark organization={organization} size="sm" />
+              <span className="truncate text-base font-bold tracking-tight">{organization.name}</span>
+            </>
+          ) : (
+            <>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary">
+                <FileText className="h-4 w-4 text-primary-foreground" />
+              </div>
+              <span className="truncate text-sm font-semibold tracking-tight">{APP_NAME}</span>
+            </>
+          )}
         </div>
       </div>
 

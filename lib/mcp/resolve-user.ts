@@ -1,5 +1,6 @@
 import { getMcpServiceClient } from "./service-client"
 import { normalizePhoneE164, phoneLookupVariants } from "./phone"
+import { APP_NAME } from "@/lib/brand"
 
 export type ChannelType = "telegram" | "whatsapp" | "other"
 
@@ -50,7 +51,7 @@ export async function linkChannelUser(params: {
     console.warn("[mcp/link-user] Phone not found. Tried variants:", variants, "raw:", params.phone)
     return {
       ok: false,
-      error: `Teléfono no registrado en EVA (buscado: ${variants.join(", ")}). Contacte al administrador.`,
+      error: `Teléfono no registrado en ${APP_NAME} (buscado: ${variants.join(", ")}). Contacte al administrador.`,
     }
   }
 
@@ -116,7 +117,7 @@ export async function resolveChannelUser(params: {
     })
   }
 
-  return { ok: false, error: "Usuario no vinculado. Comparta su teléfono registrado en EVA." }
+  return { ok: false, error: `Usuario no vinculado. Comparta su teléfono registrado en ${APP_NAME}.` }
 }
 
 async function loadProfile(profileId: string): Promise<ResolvedMcpUser | null> {

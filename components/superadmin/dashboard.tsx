@@ -51,6 +51,7 @@ import { useImpersonation } from "@/lib/impersonation-context"
 import { useProfile } from "@/hooks/use-profile"
 import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 import { AdminDashboard } from "@/components/admin/dashboard"
+import { APP_NAME } from "@/lib/brand"
 
 // Alias for backward compatibility
 type OrganizationWithCounts = OrganizationMapped
@@ -288,7 +289,7 @@ export function SuperadminDashboard() {
 
   return (
     <div className="flex flex-col gap-4 md:gap-8">
-      <PageHeader title="Panel de Superadministrador" description="Gestiona la plataforma EVA Jurídico de forma global">
+      <PageHeader title="Panel de Superadministrador" description={`Gestiona la plataforma ${APP_NAME} de forma global`}>
         
       </PageHeader>
 

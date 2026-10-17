@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, CalendarClock, AlertTriangle, Save } from "lucide-react"
+import { APP_NAME } from "@/lib/brand"
 
 interface StageRow {
   stageKey: string
@@ -132,7 +133,7 @@ export function ProcessStagesDialog({
             Cronograma del proceso {processCode ?? ""}
           </DialogTitle>
           <DialogDescription>
-            Fechas de las etapas del pliego. EVA alerta al responsable y al administrador 3 días y 1 día antes de
+            Fechas de las etapas del pliego. {APP_NAME} alerta al responsable y al administrador 3 días y 1 día antes de
             cada vencimiento.
           </DialogDescription>
         </DialogHeader>

@@ -4,6 +4,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js"
+import { APP_NAME } from "@/lib/brand"
 
 const STAGE_LABELS: Record<string, string> = {
   publicacion: "Publicación",
@@ -63,14 +64,14 @@ export async function buildGuaranteeLawEvaContext(
       .ilike("code", code)
       .maybeSingle()
     if (!proc) {
-      processBlock += `\nNo hay un proceso con código ${code} en EVA.`
+      processBlock += `\nNo hay un proceso con código ${code} en ${APP_NAME}.`
       continue
     }
 
     const procOrgId = (proc.entity as { organization_id?: string } | null)?.organization_id ?? null
     // Un usuario con organización solo ve procesos de la suya (el de otra se trata como inexistente).
     if (organizationId && procOrgId !== organizationId) {
-      processBlock += `\nNo hay un proceso con código ${code} en EVA.`
+      processBlock += `\nNo hay un proceso con código ${code} en ${APP_NAME}.`
       continue
     }
     if (procOrgId && !orgId) {
@@ -111,10 +112,10 @@ export async function buildGuaranteeLawEvaContext(
       }
     }
 
-    processBlock += `\nProceso ${proc.code} (cronograma en EVA):\n${stageLines}`
+    processBlock += `\nProceso ${proc.code} (cronograma en ${APP_NAME}):\n${stageLines}`
     processBlock += hits.length
       ? `\nCruce con periodos de restricción:\n${hits.join("\n")}`
-      : `\nNinguna fecha de etapa de ${proc.code} cae en un periodo de restricción cargado en EVA.`
+      : `\nNinguna fecha de etapa de ${proc.code} cae en un periodo de restricción cargado en ${APP_NAME}.`
   }
 
   if (periods.length === 0 && !processBlock) return ""
@@ -129,9 +130,9 @@ export async function buildGuaranteeLawEvaContext(
   return `
 
 **Datos de la plataforma (prioridad sobre conocimiento general)**:
-Periodos de restricción cargados en EVA (vigentos o por iniciar):
+Periodos de restricción cargados en ${APP_NAME} (vigentes o por iniciar):
 ${periodLines}
 ${processBlock}
 
-Si el usuario pregunta por un proceso o por ley de garantías / periodos de restricción, responde con ESTOS datos. No inventes periodos de elecciones si contradicen esta lista. Indica nombre y fechas del periodo de EVA.`
+Si el usuario pregunta por un proceso o por ley de garantías / periodos de restricción, responde con ESTOS datos. No inventes periodos de elecciones si contradicen esta lista. Indica nombre y fechas del periodo cargado en ${APP_NAME}.`
 }

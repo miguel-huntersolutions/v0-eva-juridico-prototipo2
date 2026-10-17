@@ -70,6 +70,7 @@ import {
   type PromptTemplate,
   type ChatMessage,
 } from "@/lib/mock-data"
+import { ASSISTANT_NAME } from "@/lib/brand"
 
 const suggestedQuestions = [
   {
@@ -695,7 +696,7 @@ export function AssistantPage() {
                   <Bot className="h-5 w-5 text-primary" />
                 </div>
                 <div className="min-w-0">
-                  <CardTitle className="truncate text-base sm:text-lg">EVA Asistente</CardTitle>
+                  <CardTitle className="truncate text-base sm:text-lg">{ASSISTANT_NAME}</CardTitle>
                   <CardDescription className="flex items-center gap-2 truncate">
                     <span
                       className={cn(

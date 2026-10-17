@@ -8,6 +8,7 @@ import { FileText, Mail, Clock, Loader2 } from "lucide-react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useEffect } from "react"
+import { APP_NAME } from "@/lib/brand"
 
 function SignUpSuccessContent() {
   const searchParams = useSearchParams()
@@ -26,7 +27,7 @@ function SignUpSuccessContent() {
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
               <FileText className="h-6 w-6 text-primary-foreground" />
             </div>
-            <span className="text-xl font-semibold">EVA Jurídico</span>
+            <span className="text-xl font-semibold">{APP_NAME}</span>
           </div>
 
           <Card>
@@ -51,7 +52,7 @@ function SignUpSuccessContent() {
               <p className="text-sm text-muted-foreground mb-6">
                 {isPending
                   ? "Tu cuenta está pendiente de aprobación. Un administrador revisará tu solicitud y te notificará por correo electrónico cuando puedas acceder a la plataforma."
-                  : "Haz clic en el enlace del correo para activar tu cuenta y comenzar a usar EVA Jurídico."}
+                  : `Haz clic en el enlace del correo para activar tu cuenta y comenzar a usar ${APP_NAME}.`}
               </p>
               <Button asChild variant="outline" className="w-full bg-transparent">
                 <Link href="/auth/login">Volver al Inicio de Sesión</Link>

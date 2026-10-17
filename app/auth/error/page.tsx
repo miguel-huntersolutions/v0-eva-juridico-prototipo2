@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { FileText, AlertCircle } from "lucide-react"
 import Link from "next/link"
+import { APP_NAME } from "@/lib/brand"
 
 export default function AuthErrorPage() {
   logger.pageView("/auth/error")
@@ -17,7 +18,7 @@ export default function AuthErrorPage() {
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
               <FileText className="h-6 w-6 text-primary-foreground" />
             </div>
-            <span className="text-xl font-semibold">EVA Jurídico</span>
+            <span className="text-xl font-semibold">{APP_NAME}</span>
           </div>
 
           <Card>

@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/table"
 import { Scale, Plus, Loader2, Trash2 } from "lucide-react"
 import { isOrgSuperadmin } from "@/lib/auth/superadmin-scope"
+import { APP_NAME } from "@/lib/brand"
 
 interface Period {
   id: string
@@ -117,7 +118,7 @@ function GuaranteeLawContent() {
           Periodos de restricción
         </h1>
         <p className="text-sm text-muted-foreground">
-          Periodos de tu organización (ley de garantías, vedas u otras). EVA advierte cuando la fecha
+          Periodos de tu organización (ley de garantías, vedas u otras). {APP_NAME} advierte cuando la fecha
           de una etapa cae dentro de un periodo activo de tu tenant.
         </p>
       </div>

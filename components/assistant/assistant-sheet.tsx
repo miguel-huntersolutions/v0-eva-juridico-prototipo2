@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { cn } from "@/lib/utils"
 import { useAssistantChat, useConversations, type ChatMessage } from "@/lib/ai-chat"
 import { getProcessMapped } from "@/lib/supabase/client-data-access"
+import { ASSISTANT_NAME } from "@/lib/brand"
 
 function processIdFromLocation(pathname: string | null, searchParams: URLSearchParams) {
   const fromQuery = searchParams.get("processId")
@@ -113,7 +114,7 @@ export function AssistantSheet({
                 <Bot className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <SheetTitle>Asistente jurídico EVA</SheetTitle>
+                <SheetTitle>{ASSISTANT_NAME}</SheetTitle>
                 <SheetDescription>Consultas reales sobre contratación pública</SheetDescription>
               </div>
             </div>

@@ -3,6 +3,7 @@ import { openai } from "@ai-sdk/openai"
 import { getOpenAIModel, temperatureOptionForModel } from "@/lib/ai-model-config"
 import { parseTagMapFromAssistantResponse } from "@/lib/document-assistant/rag-via-assistant"
 import type { SmartFillContext, TagClassification } from "./types"
+import { APP_NAME } from "@/lib/brand"
 
 function parseClassificationJson(text: string): Partial<TagClassification> | null {
   const trimmed = text.trim()
@@ -190,7 +191,7 @@ export async function generateFieldValues(
   const toGenerate = tags.filter((t) => !existing[t]?.trim())
   if (toGenerate.length === 0) return {}
 
-  const systemPrompt = `Eres EVA, asistente jurídico de contratación pública colombiana.
+  const systemPrompt = `Eres el asistente jurídico de ${APP_NAME}, especialista en contratación pública colombiana.
 Genera valores profesionales para etiquetas de plantilla documental.
 - Usa lenguaje jurídico formal y preciso
 - Basa el contenido en el contexto del usuario y del proceso

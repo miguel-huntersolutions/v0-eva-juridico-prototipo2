@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { APP_NAME } from "@/lib/brand"
 
 const ACTION_LABELS: Record<string, string> = {
   process_created: "Proceso creado",
@@ -144,7 +145,7 @@ export async function GET(request: NextRequest) {
     if (format === "csv") {
       const now = new Date()
       const headerLines = [
-        "# Registro de auditoria - EVA Juridico",
+        `# Registro de auditoria - ${APP_NAME}`,
         entityName ? `# Entidad: ${entityName}` : null,
         from || to ? `# Rango: ${from || "inicio"} a ${to || "hoy"}` : null,
         `# Generado: ${now.toISOString()}`,

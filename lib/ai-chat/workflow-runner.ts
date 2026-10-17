@@ -1,6 +1,6 @@
 /**
  * Workflow runner for OpenAI Agents SDK
- * This file contains the workflow logic for EVA Jurídico Assistant
+ * This file contains the workflow logic for the LexIA Tech legal assistant
  * Generated from OpenAI Agent Builder and adapted for conversation history
  */
 
@@ -24,6 +24,7 @@ import {
   ASESOR_JURIDICO_TEMPERATURE_DEFAULT,
 } from "@/lib/ai-chat/asesor-juridico-system-prompt"
 import { buildGuaranteeLawEvaContext } from "@/lib/guarantee-law/eva-context"
+import { APP_NAME } from "@/lib/brand"
 
 // Workflow and vector store IDs (definir en .env; los valores por defecto son solo para desarrollo)
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
@@ -171,7 +172,7 @@ function extractOutputText(output: any): string {
 }
 
 // Tool definitions (add your custom tools here if needed)
-// Example tool structure - customize for EVA Jurídico needs
+// Example tool structure - customize for LexIA Tech needs
 // const searchJurisprudence = tool({
 //   name: "searchJurisprudence",
 //   description: "Search for relevant jurisprudence and legal precedents",
@@ -269,7 +270,7 @@ const legalResearchAgent = new Agent({
 
 const generalInformationAgent = new Agent({
   name: "General Information Agent",
-  instructions: `You are EVA, a general information agent for public contracting in Colombia.
+  instructions: `You are the legal assistant of ${APP_NAME}, a general information agent for public contracting in Colombia.
   Provide comprehensive information about:
   - Public contracting system in Colombia
   - SECOP I and SECOP II
@@ -298,7 +299,7 @@ const RagFirstResultSchema = z.object({
 const RAG_PROBE_INSTRUCTIONS_SUFFIX = `
 
 ---
-TAREA CON HERRAMIENTA file_search (repositorio de documentos indexados en EVA Jurídico):
+TAREA CON HERRAMIENTA file_search (repositorio de documentos indexados en ${APP_NAME}):
 Tienes obligatoriamente la herramienta file_search sobre el vector store de documentos cargados.
 
 Procedimiento:
@@ -450,7 +451,7 @@ export async function runWorkflow(
 
 const GENERAL_FALLBACK_FOOTER = `\n\n---\n**Nota:** Respuesta en **modo asesor normativo** (no hubo material suficiente en los documentos indexados del repositorio para responder solo con archivos). Contrastar con un abogado titulado ante el caso concreto.`
 
-const PLATFORM_RESTRICTION_FOOTER = `\n\n---\n**Nota:** Los periodos de restricción y las fechas de etapa salen de la **configuración de EVA**, no de los PDF indexados. El resto del criterio jurídico, si lo hay, es modo asesor. Contrastar con un abogado titulado ante el caso concreto.`
+const PLATFORM_RESTRICTION_FOOTER = `\n\n---\n**Nota:** Los periodos de restricción y las fechas de etapa salen de la **configuración de ${APP_NAME}**, no de los PDF indexados. El resto del criterio jurídico, si lo hay, es modo asesor. Contrastar con un abogado titulado ante el caso concreto.`
 
 const DOCS_ANSWER_PREFIX = "**Fuente:** documentos indexados en el sistema.\n\n"
 

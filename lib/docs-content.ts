@@ -37,13 +37,13 @@ export interface FAQ {
 // Contenido para Superadministrador
 export const superadminDocs: DocContent = {
   title: "Guía del Superadministrador",
-  description: "Control total sobre la plataforma EVA Jurídico",
+  description: "Control total sobre la plataforma LexIA Tech",
   sections: [
     {
       id: "overview",
       title: "Descripción del Rol",
       content:
-        "El Superadministrador es el rol con mayor nivel de acceso en EVA Jurídico. Tiene control total sobre la plataforma y es responsable de gestionar todas las organizaciones (tenants) que utilizan el sistema.",
+        "El Superadministrador es el rol con mayor nivel de acceso en LexIA Tech. Tiene control total sobre la plataforma y es responsable de gestionar todas las organizaciones (tenants) que utilizan el sistema.",
     },
     {
       id: "dashboard",
@@ -518,9 +518,9 @@ export function getDocsForRole(role: string): DocContent {
 // Documentación general disponible para todos los roles
 export const generalDocs = {
   about: {
-    title: "Acerca de EVA Jurídico",
+    title: "Acerca de LexIA Tech",
     content:
-      "EVA Jurídico es una plataforma SaaS diseñada para optimizar los procesos de contratación pública y gestión documental en bufetes de abogados colombianos.",
+      "LexIA Tech es una plataforma SaaS diseñada para optimizar los procesos de contratación pública y gestión documental en bufetes de abogados colombianos.",
   },
   architecture: {
     title: "Arquitectura del Sistema",

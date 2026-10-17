@@ -6,6 +6,7 @@
 import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { getOpenAIModel, getOpenAIChatModelString, temperatureOptionForModel } from "@/lib/ai-model-config"
+import { APP_NAME } from "@/lib/brand"
 
 export interface ImproveTextOptions {
   /** Text to improve */
@@ -35,7 +36,7 @@ export interface ImproveTextOptions {
 /**
  * System prompt for legal text improvement
  */
-const DEFAULT_SYSTEM_PROMPT = `Eres EVA, un asistente jurídico especializado en contratación pública colombiana. Tu tarea es mejorar y ampliar textos jurídicos y administrativos relacionados con procesos de contratación, incorporando el contexto completo del proceso.
+const DEFAULT_SYSTEM_PROMPT = `Eres el asistente jurídico de ${APP_NAME}, especializado en contratación pública colombiana. Tu tarea es mejorar y ampliar textos jurídicos y administrativos relacionados con procesos de contratación, incorporando el contexto completo del proceso.
 
 Instrucciones generales:
 - Mejora la redacción manteniendo y respetando la intención original del usuario
