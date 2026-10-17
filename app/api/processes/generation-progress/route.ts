@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canAccessOrganization } from "@/lib/auth/authorize"
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,8 +46,7 @@ export async function POST(request: NextRequest) {
     const allowed: Array<{ id: string; process_type_id: string | null }> = []
     for (const p of processes || []) {
       const orgId = (p.entity as any)?.organization_id
-      const isSuperadmin = profile.role === "superadmin"
-      if (isSuperadmin || profile.organization_id === orgId) {
+      if (canAccessOrganization(profile, orgId)) {
         allowed.push({ id: p.id, process_type_id: p.process_type_id })
       }
     }

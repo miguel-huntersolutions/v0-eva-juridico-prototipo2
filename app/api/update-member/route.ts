@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 /**
  * PUT /api/update-member
@@ -70,7 +71,7 @@ export async function PUT(request: NextRequest) {
     const isOrgSuperadmin = profile.role === "superadmin" && !!profile.organization_id
 
     // If user is admin (not superadmin), verify they can only update members in their own organization
-    if (profile.role === "admin" && profile.organization_id !== memberProfile.organization_id) {
+    if (!canManageOrganization(profile, memberProfile.organization_id)) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only update members in their own organization" },
         { status: 403 },
@@ -82,6 +83,21 @@ export async function PUT(request: NextRequest) {
         { error: "Forbidden: Solo puedes actualizar usuarios de tu organización" },
         { status: 403 },
       )
+    }
+
+    // Sobre el perfil objetivo: solo el superadmin de plataforma modifica a un superadmin,
+    // y un admin no modifica a otros admins.
+    if (memberProfile.role === "superadmin" && !isPlatformSuperadmin) {
+      return NextResponse.json(
+        { error: "Forbidden: Solo el superadmin de plataforma puede modificar a un superadmin" },
+        { status: 403 },
+      )
+    }
+    if (profile.role === "admin" && memberProfile.role === "admin" && memberProfile.id !== user.id) {
+      return NextResponse.json({ error: "Forbidden: Admins cannot modify other admins" }, { status: 403 })
+    }
+    if (role !== undefined && !["superadmin", "admin", "member", "entity_contact"].includes(role)) {
+      return NextResponse.json({ error: "Invalid role" }, { status: 400 })
     }
 
     // Verify that admins can only update members (not change roles to admin)

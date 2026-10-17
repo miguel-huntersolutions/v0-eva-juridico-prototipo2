@@ -12,6 +12,8 @@ import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { google } from "googleapis"
 import { getAuthenticatedOAuth2ClientForServer } from "@/lib/google/oauth"
+import { secretsMatch } from "@/lib/auth/secrets"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 export const maxDuration = 300
 
@@ -27,7 +29,7 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
   // Vercel Cron envía Authorization: Bearer <CRON_SECRET>
   const cronSecret = process.env.CRON_SECRET
   const authHeader = request.headers.get("authorization")
-  if (cronSecret && authHeader === `Bearer ${cronSecret}`) return true
+  if (cronSecret && secretsMatch(authHeader, `Bearer ${cronSecret}`)) return true
 
   // Manual: superadmin autenticado
   const supabase = await createServerClient()
@@ -35,8 +37,13 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return false
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single()
-  return profile?.role === "superadmin"
+  // Solo el superadmin de plataforma (aprobado): el cron recorre todas las organizaciones.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, organization_id, status")
+    .eq("id", user.id)
+    .single()
+  return isPlatformSuperadmin(profile) && profile?.status === "approved"
 }
 
 export async function GET(request: NextRequest) {

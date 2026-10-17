@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { logAuditEvent, getRequestIp } from "@/lib/audit/log"
+import { canAccessOrganization, canOperateProcesses } from "@/lib/auth/authorize"
 
 function makeCode(typeName: string): string {
   const abbrev = (typeName || "PR")
@@ -64,7 +65,7 @@ export async function POST(
     if (origErr || !orig) return NextResponse.json({ error: "Process not found" }, { status: 404 })
 
     const orgId = (orig.entity as any)?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== orgId) {
+    if (!canOperateProcesses(profile) || !canAccessOrganization(profile, orgId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 

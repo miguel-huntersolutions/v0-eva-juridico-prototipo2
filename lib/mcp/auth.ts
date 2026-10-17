@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server"
 import { getMcpApiKey } from "./config"
+import { secretsMatch } from "@/lib/auth/secrets"
 
 export function extractBearerToken(req: NextRequest): string | null {
   const header = req.headers.get("authorization")
@@ -13,7 +14,7 @@ export function assertMcpApiKey(req: NextRequest): { ok: true } | { ok: false; s
     return { ok: false, status: 503, error: "MCP no configurado (EVA_MCP_API_KEY)" }
   }
   const token = extractBearerToken(req)
-  if (!token || token !== expected) {
+  if (!secretsMatch(token, expected)) {
     return { ok: false, status: 401, error: "API key inválida" }
   }
   return { ok: true }

@@ -43,11 +43,9 @@ export async function GET(request: NextRequest) {
 
     const url = new URL(request.url)
     const orgParam = url.searchParams.get("orgId")
-    // Org-SA / admin / member: su org. Plataforma puede pedir orgId explícito (solo lectura).
+    // Org-SA / admin / member: solo su org (nunca la de orgId). Plataforma puede pedir orgId explícito (solo lectura).
     const orgId =
-      profile?.role === "superadmin" && !profile.organization_id
-        ? orgParam
-        : profile?.organization_id || orgParam
+      profile?.role === "superadmin" && !profile.organization_id ? orgParam : profile?.organization_id
 
     if (!orgId) {
       return NextResponse.json({ error: "organization_id is required" }, { status: 400 })

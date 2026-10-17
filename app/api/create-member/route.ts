@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
 import { getAppUrl } from "@/lib/app-config"
+import { canManageOrganization } from "@/lib/auth/authorize"
 
 /**
  * POST /api/create-member
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
     }
 
     // If user is admin (not superadmin), verify they can only create members in their own organization
-    if (profile.role === "admin" && profile.organization_id !== organizationId) {
+    if (!canManageOrganization(profile, organizationId)) {
       return NextResponse.json(
         { error: "Forbidden: Admins can only create members in their own organization" },
         { status: 403 },
@@ -478,6 +479,17 @@ export async function POST(request: NextRequest) {
           .delete()
           .eq("member_id", newProfile.id)
         if (deleteErr) throw deleteErr
+
+        // Solo entidades de la organización del miembro (igual que assign-member-entities)
+        const { data: validEntities, error: validErr } = await serviceRoleClient
+          .from("entities")
+          .select("id")
+          .in("id", entityIds)
+          .eq("organization_id", organizationId)
+        if (validErr) throw validErr
+        if ((validEntities ?? []).length !== new Set(entityIds).size) {
+          throw new Error("Algunas entidades no pertenecen a la organización")
+        }
 
         const associations = entityIds.map((entityId: string) => ({
           member_id: newProfile.id,

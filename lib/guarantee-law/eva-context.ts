@@ -68,6 +68,11 @@ export async function buildGuaranteeLawEvaContext(
     }
 
     const procOrgId = (proc.entity as { organization_id?: string } | null)?.organization_id ?? null
+    // Un usuario con organización solo ve procesos de la suya (el de otra se trata como inexistente).
+    if (organizationId && procOrgId !== organizationId) {
+      processBlock += `\nNo hay un proceso con código ${code} en EVA.`
+      continue
+    }
     if (procOrgId && !orgId) {
       orgId = procOrgId
       const { data, error } = await service

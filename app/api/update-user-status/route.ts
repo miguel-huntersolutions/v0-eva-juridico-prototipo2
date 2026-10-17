@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@/lib/supabase/server"
 import { createClient } from "@supabase/supabase-js"
+import { isPlatformSuperadmin } from "@/lib/auth/superadmin-scope"
 
 export const dynamic = "force-dynamic"
 
@@ -51,7 +52,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const isSuperadmin = profile.role === "superadmin"
+    // Solo el superadmin de plataforma opera sobre cualquier perfil (vía RLS). El admin y el
+    // superadmin de organización solo sobre usuarios de su organización o sin organización.
+    const isSuperadmin = isPlatformSuperadmin(profile)
     const db = isSuperadmin ? supabase : await getServiceRoleClient()
     if (!db) {
       return NextResponse.json(
@@ -83,17 +86,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (profile.role === "admin") {
-      if (status === "approved" && organizationId) {
-        if (organizationId !== profile.organization_id) {
-          return NextResponse.json(
-            { error: "Forbidden: Admins can only approve users for their own organization" },
-            { status: 403 },
-          )
-        }
-      } else if (targetProfile.organization_id && targetProfile.organization_id !== profile.organization_id) {
+    if (!isSuperadmin) {
+      // Nunca sobre usuarios de otra organización (tampoco "aprobándolos" hacia la propia)
+      if (targetProfile.organization_id && targetProfile.organization_id !== profile.organization_id) {
         return NextResponse.json(
           { error: "Forbidden: Admins can only update users in their own organization" },
+          { status: 403 },
+        )
+      }
+      if (organizationId && organizationId !== profile.organization_id) {
+        return NextResponse.json(
+          { error: "Forbidden: Admins can only approve users for their own organization" },
           { status: 403 },
         )
       }

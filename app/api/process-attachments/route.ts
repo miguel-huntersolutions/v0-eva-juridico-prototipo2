@@ -11,6 +11,7 @@ import { getOrCreateProcessFolderPath } from "@/lib/google/drive"
 import { getAuthenticatedOAuth2Client } from "@/lib/google/oauth"
 import { google } from "googleapis"
 import { Readable } from "stream"
+import { canAccessProcess } from "@/lib/auth/authorize"
 
 export const maxDuration = 60
 
@@ -52,7 +53,7 @@ export async function GET(request: NextRequest) {
     } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single()
+    const { data: profile } = await supabase.from("profiles").select("role, organization_id, entity_id").eq("id", user.id).single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
 
     const processId = new URL(request.url).searchParams.get("processId")
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
     if (!proc) return NextResponse.json({ error: "Process not found" }, { status: 404 })
 
     const orgId = (proc.entity as any)?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== orgId) {
+    if (!canAccessProcess(profile, { organization_id: orgId, entity_id: (proc.entity as any)?.id })) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
@@ -91,7 +92,7 @@ export async function POST(request: NextRequest) {
     } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const { data: profile } = await supabase.from("profiles").select("role, organization_id").eq("id", user.id).single()
+    const { data: profile } = await supabase.from("profiles").select("role, organization_id, entity_id").eq("id", user.id).single()
     if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 403 })
 
     const formData = await request.formData()
@@ -123,7 +124,7 @@ export async function POST(request: NextRequest) {
     if (!proc) return NextResponse.json({ error: "Process not found" }, { status: 404 })
 
     const orgId = (proc.entity as any)?.organization_id
-    if ((profile.role === "admin" || profile.role === "member") && profile.organization_id !== orgId) {
+    if (!canAccessProcess(profile, { organization_id: orgId, entity_id: (proc.entity as any)?.id })) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
