@@ -29,8 +29,15 @@ import { buildGuaranteeLawEvaContext } from "@/lib/guarantee-law/eva-context"
 const WORKFLOW_ID = process.env.OPENAI_ASSISTANT_WORKFLOW_ID || "wf_6925fc6d7280819083832d2195f02fd1020357ea2b80faed"
 const VECTOR_STORE_ID = process.env.OPENAI_VECTOR_STORE_ID || "vs_6925fde642a481918a79478672c29e81"
 
-// Shared client for guardrails and file search
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+// Shared client for guardrails and file search (created lazily so build-time
+// module evaluation doesn't fail when OPENAI_API_KEY isn't set)
+let _client: OpenAI | null = null
+function getClient(): OpenAI {
+  if (!_client) {
+    _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  }
+  return _client
+}
 
 // Guardrails definitions (model from env via getOpenAIWorkflowModel)
 function getJailbreakGuardrailConfig() {
@@ -40,7 +47,9 @@ function getJailbreakGuardrailConfig() {
     ],
   }
 }
-const context = { guardrailLlm: client }
+function getContext() {
+  return { guardrailLlm: getClient() }
+}
 
 function guardrailsHasTripwire(results: any[]): boolean {
   return (results ?? []).some((r) => r?.tripwireTriggered === true)
@@ -61,7 +70,7 @@ async function scrubConversationHistory(history: AgentInputItem[], piiOnly: any)
     const content = Array.isArray(msg?.content) ? msg.content : []
     for (const part of content) {
       if (part && typeof part === "object" && part.type === "input_text" && typeof part.text === "string") {
-        const res = await runGuardrails(part.text, piiOnly, context, true)
+        const res = await runGuardrails(part.text, piiOnly, getContext(), true)
         part.text = getGuardrailSafeText(res, part.text)
       }
     }
@@ -72,13 +81,13 @@ async function scrubWorkflowInput(workflow: any, inputKey: string, piiOnly: any)
   if (!workflow || typeof workflow !== "object") return
   const value = workflow?.[inputKey]
   if (typeof value !== "string") return
-  const res = await runGuardrails(value, piiOnly, context, true)
+  const res = await runGuardrails(value, piiOnly, getContext(), true)
   workflow[inputKey] = getGuardrailSafeText(res, value)
 }
 
 async function runAndApplyGuardrails(inputText: string, config: any, history: AgentInputItem[], workflow: any) {
   const guardrails = Array.isArray(config?.guardrails) ? config.guardrails : []
-  const results = await runGuardrails(inputText, config, context, true)
+  const results = await runGuardrails(inputText, config, getContext(), true)
   const shouldMaskPII = guardrails.find(
     (g: any) => g?.name === "Contains PII" && g?.config && g.config.block === false
   )
